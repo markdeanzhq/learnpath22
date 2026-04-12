@@ -1,0 +1,15 @@
+:root {
+  --lp-primary: #409EFF;
+  --lp-success: #67C23A;
+  --lp-warning: #E6A23C;
+  --lp-danger: #F56C6C;
+  --lp-info: #909399;
+  --lp-bg: #f5f7fa;
+  --lp-sidebar-width: 220px;
+  --lp-header-height: 60px;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}

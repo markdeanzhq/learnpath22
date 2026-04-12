@@ -1,0 +1,17 @@
+{
+  "domain": "machine_learning",
+  "version": "v1",
+  "name": "机器学习基础",
+  "description": "面向机器学习基础学习场景的知识包，包含48个知识点",
+  "node_count": 48,
+  "groups": ["A", "B", "C", "D", "E"],
+  "group_names": {
+    "A": "数学与编程基础",
+    "B": "机器学习入门骨架",
+    "C": "核心监督学习",
+    "D": "评估与泛化",
+    "E": "实践与应用闭环"
+  },
+  "stages": ["基础准备", "核心掌握", "应用突破"],
+  "supported_goal_types": ["domain", "concept", "problem"]
+}

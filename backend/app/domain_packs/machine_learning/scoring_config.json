@@ -1,0 +1,31 @@
+{
+  "gap_weights": {
+    "ml": 0.40,
+    "math": 0.35,
+    "coding": 0.25
+  },
+  "reinforce_threshold": 0.45,
+  "reinforce_weights": {
+    "gap_total": 0.45,
+    "foundation_bonus": 0.20,
+    "bridge_value": 0.15,
+    "main_path_bonus": 0.10,
+    "beginner_bonus": 0.10
+  },
+  "reinforce_max_count": 6,
+  "priority_weights": {
+    "importance": 0.28,
+    "goal_relevance": 0.22,
+    "preference_fit": 0.15,
+    "main_path_bonus": 0.10,
+    "bridge_value": 0.10,
+    "difficulty_penalty": -0.10,
+    "gap_penalty": -0.10,
+    "time_cost_penalty": -0.05
+  },
+  "mode_adjustments": {
+    "steady": {"difficulty_reduction": 0.08, "foundation_bonus": 0.05},
+    "efficient": {"goal_relevance_bonus": 0.08, "time_saving_bonus": 0.05},
+    "practice": {"practice_weight_bonus": 0.08, "practice_flag_bonus": 0.05}
+  }
+}

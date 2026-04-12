@@ -1,0 +1,16 @@
+{
+  "anchors": [
+    {"node_id":"ml_b01","difficulty_auto":1,"difficulty_final":1,"importance_auto":5,"importance_final":5,"reason":"非常容易理解，但所有领域型目标几乎都会经过它"},
+    {"node_id":"ml_b02","difficulty_auto":1,"difficulty_final":1,"importance_auto":5,"importance_final":5,"reason":"首版主线核心入口，低门槛但高核心度"},
+    {"node_id":"ml_b06","difficulty_auto":2,"difficulty_final":2,"importance_auto":5,"importance_final":5,"reason":"不难，但对评估、交叉验证、模型选择都很关键"},
+    {"node_id":"ml_b10","difficulty_auto":2,"difficulty_final":2,"importance_auto":5,"importance_final":5,"reason":"是从概念到实践的桥梁节点"},
+    {"node_id":"ml_c01","difficulty_auto":2,"difficulty_final":2,"importance_auto":5,"importance_final":5,"reason":"主干算法起点，难度适中但非常核心"},
+    {"node_id":"ml_c03","difficulty_auto":2,"difficulty_final":2,"importance_auto":5,"importance_final":5,"reason":"优化链核心节点，不难但必须有"},
+    {"node_id":"ml_c05","difficulty_auto":2,"difficulty_final":3,"importance_auto":5,"importance_final":5,"reason":"自动分常偏低，实际初学门槛更高，建议人工上调到3"},
+    {"node_id":"ml_c09","difficulty_auto":3,"difficulty_final":3,"importance_auto":5,"importance_final":5,"reason":"是首版最重要目标节点之一，前置较多，难度维持3"},
+    {"node_id":"ml_c12","difficulty_auto":2,"difficulty_final":2,"importance_auto":3,"importance_final":3,"reason":"有代表性，但不是首版默认主干中心"},
+    {"node_id":"ml_d05","difficulty_auto":2,"difficulty_final":2,"importance_auto":5,"importance_final":5,"reason":"评估链核心节点，难度不高但非常关键"},
+    {"node_id":"ml_d08","difficulty_auto":2,"difficulty_final":3,"importance_auto":5,"importance_final":5,"reason":"概念上不算复杂，但综合性强，建议难度上调到3"},
+    {"node_id":"ml_e03","difficulty_auto":2,"difficulty_final":2,"importance_auto":5,"importance_final":5,"reason":"是理论落地的第一步，对系统计划感非常关键"}
+  ]
+}

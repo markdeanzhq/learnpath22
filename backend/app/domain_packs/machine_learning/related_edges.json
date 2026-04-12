@@ -1,0 +1,19 @@
+[
+  {"source":"ml_c01","target":"ml_c09","reason":"都是经典线性模型家族，适合对照学习"},
+  {"source":"ml_c07","target":"ml_d07","reason":"两者强相关，常互相解释"},
+  {"source":"ml_d01","target":"ml_d02","reason":"都属于分类评价指标，适合横向比较"},
+  {"source":"ml_d02","target":"ml_d04","reason":"都属于分类评估视角的延伸"},
+  {"source":"ml_c09","target":"ml_c12","reason":"都是首版分类模型代表，可横向比较"},
+  {"source":"ml_b02","target":"ml_b03","reason":"机器学习总体框架下的两类学习范式"},
+  {"source":"ml_b07","target":"ml_b08","reason":"经常共同出现，边界不同但学习上关系很近"},
+  {"source":"ml_d05","target":"ml_d08","reason":"经常同时出现，前者服务于后者"},
+  {"source":"ml_b08","target":"ml_e04","reason":"理论预处理与具体操作实例的映射"},
+  {"source":"ml_c01","target":"ml_e08","reason":"理论到回归案例实践"},
+  {"source":"ml_c09","target":"ml_e07","reason":"理论到分类案例实践"},
+  {"source":"ml_d08","target":"ml_e05","reason":"模型选择思想到具体调参实践"},
+  {"source":"ml_d03","target":"ml_e06","reason":"指标分析到具体错误分析动作"},
+  {"source":"ml_c03","target":"ml_c08","reason":"两者都和优化目标有关，适合一起解释"},
+  {"source":"ml_c05","target":"ml_c06","reason":"学习率是梯度下降的关键控制量"},
+  {"source":"ml_b10","target":"ml_e03","reason":"从流程概念到实际执行的自然扩展"},
+  {"source":"ml_b04","target":"ml_b05","reason":"基础数据视角上经常一起理解"}
+]

@@ -1,0 +1,18 @@
+{
+  "stages": ["基础准备", "核心掌握", "应用突破"],
+  "category_to_stage": {
+    "foundation": "基础准备",
+    "math_foundation": "基础准备",
+    "ml_core": "基础准备",
+    "algorithm": "核心掌握",
+    "evaluation": "应用突破",
+    "practice": "应用突破"
+  },
+  "override_rules": [
+    {
+      "condition": "beginner_high_gap",
+      "description": "初学者且 gap_total >= 0.5 的基础节点强制归入基础准备阶段",
+      "target_stage": "基础准备"
+    }
+  ]
+}

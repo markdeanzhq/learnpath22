@@ -1,0 +1,12 @@
+.ace-tool/
+.venv/
+node_modules/
+.claude/
+.serena/
+.pytest_cache/
+chatmessage/
+document/
+openspec/
+test_logs/
+.env
+CLAUDE.md
