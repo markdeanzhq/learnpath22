@@ -10,6 +10,10 @@ GRAPH_SCOPE_DOMAIN = "domain"
 GRAPH_SCOPE_PROJECT = "project"
 
 
+def build_edge_review_id(source: str, target: str, rel_type: str) -> str:
+    return f"{source}->{target}::{rel_type}"
+
+
 def _build_node_element(node: dict[str, Any]) -> dict[str, Any]:
     return {
         "group": "nodes",
@@ -27,9 +31,11 @@ def _build_node_element(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_edge_element(edge: dict[str, Any]) -> dict[str, Any]:
+    edge_id = build_edge_review_id(edge["source"], edge["target"], edge["rel_type"])
     return {
         "group": "edges",
         "data": {
+            "id": edge_id,
             "source": edge["source"],
             "target": edge["target"],
             "type": edge["rel_type"],

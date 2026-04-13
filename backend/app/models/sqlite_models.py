@@ -111,6 +111,6 @@ class GraphReviewStatus(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
     element_type: Mapped[str] = mapped_column(String(10))  # 'node' or 'edge'
-    element_id: Mapped[str] = mapped_column(String(100))   # node_id or "source->target"
+    element_id: Mapped[str] = mapped_column(String(100))   # node_id or "source->target::type"
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/confirmed/removed
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)

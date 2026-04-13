@@ -123,7 +123,7 @@ async def test_get_graph_scope_domain_injects_review_statuses_without_sync(clien
         json={"status": "confirmed"},
     )
     await client.patch(
-        f"/api/v1/projects/{project['id']}/graph/edges/ml_a04->ml_c05",
+        f"/api/v1/projects/{project['id']}/graph/edges/ml_a04->ml_c05::REQUIRES",
         json={"status": "removed"},
     )
 
@@ -152,6 +152,7 @@ async def test_get_graph_scope_domain_injects_review_statuses_without_sync(clien
     data = resp.json()
     assert data["scope"] == "domain"
     assert data["elements"][0]["data"]["review_status"] == "confirmed"
+    assert data["elements"][1]["data"]["id"] == "ml_a04->ml_c05::REQUIRES"
     assert data["elements"][1]["data"]["review_status"] == "removed"
     graph_query.assert_awaited_once_with(None, scope="domain")
 
@@ -231,7 +232,7 @@ async def test_get_subgraph_injects_review_statuses_without_sync(client, project
         json={"status": "removed"},
     )
     await client.patch(
-        f"/api/v1/projects/{project['id']}/graph/edges/ml_a04->ml_c05",
+        f"/api/v1/projects/{project['id']}/graph/edges/ml_a04->ml_c05::REQUIRES",
         json={"status": "confirmed"},
     )
 
@@ -261,6 +262,7 @@ async def test_get_subgraph_injects_review_statuses_without_sync(client, project
     assert resp.status_code == 200
     data = resp.json()
     assert data["elements"][0]["data"]["review_status"] == "removed"
+    assert data["elements"][1]["data"]["id"] == "ml_a04->ml_c05::REQUIRES"
     assert data["elements"][1]["data"]["review_status"] == "confirmed"
     subgraph_query.assert_awaited_once_with(None, ["ml_c01", "ml_c05"])
 
@@ -273,9 +275,70 @@ async def test_review_node_requires_existing_node(client, project):
     assert resp.status_code == 404
 
 
-async def test_review_edge_requires_existing_edge(client, project):
+async def test_get_graph_scope_domain_applies_review_status_per_typed_edge_id(client, project, monkeypatch):
+    await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/edges/ml_c05->ml_c06::RELATED_TO",
+        json={"status": "confirmed"},
+    )
+    await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/edges/ml_c05->ml_c06::REQUIRES",
+        json={"status": "removed"},
+    )
+
+    graph_query = AsyncMock(
+        return_value={
+            "scope": "domain",
+            "elements": [
+                {
+                    "group": "edges",
+                    "data": {
+                        "id": "ml_c05->ml_c06::RELATED_TO",
+                        "source": "ml_b04",
+                        "target": "ml_b05",
+                        "type": "RELATED_TO",
+                    },
+                },
+                {
+                    "group": "edges",
+                    "data": {
+                        "id": "ml_c05->ml_c06::REQUIRES",
+                        "source": "ml_b04",
+                        "target": "ml_b05",
+                        "type": "REQUIRES",
+                    },
+                },
+            ],
+            "is_empty": False,
+        }
+    )
+    monkeypatch.setattr(
+        "app.api.v1.graph.get_graph_sync_service",
+        lambda neo4j: (_ for _ in ()).throw(AssertionError("GET /graph should not sync graph")),
+    )
+    monkeypatch.setattr("app.api.v1.graph.get_graph_elements", graph_query)
+
+    resp = await client.get(f"/api/v1/projects/{project['id']}/graph?scope=domain")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["elements"][0]["data"]["id"] == "ml_c05->ml_c06::RELATED_TO"
+    assert data["elements"][0]["data"]["review_status"] == "confirmed"
+    assert data["elements"][1]["data"]["id"] == "ml_c05->ml_c06::REQUIRES"
+    assert data["elements"][1]["data"]["review_status"] == "removed"
+    graph_query.assert_awaited_once_with(None, scope="domain")
+
+
+async def test_review_edge_requires_existing_typed_edge(client, project):
     resp = await client.patch(
         f"/api/v1/projects/{project['id']}/graph/edges/not-a-real-edge",
+        json={"status": "removed"},
+    )
+    assert resp.status_code == 404
+
+
+async def test_review_edge_rejects_legacy_untyped_edge_id(client, project):
+    resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/edges/ml_a04->ml_c05",
         json={"status": "removed"},
     )
     assert resp.status_code == 404
@@ -290,10 +353,11 @@ async def test_review_node_accepts_valid_node(client, project):
     assert resp.json()["status"] == "confirmed"
 
 
-async def test_review_edge_accepts_valid_edge(client, project):
+async def test_review_edge_accepts_valid_typed_edge(client, project):
     resp = await client.patch(
-        f"/api/v1/projects/{project['id']}/graph/edges/ml_a04->ml_c05",
+        f"/api/v1/projects/{project['id']}/graph/edges/ml_a04->ml_c05::REQUIRES",
         json={"status": "confirmed"},
     )
     assert resp.status_code == 200
+    assert resp.json()["element_id"] == "ml_a04->ml_c05::REQUIRES"
     assert resp.json()["status"] == "confirmed"

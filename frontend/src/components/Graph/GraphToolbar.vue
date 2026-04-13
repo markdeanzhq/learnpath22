@@ -54,7 +54,7 @@
         size="small"
         @change="handleReviewToggle"
       />
-      <span v-if="reviewMode" class="review-hint">右键节点/边: 确认→移除→恢复</span>
+      <span v-if="reviewMode" class="review-hint">审核模式下右键节点/边打开审核菜单</span>
     </el-space>
   </div>
 </template>

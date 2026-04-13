@@ -17,6 +17,7 @@ from app.services.domain_pack_service import get_domain_pack_service
 from app.services.graph_service import (
     GRAPH_SCOPE_DOMAIN,
     GRAPH_SCOPE_PROJECT,
+    build_edge_review_id,
     get_graph_elements,
     get_path_subgraph,
 )
@@ -34,7 +35,11 @@ def _validate_node_exists(node_id: str) -> None:
 def _validate_edge_exists(edge_id: str) -> None:
     pack = get_domain_pack_service()
     valid_edges = {
-        f"{edge['source']}->{edge['target']}" for edge in pack.requires_edges + pack.related_edges
+        build_edge_review_id(edge["source"], edge["target"], "REQUIRES")
+        for edge in pack.requires_edges
+    } | {
+        build_edge_review_id(edge["source"], edge["target"], "RELATED_TO")
+        for edge in pack.related_edges
     }
     if edge_id not in valid_edges:
         raise AppError(code=404, message="边不存在")
@@ -62,6 +67,8 @@ async def _query_graph_elements(
     node_ids: list[str] | None = None,
 ) -> dict:
     try:
+        if node_ids is None:
+            return await get_graph_elements(neo4j, scope=scope)
         return await get_graph_elements(neo4j, scope=scope, node_ids=node_ids)
     except (RuntimeError, ValueError) as exc:
         _raise_graph_operation_error("图谱查询失败", exc)
@@ -86,8 +93,13 @@ async def _apply_review_statuses(
             data["review_status"] = review_statuses.get("node", {}).get(data["id"], "pending")
             continue
         if elem["group"] == "edges":
-            edge_key = f"{data['source']}->{data['target']}"
-            data["review_status"] = review_statuses.get("edge", {}).get(edge_key, "pending")
+            edge_id = data.get("id") or build_edge_review_id(
+                data["source"],
+                data["target"],
+                data["type"],
+            )
+            data["id"] = edge_id
+            data["review_status"] = review_statuses.get("edge", {}).get(edge_id, "pending")
     return graph_data
 
 
@@ -186,7 +198,7 @@ async def review_edge(
     req: ReviewStatusRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """审核边：确认/移除/恢复。edge_id 格式为 source->target。"""
+    """审核边：确认/移除/恢复。edge_id 格式为 source->target::type。"""
     project = await get_project(db, project_id)
     if not project:
         raise NotFoundError("项目不存在")

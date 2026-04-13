@@ -1,19 +1,28 @@
 <template>
-  <div ref="containerRef" class="graph-canvas"></div>
+  <div ref="containerRef" class="graph-canvas" @contextmenu.prevent>
+    <div ref="cyContainerRef" class="graph-canvas-surface"></div>
+    <ReviewContextMenu
+      :visible="menuState.visible"
+      :x="menuState.x"
+      :y="menuState.y"
+      :container-width="menuState.containerWidth"
+      :container-height="menuState.containerHeight"
+      :target-type="menuState.targetType"
+      :target-data="menuState.targetData"
+      @close="closeContextMenu"
+      @review="handleMenuReview"
+      @viewDetail="handleViewNodeDetail"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import cytoscape from 'cytoscape'
+import ReviewContextMenu from './ReviewContextMenu.vue'
+import { CATEGORY_COLORS } from './graphMeta'
 
-const CATEGORY_COLORS: Record<string, string> = {
-  foundation: '#E6A23C',
-  math_foundation: '#409EFF',
-  ml_core: '#F56C6C',
-  algorithm: '#8B5CF6',
-  evaluation: '#909399',
-  practice: '#67C23A',
-}
+const REVIEW_ACTIONABLE_STATUSES = new Set(['pending', 'confirmed', 'removed'])
 
 const props = withDefaults(defineProps<{
   elements: any[]
@@ -36,7 +45,31 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLDivElement>()
+const cyContainerRef = ref<HTMLDivElement>()
 let cy: any = null
+
+type MenuTargetType = 'node' | 'edge'
+type MenuTarget = {
+  id: string
+  type: MenuTargetType
+}
+
+function createClosedMenuState() {
+  return {
+    visible: false,
+    x: 0,
+    y: 0,
+    containerWidth: 0,
+    containerHeight: 0,
+    targetType: null as MenuTargetType | null,
+    targetData: null as Record<string, any> | null,
+  }
+}
+
+let activeMenuElement: any = null
+let activeMenuTarget: MenuTarget | null = null
+
+const menuState = ref(createClosedMenuState())
 
 const cytoscapeStyle: any[] = [
   {
@@ -66,22 +99,37 @@ const cytoscapeStyle: any[] = [
   {
     selector: 'edge[type = "REQUIRES"]',
     style: {
-      'width': 2,
+      'width': 3,
       'line-color': '#aaa',
       'target-arrow-color': '#aaa',
       'target-arrow-shape': 'triangle',
       'curve-style': 'bezier',
       'arrow-scale': 1.2,
+      'line-outline-width': 1,
+      'line-outline-color': '#f2f3f5',
     },
   },
   {
     selector: 'edge[type = "RELATED_TO"]',
     style: {
-      'width': 1.5,
+      'width': 2.5,
       'line-color': '#ccc',
       'line-style': 'dashed',
       'target-arrow-shape': 'none',
       'curve-style': 'bezier',
+      'line-outline-width': 1,
+      'line-outline-color': '#f5f7fa',
+    },
+  },
+  {
+    selector: 'edge.review-hover',
+    style: {
+      'width': 4.5,
+      'line-color': '#79bbff',
+      'target-arrow-color': '#79bbff',
+      'line-outline-width': 4,
+      'line-outline-color': '#d9ecff',
+      'z-index': 18,
     },
   },
   {
@@ -124,11 +172,41 @@ const cytoscapeStyle: any[] = [
     },
   },
   {
+    selector: 'edge[review_status = "confirmed"]',
+    style: {
+      'width': 3,
+      'line-color': '#67C23A',
+      'target-arrow-color': '#67C23A',
+      'opacity': 1,
+    },
+  },
+  {
     selector: 'edge[review_status = "removed"]',
     style: {
       'line-color': '#C0C4CC',
       'target-arrow-color': '#C0C4CC',
       'opacity': 0.3,
+    },
+  },
+  {
+    selector: 'node.review-menu-active',
+    style: {
+      'overlay-opacity': 0.12,
+      'overlay-color': '#409EFF',
+      'border-width': 4,
+      'border-color': '#409EFF',
+      'z-index': 20,
+    },
+  },
+  {
+    selector: 'edge.review-menu-active',
+    style: {
+      'width': 5,
+      'line-color': '#409EFF',
+      'target-arrow-color': '#409EFF',
+      'line-outline-width': 6,
+      'line-outline-color': '#d9ecff',
+      'z-index': 20,
     },
   },
 ]
@@ -153,12 +231,146 @@ function getLayoutConfig(layoutName: string) {
   }
 }
 
+function getReviewStatus(status?: string) {
+  return REVIEW_ACTIONABLE_STATUSES.has(status || '') ? status : 'pending'
+}
+
+function getSingleMenuElement(target: any, targetType?: MenuTargetType | null) {
+  if (!target || target === cy || typeof target.isNode !== 'function' || typeof target.isEdge !== 'function') {
+    return null
+  }
+
+  const isNode = target.isNode()
+  const isEdge = target.isEdge()
+  if (!isNode && !isEdge) {
+    return null
+  }
+
+  if (targetType === 'node' && !isNode) {
+    return null
+  }
+
+  if (targetType === 'edge' && !isEdge) {
+    return null
+  }
+
+  if (typeof target.first === 'function') {
+    const first = target.first()
+    return first?.length ? first : null
+  }
+
+  return target.length ? target : null
+}
+
+function isActiveMenuTarget(targetType: MenuTargetType, targetId?: string | null) {
+  return Boolean(
+    targetId
+    && activeMenuTarget
+    && activeMenuTarget.type === targetType
+    && activeMenuTarget.id === targetId,
+  )
+}
+
+function updateActiveMenuTarget(element: any, targetType: MenuTargetType) {
+  clearMenuHighlight()
+
+  if (!element?.length) {
+    return
+  }
+
+  element.addClass('review-menu-active')
+  activeMenuElement = element
+  activeMenuTarget = {
+    id: element.id(),
+    type: targetType,
+  }
+}
+
+function clearMenuHighlight() {
+  if (activeMenuElement?.length) {
+    activeMenuElement.removeClass('review-menu-active')
+  }
+  activeMenuElement = null
+  activeMenuTarget = null
+}
+
+function closeContextMenu() {
+  menuState.value = createClosedMenuState()
+  clearMenuHighlight()
+}
+
+function getMenuPosition(evt: any) {
+  const container = containerRef.value
+  if (!container) {
+    return { x: 0, y: 0, containerWidth: 0, containerHeight: 0 }
+  }
+
+  const bounds = container.getBoundingClientRect()
+  const originalEvent = evt.originalEvent as MouseEvent | PointerEvent | TouchEvent | undefined
+  const touchEvent = originalEvent instanceof TouchEvent ? originalEvent : null
+  const pointerEvent = originalEvent && !(originalEvent instanceof TouchEvent)
+    ? originalEvent as MouseEvent | PointerEvent
+    : null
+  const touchPoint = touchEvent?.touches[0] || touchEvent?.changedTouches[0] || null
+
+  const clientX = touchPoint?.clientX ?? pointerEvent?.clientX
+  const clientY = touchPoint?.clientY ?? pointerEvent?.clientY
+
+  const x = typeof clientX === 'number'
+    ? clientX - bounds.left
+    : evt.renderedPosition?.x ?? evt.position?.x ?? 0
+  const y = typeof clientY === 'number'
+    ? clientY - bounds.top
+    : evt.renderedPosition?.y ?? evt.position?.y ?? 0
+
+  return {
+    x,
+    y,
+    containerWidth: bounds.width,
+    containerHeight: bounds.height,
+  }
+}
+
+function openContextMenu(evt: any, targetType: MenuTargetType) {
+  if (!props.reviewMode || !containerRef.value || !containerRef.value.isConnected) return
+
+  evt.originalEvent?.preventDefault?.()
+
+  const element = getSingleMenuElement(evt.target, targetType)
+  if (!element?.length) {
+    closeContextMenu()
+    return
+  }
+
+  const data = { ...element.data() }
+  const { x, y, containerWidth, containerHeight } = getMenuPosition(evt)
+
+  updateActiveMenuTarget(element, targetType)
+
+  menuState.value = {
+    visible: true,
+    x,
+    y,
+    containerWidth,
+    containerHeight,
+    targetType,
+    targetData: {
+      ...data,
+      review_status: getReviewStatus(data.review_status),
+    },
+  }
+}
+
 function initCytoscape() {
-  if (!containerRef.value || !props.elements.length) return
-  if (cy) { cy.destroy(); cy = null }
+  if (!containerRef.value || !cyContainerRef.value || !props.elements.length) return
+  if (cy) {
+    cy.destroy()
+    cy = null
+  }
+  closeContextMenu()
 
   cy = cytoscape({
-    container: containerRef.value,
+    container: cyContainerRef.value,
     elements: props.elements,
     style: cytoscapeStyle,
     layout: getLayoutConfig(props.layout),
@@ -167,8 +379,24 @@ function initCytoscape() {
   })
 
   cy.on('tap', 'node', (evt: any) => {
+    if (menuState.value.visible) {
+      closeContextMenu()
+    }
     emit('nodeClick', evt.target.data())
   })
+
+  cy.on('tap', (evt: any) => {
+    if (evt.target === cy) {
+      closeContextMenu()
+    }
+  })
+
+  cy.on('cxttap', (evt: any) => {
+    if (evt.target === cy) {
+      closeContextMenu()
+    }
+  })
+
   cy.on('mouseover', 'node', (evt: any) => {
     evt.target.style({ 'border-width': 4, 'border-color': '#409EFF' })
     emit('nodeHover', evt.target.data())
@@ -177,21 +405,18 @@ function initCytoscape() {
     evt.target.removeStyle('border-width border-color')
   })
 
-  // 右键菜单 — 审核模式
+  cy.on('mouseover', 'edge', (evt: any) => {
+    evt.target.addClass('review-hover')
+  })
+  cy.on('mouseout', 'edge', (evt: any) => {
+    evt.target.removeClass('review-hover')
+  })
+
   cy.on('cxttap', 'node', (evt: any) => {
-    if (!props.reviewMode) return
-    const data = evt.target.data()
-    const current = data.review_status || 'pending'
-    const next = current === 'confirmed' ? 'removed' : current === 'removed' ? 'pending' : 'confirmed'
-    emit('reviewNode', data.id, next)
+    openContextMenu(evt, 'node')
   })
   cy.on('cxttap', 'edge', (evt: any) => {
-    if (!props.reviewMode) return
-    const data = evt.target.data()
-    const edgeId = `${data.source}->${data.target}`
-    const current = data.review_status || 'pending'
-    const next = current === 'confirmed' ? 'removed' : current === 'removed' ? 'pending' : 'confirmed'
-    emit('reviewEdge', edgeId, next)
+    openContextMenu(evt, 'edge')
   })
 
   applyNodeClasses()
@@ -210,12 +435,69 @@ function applyNodeClasses() {
   })
 }
 
+function setNodeReviewStatus(nodeId: string, status: string) {
+  if (!cy) return
+  const node = cy.getElementById(nodeId)
+  if (!node.length) return
+  const nextStatus = getReviewStatus(status)
+  node.data('review_status', nextStatus)
+  if (menuState.value.visible && isActiveMenuTarget('node', nodeId)) {
+    menuState.value = {
+      ...menuState.value,
+      targetData: {
+        ...menuState.value.targetData,
+        review_status: nextStatus,
+      },
+    }
+  }
+}
+
+function setEdgeReviewStatus(edgeId: string, status: string) {
+  if (!cy) return
+  const edge = cy.getElementById(edgeId)
+  if (!edge.length) return
+  const nextStatus = getReviewStatus(status)
+  edge.data('review_status', nextStatus)
+  if (menuState.value.visible && isActiveMenuTarget('edge', edgeId)) {
+    menuState.value = {
+      ...menuState.value,
+      targetData: {
+        ...menuState.value.targetData,
+        review_status: nextStatus,
+      },
+    }
+  }
+}
+
+function handleMenuReview(status: string) {
+  const { targetType, targetData } = menuState.value
+  if (!targetType || !targetData?.id) return
+
+  if (targetType === 'node') {
+    emit('reviewNode', targetData.id, status)
+    return
+  }
+
+  emit('reviewEdge', targetData.id, status)
+}
+
+function handleViewNodeDetail() {
+  const targetData = menuState.value.targetData
+  if (!targetData) return
+  emit('nodeClick', targetData)
+  closeContextMenu()
+}
+
 onMounted(() => {
   nextTick(() => initCytoscape())
 })
 
 onUnmounted(() => {
-  if (cy) { cy.destroy(); cy = null }
+  closeContextMenu()
+  if (cy) {
+    cy.destroy()
+    cy = null
+  }
 })
 
 watch(() => props.elements, () => {
@@ -223,6 +505,7 @@ watch(() => props.elements, () => {
 }, { deep: true })
 
 watch(() => props.layout, (newLayout) => {
+  closeContextMenu()
   if (cy) {
     const layout = cy.layout(getLayoutConfig(newLayout))
     layout.run()
@@ -232,6 +515,12 @@ watch(() => props.layout, (newLayout) => {
 watch([() => props.highlightNodes, () => props.masteredNodes], () => {
   applyNodeClasses()
 }, { deep: true })
+
+watch(() => props.reviewMode, (enabled) => {
+  if (!enabled) {
+    closeContextMenu()
+  }
+})
 
 defineExpose({
   zoomIn: () => {
@@ -254,15 +543,24 @@ defineExpose({
       }
     })
   },
+  setNodeReviewStatus,
+  setEdgeReviewStatus,
 })
 </script>
 
 <style scoped>
 .graph-canvas {
+  position: relative;
   width: 100%;
   height: 100%;
   background: #fafbfc;
   border: 1px solid #eee;
   border-radius: 4px;
+  overflow: hidden;
+}
+
+.graph-canvas-surface {
+  width: 100%;
+  height: 100%;
 }
 </style>

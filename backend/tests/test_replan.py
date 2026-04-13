@@ -151,3 +151,54 @@ async def test_replan_invalid_mode(client, project, plan):
         json={"mode": "invalid_mode"},
     )
     assert resp.status_code == 422
+
+
+async def test_replan_removed_requires_edge_uses_typed_edge_id(client):
+    """移除 REQUIRES 边后，重规划应按 typed edge id 过滤依赖。"""
+    project_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "逻辑回归重规划测试",
+            "goal_text": "逻辑回归为什么能做分类",
+            "goal_type": "problem",
+            "domain": "machine_learning",
+        },
+    )
+    assert project_resp.status_code == 200
+    project = project_resp.json()
+
+    profile_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/profiles",
+        json={
+            "math_level": 2,
+            "coding_level": 2,
+            "ml_level": 1,
+            "theory_weight": 0.6,
+            "practice_weight": 0.4,
+            "weekly_hours": 10,
+            "deadline_weeks": 12,
+        },
+    )
+    assert profile_resp.status_code == 200
+
+    initial_plan_resp = await client.post(f"/api/v1/projects/{project['id']}/plans")
+    assert initial_plan_resp.status_code == 200
+    initial_ids = [task["node_id"] for stage in initial_plan_resp.json()["stages"] for task in stage["tasks"]]
+    assert "ml_c05" in initial_ids
+    assert "ml_c09" in initial_ids
+
+    review_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/edges/ml_c05->ml_c09::REQUIRES",
+        json={"status": "removed"},
+    )
+    assert review_resp.status_code == 200
+
+    replan_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans",
+        json={"mode": "profile_update", "reason": "移除逻辑回归前置边后重规划"},
+    )
+    assert replan_resp.status_code == 200
+
+    replanned_ids = [task["node_id"] for stage in replan_resp.json()["stages"] for task in stage["tasks"]]
+    assert "ml_c09" in replanned_ids
+    assert "ml_c05" not in replanned_ids

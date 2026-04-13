@@ -138,7 +138,7 @@ def _build_filtered_graph(
             continue
         valid_targets = [
             tgt for tgt in tgts
-            if tgt not in removed_node_ids and f"{src}->{tgt}" not in removed_edge_ids
+            if tgt not in removed_node_ids and f"{src}->{tgt}::REQUIRES" not in removed_edge_ids
         ]
         filtered_adj[src] = valid_targets
 
@@ -147,7 +147,7 @@ def _build_filtered_graph(
             continue
         valid_sources = [
             src for src in srcs
-            if src not in removed_node_ids and f"{src}->{tgt}" not in removed_edge_ids
+            if src not in removed_node_ids and f"{src}->{tgt}::REQUIRES" not in removed_edge_ids
         ]
         filtered_rev_adj[tgt] = valid_sources
 

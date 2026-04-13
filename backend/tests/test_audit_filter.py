@@ -48,11 +48,10 @@ def test_plan_filters_removed_edges():
         "deadline_weeks": 8,
     }
     
-    # 假设 ml_a01 是 ml_a02 的前置
-    # 我们移除 ml_a01 -> ml_a02 这条边
-    # 注意：这可能会导致 ml_a02 依然在路径中，但排序位置可能变化，或者 ml_a01 不再因为 ml_a02 而被选中
+    # 移除一条实际存在的 REQUIRES 边，验证 typed edge id 能被规划过滤逻辑识别
+    # 注意：规划结果受多重因素影响，这里主要验证能跑通且接受 typed edge id
     
-    removed_edges = {"ml_a01->ml_a02"}
+    removed_edges = {"ml_a04->ml_c05::REQUIRES"}
     
     res = plan_with_profile(
         goal_text="机器学习",

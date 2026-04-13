@@ -56,8 +56,8 @@ def plan_with_profile(
         if tgt in removed_nodes:
             continue
         filtered_rev_adj[tgt] = [
-            s for s in srcs 
-            if s not in removed_nodes and f"{s}->{tgt}" not in removed_edges
+            s for s in srcs
+            if s not in removed_nodes and f"{s}->{tgt}::REQUIRES" not in removed_edges
         ]
 
     filtered_adj = {}
@@ -65,8 +65,8 @@ def plan_with_profile(
         if src in removed_nodes:
             continue
         filtered_adj[src] = [
-            t for t in tgts 
-            if t not in removed_nodes and f"{src}->{t}" not in removed_edges
+            t for t in tgts
+            if t not in removed_nodes and f"{src}->{t}::REQUIRES" not in removed_edges
         ]
 
     # 2. 前置闭包

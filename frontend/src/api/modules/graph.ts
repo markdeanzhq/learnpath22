@@ -2,6 +2,7 @@ import request from '../request'
 
 export type GraphScope = 'domain' | 'project'
 export type GraphEmptyReason = 'project_latest_plan_missing' | string
+export type ReviewStatus = 'pending' | 'confirmed' | 'removed'
 
 export interface GraphNodeData {
   id: string
@@ -12,16 +13,17 @@ export interface GraphNodeData {
   importance?: number
   estimated_hours?: number
   is_main_path?: boolean
-  review_status?: string
+  review_status?: ReviewStatus
   [key: string]: any
 }
 
 export interface GraphEdgeData {
+  id: string
   source: string
   target: string
   type?: string
   reason?: string
-  review_status?: string
+  review_status?: ReviewStatus
   [key: string]: any
 }
 
@@ -68,8 +70,8 @@ export const graphApi = {
     }),
   syncGraph: (projectId: string): Promise<GraphSyncResponse> =>
     request.post(`/projects/${projectId}/graph/sync`),
-  reviewNode: (projectId: string, nodeId: string, status: string): Promise<any> =>
+  reviewNode: (projectId: string, nodeId: string, status: ReviewStatus): Promise<any> =>
     request.patch(`/projects/${projectId}/graph/nodes/${nodeId}`, { status }),
-  reviewEdge: (projectId: string, edgeId: string, status: string): Promise<any> =>
+  reviewEdge: (projectId: string, edgeId: GraphEdgeData['id'], status: ReviewStatus): Promise<any> =>
     request.patch(`/projects/${projectId}/graph/edges/${encodeURIComponent(edgeId)}`, { status }),
 }

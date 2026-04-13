@@ -88,7 +88,7 @@ async def get_removed_edge_ids(
     db: AsyncSession,
     project_id: str,
 ) -> set[str]:
-    """获取被移除的边 ID 集合。格式为 source->target。"""
+    """获取被移除的边 ID 集合。格式为 source->target::type。"""
     result = await db.execute(
         select(GraphReviewStatus.element_id).where(
             and_(

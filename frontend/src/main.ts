@@ -5,6 +5,7 @@ import 'element-plus/dist/index.css'
 import App from './App.vue'
 import router from './router'
 import { useSettingsStore } from './stores/settings'
+import { useProjectStore } from './stores/project'
 import './styles/variables.css'
 
 async function bootstrap() {
@@ -14,7 +15,9 @@ async function bootstrap() {
   app.use(pinia)
 
   const settingsStore = useSettingsStore(pinia)
+  const projectStore = useProjectStore(pinia)
   await settingsStore.bootstrapSyncToBackend()
+  await projectStore.restoreCurrentProject()
 
   app.use(router)
   app.use(ElementPlus)
