@@ -1,6 +1,8 @@
 """项目数据访问层"""
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,15 +24,21 @@ async def create_project(
     goal_text: str,
     goal_type: str,
     domain: str,
+    *,
+    commit: bool = True,
+    **extra_fields: Any,
 ) -> LearningProject:
     project = LearningProject(
         title=title,
         goal_text=goal_text,
         goal_type=goal_type,
         domain=domain,
+        **extra_fields,
     )
     db.add(project)
-    await db.commit()
+    await db.flush()
+    if commit:
+        await db.commit()
     await db.refresh(project)
     return project
 

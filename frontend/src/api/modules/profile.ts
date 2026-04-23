@@ -40,6 +40,11 @@ export interface QuestionResponse {
   source: string
 }
 
+export interface SubmitAnswersDto {
+  source?: string
+  answers: Array<{ question_id: string; field: string; value: number }>
+}
+
 export const profileApi = {
   submit: (projectId: string, data: SubmitProfileDto): Promise<LearnerProfile> =>
     request.post(`/projects/${projectId}/profiles`, data),
@@ -47,6 +52,6 @@ export const profileApi = {
     request.get(`/projects/${projectId}/profiles/latest`),
   getQuestions: (projectId: string): Promise<QuestionResponse> =>
     request.post(`/projects/${projectId}/collector/questions`),
-  submitAnswers: (projectId: string, data: { answers: Array<{ question_id: string; field: string; value: number }> }): Promise<LearnerProfile> =>
+  submitAnswers: (projectId: string, data: SubmitAnswersDto): Promise<LearnerProfile> =>
     request.post(`/projects/${projectId}/collector/submit`, data),
 }

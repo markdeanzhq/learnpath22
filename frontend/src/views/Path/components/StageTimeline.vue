@@ -21,7 +21,7 @@
             :key="task.node_id"
             :xs="24" :sm="12" :md="8" :lg="6"
           >
-            <TaskCard :task="task" />
+            <TaskCard :task="task" @locate-node="handleLocateNode" />
           </el-col>
         </el-row>
       </el-timeline-item>
@@ -30,10 +30,28 @@
 </template>
 
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
 import type { PathStage } from '@/api/modules/plan'
 import TaskCard from './TaskCard.vue'
 
 defineProps<{ stages: PathStage[] }>()
+
+const emit = defineEmits<{
+  locateNode: [nodeId: string]
+}>()
+
+const router = useRouter()
+
+function handleLocateNode(nodeId: string) {
+  emit('locateNode', nodeId)
+  router.push({
+    name: 'Knowledge',
+    query: {
+      nodeId,
+      scope: 'project',
+    },
+  })
+}
 
 const stageColors = ['#409EFF', '#67C23A', '#E6A23C']
 </script>

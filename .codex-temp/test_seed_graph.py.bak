@@ -1,0 +1,208 @@
+"""seed_graph strict mirror sync tests."""
+
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.db.seed_graph import initialize_knowledge_node_schema, seed_graph
+
+
+@pytest.mark.asyncio
+async def test_initialize_knowledge_node_schema_creates_constraints_for_all_entity_labels():
+    driver = AsyncMock()
+
+    await initialize_knowledge_node_schema(driver)
+
+    assert driver.execute_query.await_count == 3
+    queries = [call.args[0] for call in driver.execute_query.await_args_list]
+    assert any("KnowledgeNode" in query for query in queries)
+    assert any("Stage" in query for query in queries)
+    assert any("Resource" in query for query in queries)
+
+
+@pytest.mark.asyncio
+async def test_seed_graph_passes_stage_and_resource_payloads_into_write_transaction():
+    driver = AsyncMock()
+    tx = AsyncMock()
+
+    async def _execute_write(operation):
+        return await operation(tx)
+
+    driver.execute_write.side_effect = _execute_write
+
+    result = await seed_graph(
+        driver,
+        domain="machine_learning",
+        version="v1",
+        pack_hash="hash-1",
+        nodes=[
+            {
+                "id": "ml_c01",
+                "name": "监督学习",
+                "group": "C",
+                "category": "algorithm",
+                "description": "desc",
+                "difficulty_final": 3,
+                "importance_final": 5,
+                "estimated_hours": 6,
+                "req_math": 2,
+                "req_coding": 2,
+                "req_ml": 1,
+                "theory_weight": 0.7,
+                "practice_weight": 0.3,
+            },
+            {
+                "id": "ml_c02",
+                "name": "损失函数",
+                "group": "C",
+                "category": "algorithm",
+                "description": "desc",
+                "difficulty_final": 3,
+                "importance_final": 4,
+                "estimated_hours": 4,
+                "req_math": 2,
+                "req_coding": 2,
+                "req_ml": 1,
+                "theory_weight": 0.6,
+                "practice_weight": 0.4,
+            },
+        ],
+        requires_edges=[{"source": "ml_c01", "target": "ml_c02", "reason": "prerequisite"}],
+        related_edges=[{"source": "ml_c02", "target": "ml_c01", "reason": "related"}],
+        stages=[
+            {
+                "id": "stage_foundation",
+                "name": "基础准备",
+                "order": 1,
+                "description": "foundation",
+                "category_keys": ["foundation"],
+                "node_ids": ["ml_c01"],
+            },
+            {
+                "id": "stage_core",
+                "name": "核心掌握",
+                "order": 2,
+                "description": "core",
+                "category_keys": ["algorithm"],
+                "node_ids": ["ml_c02"],
+            },
+        ],
+        resources=[
+            {
+                "id": "resource_workflow",
+                "title": "监督学习建模流程卡片",
+                "resource_type": "workflow_guide",
+                "description": "workflow",
+                "node_ids": ["ml_c01", "ml_c02"],
+                "stage_ids": ["stage_core"],
+            }
+        ],
+    )
+
+    assert result == {"nodes": 5, "edges": 8}
+    assert tx.run.await_count == 17
+
+    queries = [call.args[0] for call in tx.run.await_args_list]
+    assert any("MERGE (s:Stage" in query for query in queries)
+    assert any("MERGE (r:Resource" in query for query in queries)
+    assert any("[r:PRECEDES]" in query for query in queries)
+    assert any("[r:CONTAINS]" in query for query in queries)
+    assert any("[r:HAS_RESOURCE]" in query for query in queries)
+    assert any("[r:COVERS]" in query for query in queries)
+
+    stage_create_call = next(call for call in tx.run.await_args_list if "MERGE (s:Stage" in call.args[0])
+    assert stage_create_call.kwargs["stages"] == [
+        {
+            "id": "stage_foundation",
+            "domain": "machine_learning",
+            "name": "基础准备",
+            "order": 1,
+            "description": "foundation",
+            "category_keys": ["foundation"],
+        },
+        {
+            "id": "stage_core",
+            "domain": "machine_learning",
+            "name": "核心掌握",
+            "order": 2,
+            "description": "core",
+            "category_keys": ["algorithm"],
+        },
+    ]
+
+    resource_create_call = next(call for call in tx.run.await_args_list if "MERGE (r:Resource" in call.args[0])
+    assert resource_create_call.kwargs["resources"] == [
+        {
+            "id": "resource_workflow",
+            "domain": "machine_learning",
+            "title": "监督学习建模流程卡片",
+            "resource_type": "workflow_guide",
+            "description": "workflow",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_seed_graph_strict_cleanup_distinguishes_edge_relationship_types():
+    driver = AsyncMock()
+    tx = AsyncMock()
+
+    async def _execute_write(operation):
+        return await operation(tx)
+
+    driver.execute_write.side_effect = _execute_write
+
+    await seed_graph(
+        driver,
+        domain="machine_learning",
+        version="v1",
+        pack_hash="hash-1",
+        nodes=[
+            {
+                "id": "ml_c01",
+                "name": "监督学习",
+                "group": "C",
+                "category": "algorithm",
+                "description": "desc",
+                "difficulty_final": 3,
+                "importance_final": 5,
+                "estimated_hours": 6,
+            },
+            {
+                "id": "ml_c02",
+                "name": "损失函数",
+                "group": "C",
+                "category": "algorithm",
+                "description": "desc",
+                "difficulty_final": 3,
+                "importance_final": 4,
+                "estimated_hours": 4,
+            },
+        ],
+        requires_edges=[{"source": "ml_c01", "target": "ml_c02", "reason": "same-reason"}],
+        related_edges=[{"source": "ml_c01", "target": "ml_c02", "reason": "same-reason"}],
+        stages=[],
+        resources=[],
+    )
+
+    cleanup_call = next(
+        call
+        for call in tx.run.await_args_list
+        if "type(r) IN $relationship_types" in call.args[0]
+    )
+
+    assert "relationship_type: type(r)" in cleanup_call.args[0]
+    assert cleanup_call.kwargs["edges"] == [
+        {
+            "source": "ml_c01",
+            "target": "ml_c02",
+            "reason": "same-reason",
+            "relationship_type": "REQUIRES",
+        },
+        {
+            "source": "ml_c01",
+            "target": "ml_c02",
+            "reason": "same-reason",
+            "relationship_type": "RELATED_TO",
+        },
+    ]

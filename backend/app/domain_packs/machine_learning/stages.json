@@ -1,0 +1,76 @@
+[
+  {
+    "id": "stage_foundation",
+    "name": "基础准备",
+    "order": 1,
+    "description": "建立进入机器学习学习路径前必须具备的编程、数学和任务认知基础。",
+    "category_keys": ["foundation", "math_foundation", "ml_core"],
+    "node_ids": [
+      "ml_a01",
+      "ml_a02",
+      "ml_a03",
+      "ml_a04",
+      "ml_a05",
+      "ml_a06",
+      "ml_a07",
+      "ml_a08",
+      "ml_a09",
+      "ml_a10",
+      "ml_b01",
+      "ml_b02",
+      "ml_b04",
+      "ml_b05",
+      "ml_b06",
+      "ml_b07",
+      "ml_b08",
+      "ml_b09",
+      "ml_b10"
+    ]
+  },
+  {
+    "id": "stage_core",
+    "name": "核心掌握",
+    "order": 2,
+    "description": "围绕监督学习核心算法建立建模、优化与偏差控制能力。",
+    "category_keys": ["algorithm"],
+    "node_ids": [
+      "ml_c01",
+      "ml_c02",
+      "ml_c03",
+      "ml_c04",
+      "ml_c05",
+      "ml_c06",
+      "ml_c07",
+      "ml_c08",
+      "ml_c09",
+      "ml_c10",
+      "ml_c11",
+      "ml_c12"
+    ]
+  },
+  {
+    "id": "stage_application",
+    "name": "应用突破",
+    "order": 3,
+    "description": "把评估、泛化与工程实践串起来，完成面向问题的落地闭环。",
+    "category_keys": ["evaluation", "practice"],
+    "node_ids": [
+      "ml_d01",
+      "ml_d02",
+      "ml_d03",
+      "ml_d04",
+      "ml_d05",
+      "ml_d06",
+      "ml_d07",
+      "ml_d08",
+      "ml_e01",
+      "ml_e02",
+      "ml_e03",
+      "ml_e04",
+      "ml_e05",
+      "ml_e06",
+      "ml_e07",
+      "ml_e08"
+    ]
+  }
+]

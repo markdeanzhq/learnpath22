@@ -69,6 +69,15 @@ async def get_latest_plan(
     return result.scalar_one_or_none()
 
 
+async def get_plan_by_id(
+    db: AsyncSession, path_id: str
+) -> LearningPath | None:
+    result = await db.execute(
+        select(LearningPath).where(LearningPath.id == path_id).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_plan_version_count(db: AsyncSession, project_id: str) -> int:
     result = await db.execute(
         select(func.count())

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -19,6 +21,7 @@ from app.services.graph_service import (
     GRAPH_SCOPE_PROJECT,
     build_edge_review_id,
     get_graph_elements,
+    get_graph_entity_metadata,
     get_path_subgraph,
 )
 from app.services.graph_sync_service import get_graph_sync_service
@@ -79,6 +82,13 @@ async def _query_path_subgraph(neo4j: Neo4jDriver, node_ids: list[str]) -> dict:
         return await get_path_subgraph(neo4j, node_ids)
     except (RuntimeError, ValueError) as exc:
         _raise_graph_operation_error("图谱查询失败", exc)
+
+
+async def _query_graph_entity_metadata(neo4j: Neo4jDriver, domain: str) -> dict:
+    try:
+        return await get_graph_entity_metadata(neo4j, domain)
+    except (RuntimeError, ValueError) as exc:
+        _raise_graph_operation_error("扩展实体查询失败", exc)
 
 
 async def _apply_review_statuses(
@@ -172,6 +182,20 @@ async def get_subgraph(
     ids = [nid.strip() for nid in node_ids.split(",") if nid.strip()]
     graph_data = await _query_path_subgraph(neo4j, ids)
     return await _apply_review_statuses(db, project_id, graph_data)
+
+
+@router.get("/projects/{project_id}/graph/entities")
+async def get_graph_entities(
+    project_id: str,
+    neo4j: Neo4jDriver = Depends(get_neo4j),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取 Stage / Resource 扩展实体的只读视图。"""
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+
+    return await _query_graph_entity_metadata(neo4j, project.domain)
 
 
 @router.patch("/projects/{project_id}/graph/nodes/{node_id}")

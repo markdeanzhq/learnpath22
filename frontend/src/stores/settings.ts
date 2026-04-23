@@ -69,6 +69,9 @@ function toPayload(snapshot: SettingsLocalSnapshot): PutConfigPayload {
 
 export const useSettingsStore = defineStore('settings', () => {
   const savedConfig = ref<SettingsLocalSnapshot>(createEmptySnapshot())
+  const llmApiKeySet = ref(false)
+  const searchApiKeySet = ref(false)
+  const llmExplanationPolish = ref(false)
 
   function hydrateFromLocal() {
     const storage = getStorage()
@@ -125,11 +128,26 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  async function refreshServerStatus() {
+    try {
+      const data = await healthApi.getConfigSilently()
+      llmApiKeySet.value = data.llm_api_key_set
+      searchApiKeySet.value = data.search_api_key_set
+      llmExplanationPolish.value = data.llm_explanation_polish
+    } catch {
+      // keep last known values on failure
+    }
+  }
+
   return {
     savedConfig,
+    llmApiKeySet,
+    searchApiKeySet,
+    llmExplanationPolish,
     hydrateFromLocal,
     savePatchToLocal,
     clearLocalSavedConfig,
     bootstrapSyncToBackend,
+    refreshServerStatus,
   }
 })

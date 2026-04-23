@@ -11,6 +11,7 @@ export interface SearchResponse {
   query: string
   results: SearchResultItem[]
   count: number
+  source: string
 }
 
 export const searchApi = {

@@ -1,14 +1,18 @@
+from __future__ import annotations
+
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
 class GraphNodeData(BaseModel):
     id: str
     label: str
-    category: str | None = None
-    group_id: str | None = None
-    difficulty: int | None = None
-    importance: int | None = None
-    estimated_hours: float | None = None
+    category: Optional[str] = None
+    group_id: Optional[str] = None
+    difficulty: Optional[int] = None
+    importance: Optional[int] = None
+    estimated_hours: Optional[float] = None
     is_main_path: bool = False
 
 

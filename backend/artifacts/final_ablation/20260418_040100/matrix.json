@@ -1,0 +1,1115 @@
+{
+  "profile": {
+    "math_level": 2,
+    "coding_level": 2,
+    "ml_level": 1,
+    "theory_weight": 0.6,
+    "practice_weight": 0.4,
+    "weekly_hours": 10,
+    "deadline_weeks": 12
+  },
+  "goals": [
+    {
+      "id": "G1",
+      "label": "领域型 · 机器学习基础",
+      "text": "我想系统学习机器学习基础"
+    },
+    {
+      "id": "G2",
+      "label": "概念型 · 梯度下降",
+      "text": "理解梯度下降"
+    },
+    {
+      "id": "G3",
+      "label": "问题型 · 逻辑回归",
+      "text": "我想搞懂逻辑回归为什么能做分类"
+    }
+  ],
+  "weight_groups": [
+    {
+      "id": "W1",
+      "label": "baseline（默认）",
+      "overrides": {}
+    },
+    {
+      "id": "W2",
+      "label": "importance-heavy",
+      "overrides": {
+        "priority_weights": {
+          "importance": 0.4,
+          "goal_relevance": 0.1
+        }
+      }
+    },
+    {
+      "id": "W3",
+      "label": "relevance-heavy",
+      "overrides": {
+        "priority_weights": {
+          "importance": 0.15,
+          "goal_relevance": 0.35
+        }
+      }
+    }
+  ],
+  "results": {
+    "G1": {
+      "W1": {
+        "ordered_ids": [
+          "ml_b01",
+          "ml_b10",
+          "ml_b06",
+          "ml_b02",
+          "ml_a01",
+          "ml_e01",
+          "ml_e03",
+          "ml_a06",
+          "ml_a02",
+          "ml_c10",
+          "ml_a04",
+          "ml_b09",
+          "ml_d05",
+          "ml_b08",
+          "ml_a07",
+          "ml_a05",
+          "ml_a03",
+          "ml_b05",
+          "ml_b04",
+          "ml_c01",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05",
+          "ml_c09",
+          "ml_d03",
+          "ml_d02",
+          "ml_d01",
+          "ml_d08",
+          "ml_e05",
+          "ml_d04"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_b01",
+            "ml_b10",
+            "ml_b06",
+            "ml_b02",
+            "ml_a01",
+            "ml_a06",
+            "ml_a02",
+            "ml_a04",
+            "ml_b09",
+            "ml_b08",
+            "ml_a07",
+            "ml_a05",
+            "ml_a03",
+            "ml_b05",
+            "ml_b04"
+          ],
+          "核心掌握": [
+            "ml_c10",
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05",
+            "ml_c09"
+          ],
+          "应用突破": [
+            "ml_e01",
+            "ml_e03",
+            "ml_d05",
+            "ml_d03",
+            "ml_d02",
+            "ml_d01",
+            "ml_d08",
+            "ml_e05",
+            "ml_d04"
+          ]
+        },
+        "node_count": 31,
+        "total_hours": 81,
+        "reinforced_ids": [
+          "ml_b08"
+        ],
+        "target_node_ids": [
+          "ml_b10",
+          "ml_b01",
+          "ml_e05",
+          "ml_d08",
+          "ml_d04"
+        ]
+      },
+      "W2": {
+        "ordered_ids": [
+          "ml_b01",
+          "ml_b10",
+          "ml_b06",
+          "ml_b02",
+          "ml_a01",
+          "ml_a06",
+          "ml_a02",
+          "ml_e01",
+          "ml_e03",
+          "ml_a04",
+          "ml_c10",
+          "ml_b08",
+          "ml_b09",
+          "ml_d05",
+          "ml_b05",
+          "ml_b04",
+          "ml_a07",
+          "ml_a05",
+          "ml_a03",
+          "ml_c01",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05",
+          "ml_c09",
+          "ml_d03",
+          "ml_d02",
+          "ml_d01",
+          "ml_d08",
+          "ml_e05",
+          "ml_d04"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_b01",
+            "ml_b10",
+            "ml_b06",
+            "ml_b02",
+            "ml_a01",
+            "ml_a06",
+            "ml_a02",
+            "ml_a04",
+            "ml_b08",
+            "ml_b09",
+            "ml_b05",
+            "ml_b04",
+            "ml_a07",
+            "ml_a05",
+            "ml_a03"
+          ],
+          "核心掌握": [
+            "ml_c10",
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05",
+            "ml_c09"
+          ],
+          "应用突破": [
+            "ml_e01",
+            "ml_e03",
+            "ml_d05",
+            "ml_d03",
+            "ml_d02",
+            "ml_d01",
+            "ml_d08",
+            "ml_e05",
+            "ml_d04"
+          ]
+        },
+        "node_count": 31,
+        "total_hours": 81,
+        "reinforced_ids": [
+          "ml_b08"
+        ],
+        "target_node_ids": [
+          "ml_b10",
+          "ml_b01",
+          "ml_e05",
+          "ml_d08",
+          "ml_d04"
+        ]
+      },
+      "W3": {
+        "ordered_ids": [
+          "ml_b01",
+          "ml_b10",
+          "ml_b06",
+          "ml_b02",
+          "ml_a01",
+          "ml_e01",
+          "ml_e03",
+          "ml_b09",
+          "ml_d05",
+          "ml_a06",
+          "ml_c10",
+          "ml_a02",
+          "ml_a04",
+          "ml_a07",
+          "ml_a05",
+          "ml_a03",
+          "ml_b05",
+          "ml_b04",
+          "ml_c01",
+          "ml_b08",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05",
+          "ml_c09",
+          "ml_d03",
+          "ml_d02",
+          "ml_d04",
+          "ml_d01",
+          "ml_d08",
+          "ml_e05"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_b01",
+            "ml_b10",
+            "ml_b06",
+            "ml_b02",
+            "ml_a01",
+            "ml_b09",
+            "ml_a06",
+            "ml_a02",
+            "ml_a04",
+            "ml_a07",
+            "ml_a05",
+            "ml_a03",
+            "ml_b05",
+            "ml_b04",
+            "ml_b08"
+          ],
+          "核心掌握": [
+            "ml_c10",
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05",
+            "ml_c09"
+          ],
+          "应用突破": [
+            "ml_e01",
+            "ml_e03",
+            "ml_d05",
+            "ml_d03",
+            "ml_d02",
+            "ml_d04",
+            "ml_d01",
+            "ml_d08",
+            "ml_e05"
+          ]
+        },
+        "node_count": 31,
+        "total_hours": 81,
+        "reinforced_ids": [
+          "ml_b08"
+        ],
+        "target_node_ids": [
+          "ml_b10",
+          "ml_b01",
+          "ml_e05",
+          "ml_d08",
+          "ml_d04"
+        ]
+      }
+    },
+    "G2": {
+      "W1": {
+        "ordered_ids": [
+          "ml_a04",
+          "ml_b09",
+          "ml_a02",
+          "ml_a05",
+          "ml_b01",
+          "ml_b10",
+          "ml_b02",
+          "ml_b06",
+          "ml_a06",
+          "ml_a01",
+          "ml_b08",
+          "ml_a03",
+          "ml_b05",
+          "ml_b04",
+          "ml_c01",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_a04",
+            "ml_b09",
+            "ml_a02",
+            "ml_a05",
+            "ml_b01",
+            "ml_b10",
+            "ml_b02",
+            "ml_b06",
+            "ml_a06",
+            "ml_a01",
+            "ml_b08",
+            "ml_a03",
+            "ml_b05",
+            "ml_b04"
+          ],
+          "核心掌握": [
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05"
+          ],
+          "应用突破": []
+        },
+        "node_count": 19,
+        "total_hours": 51,
+        "reinforced_ids": [
+          "ml_b06",
+          "ml_b02",
+          "ml_a06",
+          "ml_b08",
+          "ml_a01"
+        ],
+        "target_node_ids": [
+          "ml_c05"
+        ]
+      },
+      "W2": {
+        "ordered_ids": [
+          "ml_a04",
+          "ml_b01",
+          "ml_b10",
+          "ml_a02",
+          "ml_b02",
+          "ml_b06",
+          "ml_a06",
+          "ml_a01",
+          "ml_b08",
+          "ml_b09",
+          "ml_a05",
+          "ml_b05",
+          "ml_b04",
+          "ml_a03",
+          "ml_c01",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_a04",
+            "ml_b01",
+            "ml_b10",
+            "ml_a02",
+            "ml_b02",
+            "ml_b06",
+            "ml_a06",
+            "ml_a01",
+            "ml_b08",
+            "ml_b09",
+            "ml_a05",
+            "ml_b05",
+            "ml_b04",
+            "ml_a03"
+          ],
+          "核心掌握": [
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05"
+          ],
+          "应用突破": []
+        },
+        "node_count": 19,
+        "total_hours": 51,
+        "reinforced_ids": [
+          "ml_b06",
+          "ml_b02",
+          "ml_a06",
+          "ml_b08",
+          "ml_a01"
+        ],
+        "target_node_ids": [
+          "ml_c05"
+        ]
+      },
+      "W3": {
+        "ordered_ids": [
+          "ml_a04",
+          "ml_b09",
+          "ml_a05",
+          "ml_a02",
+          "ml_b01",
+          "ml_b10",
+          "ml_b02",
+          "ml_b06",
+          "ml_a06",
+          "ml_a01",
+          "ml_b08",
+          "ml_a03",
+          "ml_b05",
+          "ml_b04",
+          "ml_c01",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_a04",
+            "ml_b09",
+            "ml_a05",
+            "ml_a02",
+            "ml_b01",
+            "ml_b10",
+            "ml_b02",
+            "ml_b06",
+            "ml_a06",
+            "ml_a01",
+            "ml_b08",
+            "ml_a03",
+            "ml_b05",
+            "ml_b04"
+          ],
+          "核心掌握": [
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05"
+          ],
+          "应用突破": []
+        },
+        "node_count": 19,
+        "total_hours": 51,
+        "reinforced_ids": [
+          "ml_b06",
+          "ml_b02",
+          "ml_a06",
+          "ml_b08",
+          "ml_a01"
+        ],
+        "target_node_ids": [
+          "ml_c05"
+        ]
+      }
+    },
+    "G3": {
+      "W1": {
+        "ordered_ids": [
+          "ml_b01",
+          "ml_b02",
+          "ml_b10",
+          "ml_a06",
+          "ml_c10",
+          "ml_a02",
+          "ml_b06",
+          "ml_a04",
+          "ml_c11",
+          "ml_a07",
+          "ml_b09",
+          "ml_d05",
+          "ml_a05",
+          "ml_a03",
+          "ml_a01",
+          "ml_b08",
+          "ml_b05",
+          "ml_b04",
+          "ml_c01",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05",
+          "ml_c09",
+          "ml_d01",
+          "ml_d03",
+          "ml_d02",
+          "ml_d08",
+          "ml_e07",
+          "ml_e08"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_b01",
+            "ml_b02",
+            "ml_b10",
+            "ml_a06",
+            "ml_a02",
+            "ml_b06",
+            "ml_a04",
+            "ml_a07",
+            "ml_b09",
+            "ml_a05",
+            "ml_a03",
+            "ml_a01",
+            "ml_b08",
+            "ml_b05",
+            "ml_b04"
+          ],
+          "核心掌握": [
+            "ml_c10",
+            "ml_c11",
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05",
+            "ml_c09"
+          ],
+          "应用突破": [
+            "ml_d05",
+            "ml_d01",
+            "ml_d03",
+            "ml_d02",
+            "ml_d08",
+            "ml_e07",
+            "ml_e08"
+          ]
+        },
+        "node_count": 30,
+        "total_hours": 81,
+        "reinforced_ids": [
+          "ml_b08",
+          "ml_a01"
+        ],
+        "target_node_ids": [
+          "ml_c09",
+          "ml_e08",
+          "ml_e07",
+          "ml_d01",
+          "ml_c11"
+        ]
+      },
+      "W2": {
+        "ordered_ids": [
+          "ml_b01",
+          "ml_b02",
+          "ml_b10",
+          "ml_a06",
+          "ml_a02",
+          "ml_b06",
+          "ml_c10",
+          "ml_a04",
+          "ml_a01",
+          "ml_c11",
+          "ml_b08",
+          "ml_b09",
+          "ml_d05",
+          "ml_a07",
+          "ml_a05",
+          "ml_b05",
+          "ml_b04",
+          "ml_a03",
+          "ml_c01",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05",
+          "ml_c09",
+          "ml_d03",
+          "ml_d02",
+          "ml_d01",
+          "ml_d08",
+          "ml_e07",
+          "ml_e08"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_b01",
+            "ml_b02",
+            "ml_b10",
+            "ml_a06",
+            "ml_a02",
+            "ml_b06",
+            "ml_a04",
+            "ml_a01",
+            "ml_b08",
+            "ml_b09",
+            "ml_a07",
+            "ml_a05",
+            "ml_b05",
+            "ml_b04",
+            "ml_a03"
+          ],
+          "核心掌握": [
+            "ml_c10",
+            "ml_c11",
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05",
+            "ml_c09"
+          ],
+          "应用突破": [
+            "ml_d05",
+            "ml_d03",
+            "ml_d02",
+            "ml_d01",
+            "ml_d08",
+            "ml_e07",
+            "ml_e08"
+          ]
+        },
+        "node_count": 30,
+        "total_hours": 81,
+        "reinforced_ids": [
+          "ml_b08",
+          "ml_a01"
+        ],
+        "target_node_ids": [
+          "ml_c09",
+          "ml_e08",
+          "ml_e07",
+          "ml_d01",
+          "ml_c11"
+        ]
+      },
+      "W3": {
+        "ordered_ids": [
+          "ml_b01",
+          "ml_b02",
+          "ml_b10",
+          "ml_a06",
+          "ml_c10",
+          "ml_c11",
+          "ml_a02",
+          "ml_a04",
+          "ml_b06",
+          "ml_a07",
+          "ml_b09",
+          "ml_d05",
+          "ml_a05",
+          "ml_a03",
+          "ml_b05",
+          "ml_b04",
+          "ml_c01",
+          "ml_a01",
+          "ml_b08",
+          "ml_c02",
+          "ml_c04",
+          "ml_c03",
+          "ml_c05",
+          "ml_c09",
+          "ml_d01",
+          "ml_d03",
+          "ml_d02",
+          "ml_d08",
+          "ml_e07",
+          "ml_e08"
+        ],
+        "stage_plan": {
+          "基础准备": [
+            "ml_b01",
+            "ml_b02",
+            "ml_b10",
+            "ml_a06",
+            "ml_a02",
+            "ml_a04",
+            "ml_b06",
+            "ml_a07",
+            "ml_b09",
+            "ml_a05",
+            "ml_a03",
+            "ml_b05",
+            "ml_b04",
+            "ml_a01",
+            "ml_b08"
+          ],
+          "核心掌握": [
+            "ml_c10",
+            "ml_c11",
+            "ml_c01",
+            "ml_c02",
+            "ml_c04",
+            "ml_c03",
+            "ml_c05",
+            "ml_c09"
+          ],
+          "应用突破": [
+            "ml_d05",
+            "ml_d01",
+            "ml_d03",
+            "ml_d02",
+            "ml_d08",
+            "ml_e07",
+            "ml_e08"
+          ]
+        },
+        "node_count": 30,
+        "total_hours": 81,
+        "reinforced_ids": [
+          "ml_b08",
+          "ml_a01"
+        ],
+        "target_node_ids": [
+          "ml_c09",
+          "ml_e08",
+          "ml_e07",
+          "ml_d01",
+          "ml_c11"
+        ]
+      }
+    }
+  },
+  "diffs": {
+    "G1": {
+      "W2": {
+        "kendall_tau": 0.9441,
+        "common_count": 31,
+        "added_nodes": [],
+        "removed_nodes": [],
+        "top_position_shifts": [
+          {
+            "node_id": "ml_b05",
+            "baseline_index": 17,
+            "variant_index": 14,
+            "delta": -3
+          },
+          {
+            "node_id": "ml_b04",
+            "baseline_index": 18,
+            "variant_index": 15,
+            "delta": -3
+          },
+          {
+            "node_id": "ml_e01",
+            "baseline_index": 5,
+            "variant_index": 7,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_e03",
+            "baseline_index": 6,
+            "variant_index": 8,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_a06",
+            "baseline_index": 7,
+            "variant_index": 5,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_a02",
+            "baseline_index": 8,
+            "variant_index": 6,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_b08",
+            "baseline_index": 13,
+            "variant_index": 11,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_a07",
+            "baseline_index": 14,
+            "variant_index": 16,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_a05",
+            "baseline_index": 15,
+            "variant_index": 17,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_a03",
+            "baseline_index": 16,
+            "variant_index": 18,
+            "delta": 2
+          }
+        ]
+      },
+      "W3": {
+        "kendall_tau": 0.9226,
+        "common_count": 31,
+        "added_nodes": [],
+        "removed_nodes": [],
+        "top_position_shifts": [
+          {
+            "node_id": "ml_b08",
+            "baseline_index": 13,
+            "variant_index": 19,
+            "delta": 6
+          },
+          {
+            "node_id": "ml_b09",
+            "baseline_index": 11,
+            "variant_index": 7,
+            "delta": -4
+          },
+          {
+            "node_id": "ml_d05",
+            "baseline_index": 12,
+            "variant_index": 8,
+            "delta": -4
+          },
+          {
+            "node_id": "ml_a02",
+            "baseline_index": 8,
+            "variant_index": 11,
+            "delta": 3
+          },
+          {
+            "node_id": "ml_d04",
+            "baseline_index": 30,
+            "variant_index": 27,
+            "delta": -3
+          },
+          {
+            "node_id": "ml_a06",
+            "baseline_index": 7,
+            "variant_index": 9,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_a04",
+            "baseline_index": 10,
+            "variant_index": 12,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_c10",
+            "baseline_index": 9,
+            "variant_index": 10,
+            "delta": 1
+          },
+          {
+            "node_id": "ml_a07",
+            "baseline_index": 14,
+            "variant_index": 13,
+            "delta": -1
+          },
+          {
+            "node_id": "ml_a05",
+            "baseline_index": 15,
+            "variant_index": 14,
+            "delta": -1
+          }
+        ]
+      }
+    },
+    "G2": {
+      "W2": {
+        "kendall_tau": 0.7778,
+        "common_count": 19,
+        "added_nodes": [],
+        "removed_nodes": [],
+        "top_position_shifts": [
+          {
+            "node_id": "ml_b09",
+            "baseline_index": 1,
+            "variant_index": 9,
+            "delta": 8
+          },
+          {
+            "node_id": "ml_a05",
+            "baseline_index": 3,
+            "variant_index": 10,
+            "delta": 7
+          },
+          {
+            "node_id": "ml_b01",
+            "baseline_index": 4,
+            "variant_index": 1,
+            "delta": -3
+          },
+          {
+            "node_id": "ml_b10",
+            "baseline_index": 5,
+            "variant_index": 2,
+            "delta": -3
+          },
+          {
+            "node_id": "ml_b02",
+            "baseline_index": 6,
+            "variant_index": 4,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_b06",
+            "baseline_index": 7,
+            "variant_index": 5,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_a06",
+            "baseline_index": 8,
+            "variant_index": 6,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_a01",
+            "baseline_index": 9,
+            "variant_index": 7,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_b08",
+            "baseline_index": 10,
+            "variant_index": 8,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_a03",
+            "baseline_index": 11,
+            "variant_index": 13,
+            "delta": 2
+          }
+        ]
+      },
+      "W3": {
+        "kendall_tau": 0.9883,
+        "common_count": 19,
+        "added_nodes": [],
+        "removed_nodes": [],
+        "top_position_shifts": [
+          {
+            "node_id": "ml_a02",
+            "baseline_index": 2,
+            "variant_index": 3,
+            "delta": 1
+          },
+          {
+            "node_id": "ml_a05",
+            "baseline_index": 3,
+            "variant_index": 2,
+            "delta": -1
+          }
+        ]
+      }
+    },
+    "G3": {
+      "W2": {
+        "kendall_tau": 0.9126,
+        "common_count": 30,
+        "added_nodes": [],
+        "removed_nodes": [],
+        "top_position_shifts": [
+          {
+            "node_id": "ml_a01",
+            "baseline_index": 14,
+            "variant_index": 8,
+            "delta": -6
+          },
+          {
+            "node_id": "ml_b08",
+            "baseline_index": 15,
+            "variant_index": 10,
+            "delta": -5
+          },
+          {
+            "node_id": "ml_a07",
+            "baseline_index": 9,
+            "variant_index": 13,
+            "delta": 4
+          },
+          {
+            "node_id": "ml_a03",
+            "baseline_index": 13,
+            "variant_index": 17,
+            "delta": 4
+          },
+          {
+            "node_id": "ml_c10",
+            "baseline_index": 4,
+            "variant_index": 6,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_a05",
+            "baseline_index": 12,
+            "variant_index": 14,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_d01",
+            "baseline_index": 24,
+            "variant_index": 26,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_a02",
+            "baseline_index": 5,
+            "variant_index": 4,
+            "delta": -1
+          },
+          {
+            "node_id": "ml_b06",
+            "baseline_index": 6,
+            "variant_index": 5,
+            "delta": -1
+          },
+          {
+            "node_id": "ml_c11",
+            "baseline_index": 8,
+            "variant_index": 9,
+            "delta": 1
+          }
+        ]
+      },
+      "W3": {
+        "kendall_tau": 0.954,
+        "common_count": 30,
+        "added_nodes": [],
+        "removed_nodes": [],
+        "top_position_shifts": [
+          {
+            "node_id": "ml_c11",
+            "baseline_index": 8,
+            "variant_index": 5,
+            "delta": -3
+          },
+          {
+            "node_id": "ml_a01",
+            "baseline_index": 14,
+            "variant_index": 17,
+            "delta": 3
+          },
+          {
+            "node_id": "ml_b08",
+            "baseline_index": 15,
+            "variant_index": 18,
+            "delta": 3
+          },
+          {
+            "node_id": "ml_b06",
+            "baseline_index": 6,
+            "variant_index": 8,
+            "delta": 2
+          },
+          {
+            "node_id": "ml_b05",
+            "baseline_index": 16,
+            "variant_index": 14,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_b04",
+            "baseline_index": 17,
+            "variant_index": 15,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_c01",
+            "baseline_index": 18,
+            "variant_index": 16,
+            "delta": -2
+          },
+          {
+            "node_id": "ml_a02",
+            "baseline_index": 5,
+            "variant_index": 6,
+            "delta": 1
+          }
+        ]
+      }
+    }
+  }
+}

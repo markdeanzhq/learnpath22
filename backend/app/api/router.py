@@ -8,6 +8,8 @@ from app.api.v1.plans import router as plans_router
 from app.api.v1.tracking import router as tracking_router
 from app.api.v1.replans import router as replans_router
 from app.api.v1.search import router as search_router
+from app.api.v1.resources import router as resources_router
+from app.api.v1.goal_resolution import router as goal_resolution_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
@@ -18,3 +20,5 @@ api_router.include_router(plans_router, tags=["plans"])
 api_router.include_router(tracking_router, tags=["tracking"])
 api_router.include_router(replans_router, tags=["replans"])
 api_router.include_router(search_router, tags=["search"])
+api_router.include_router(resources_router, tags=["resources"])
+api_router.include_router(goal_resolution_router, tags=["goal-resolution"])

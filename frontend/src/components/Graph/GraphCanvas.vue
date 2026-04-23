@@ -424,7 +424,7 @@ function initCytoscape() {
 
 function applyNodeClasses() {
   if (!cy) return
-  cy.nodes().removeClass('highlighted mastered search-match')
+  cy.nodes().removeClass('highlighted mastered')
   props.highlightNodes.forEach((id: string) => {
     const node = cy.getElementById(id)
     if (node.length) node.addClass('highlighted')
@@ -531,6 +531,23 @@ defineExpose({
   },
   fitView: () => {
     if (cy) cy.fit(undefined, 30)
+  },
+  focusNode: (nodeId: string) => {
+    if (!cy) return false
+    const node = cy.getElementById(nodeId)
+    if (!node.length) return false
+
+    closeContextMenu()
+    const focusElements = node.closedNeighborhood()
+    cy.stop()
+    cy.animate({
+      fit: {
+        eles: focusElements.length ? focusElements : node,
+        padding: 80,
+      },
+      duration: 500,
+    })
+    return true
   },
   highlightBySearch: (keyword: string) => {
     if (!cy) return

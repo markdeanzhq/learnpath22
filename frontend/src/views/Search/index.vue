@@ -15,16 +15,27 @@
 
       <template v-if="projectId">
         <el-alert
-          v-if="configMissing"
-          title="搜索服务未配置"
-          type="warning"
+          v-if="configMissing || readinessWarning || searchError"
+          :title="searchError || readinessWarning || '搜索能力待配置'"
+          :type="configMissing || readinessWarning ? 'warning' : 'error'"
           show-icon
           :closable="false"
           style="margin-bottom: 16px"
         >
           <template #default>
-            请先到“设置”页面填写 `SEARCH_API_KEY`，保存后再使用资料搜索。
-            <el-button link type="primary" @click="router.push('/settings')">前往设置</el-button>
+            <template v-if="configMissing">
+              资料搜索属于在线增强能力。请先到“设置”页面填写 `SEARCH_API_KEY`，保存后再使用搜索；这不会影响学习路径规划主链演示。
+              <el-button link type="primary" @click="router.push('/settings')">前往设置</el-button>
+            </template>
+            <template v-else-if="readinessWarning">
+              当前仅搜索增强能力检查未通过；请检查设置页中的搜索配置后重新检查。学习路径规划主链仍可单独演示。
+              <el-button link type="primary" @click="reloadSearchConfig">重新检查</el-button>
+              <el-button link type="primary" @click="router.push('/settings')">前往设置</el-button>
+            </template>
+            <template v-else>
+              资料搜索依赖外部在线服务；请检查设置页中的搜索配置或稍后重试。搜索异常不会代表系统主链不可用。
+              <el-button link type="primary" @click="reloadSearchConfig">重新检查</el-button>
+            </template>
           </template>
         </el-alert>
 
@@ -34,7 +45,7 @@
           @keyup.enter="doSearch"
         >
           <template #append>
-            <el-button @click="doSearch" :loading="searching" :disabled="configMissing">搜索</el-button>
+            <el-button @click="doSearch" :loading="searching" :disabled="configMissing || !!readinessWarning">搜索</el-button>
           </template>
         </el-input>
 
@@ -67,7 +78,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { healthApi } from '@/api/modules/health'
 import { searchApi } from '@/api/modules/search'
 import { useProjectStore } from '@/stores/project'
@@ -81,6 +91,8 @@ const searchResults = ref<any[]>([])
 const searching = ref(false)
 const searchDone = ref(false)
 const configMissing = ref(false)
+const readinessWarning = ref('')
+const searchError = ref('')
 
 onMounted(async () => {
   await loadSearchConfig()
@@ -88,28 +100,41 @@ onMounted(async () => {
 
 async function loadSearchConfig() {
   try {
-    const data = await healthApi.getConfig()
-    configMissing.value = !data.search_api_key_set
+    const [config, readiness] = await Promise.all([
+      healthApi.getConfigSilently(),
+      healthApi.getSearchReadiness(),
+    ])
+    configMissing.value = !config.search_api_key_set
+    readinessWarning.value = readiness.ready ? '' : (readiness.reason || '搜索增强能力检查未通过')
+    if (!configMissing.value && searchError.value === '搜索服务未配置') {
+      searchError.value = ''
+    }
   } catch {
     configMissing.value = false
+    readinessWarning.value = '搜索能力检查失败，请稍后重试'
   }
 }
 
+async function reloadSearchConfig() {
+  await loadSearchConfig()
+}
+
 async function doSearch() {
-  if (!projectId.value || !searchQuery.value.trim() || configMissing.value) return
+  if (!projectId.value || !searchQuery.value.trim() || configMissing.value || !!readinessWarning.value) return
   searching.value = true
   searchDone.value = false
   searchResults.value = []
+  searchError.value = ''
   try {
     const data = await searchApi.search(projectId.value, searchQuery.value)
     searchResults.value = data.results ?? []
     searchDone.value = true
   } catch (e: any) {
     const message = e?.response?.data?.error || '搜索失败'
+    searchError.value = message
     if (message === '搜索服务未配置') {
       configMissing.value = true
     }
-    ElMessage.error(message)
   } finally {
     searching.value = false
   }

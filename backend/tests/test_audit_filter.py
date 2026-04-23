@@ -1,66 +1,66 @@
-import pytest
-from app.services.planner_service import plan_with_profile
 from app.services.domain_pack_service import get_domain_pack_service
+from app.services.planner_service import plan_with_profile
+
+
+PROFILE = {
+    "math_level": 3,
+    "coding_level": 3,
+    "ml_level": 1,
+    "theory_weight": 0.5,
+    "weekly_hours": 10,
+    "deadline_weeks": 8,
+}
 
 def test_plan_filters_removed_nodes():
-    pack = get_domain_pack_service("machine_learning")
-    profile = {
-        "math_level": 3,
-        "coding_level": 3,
-        "ml_level": 1,
-        "theory_weight": 0.5,
-        "weekly_hours": 10,
-        "deadline_weeks": 8,
-    }
-    
-    # 正常规划
+    pack = get_domain_pack_service("machine_learning", force_reload=True)
+
     res1 = plan_with_profile(
         goal_text="我想系统学习机器学习基础",
         goal_type="domain",
-        profile=profile,
-        pack=pack
+        profile=PROFILE,
+        pack=pack,
     )
-    all_nodes = set(res1["ordered_ids"])
-    
-    # 挑选一个在路径中的节点进行移除
     node_to_remove = res1["ordered_ids"][0]
-    
-    # 移除该节点后的规划
+
     res2 = plan_with_profile(
         goal_text="我想系统学习机器学习基础",
         goal_type="domain",
-        profile=profile,
+        profile=PROFILE,
         pack=pack,
-        removed_node_ids={node_to_remove}
+        removed_node_ids={node_to_remove},
     )
-    
+
     assert node_to_remove not in res2["ordered_ids"]
     assert len(res2["ordered_ids"]) < len(res1["ordered_ids"])
+    assert node_to_remove in res2["audit"]["removed_node_ids"]
+    assert node_to_remove not in res2["audit"]["filtered_requires_adj"]
+    assert node_to_remove not in res2["audit"]["filtered_requires_rev_adj"]
 
-def test_plan_filters_removed_edges():
-    pack = get_domain_pack_service("machine_learning")
-    profile = {
-        "math_level": 3,
-        "coding_level": 3,
-        "ml_level": 1,
-        "theory_weight": 0.5,
-        "weekly_hours": 10,
-        "deadline_weeks": 8,
-    }
-    
-    # 移除一条实际存在的 REQUIRES 边，验证 typed edge id 能被规划过滤逻辑识别
-    # 注意：规划结果受多重因素影响，这里主要验证能跑通且接受 typed edge id
-    
+
+def test_plan_audit_contains_filtered_snapshot():
+    pack = get_domain_pack_service("machine_learning", force_reload=True)
+    removed_nodes = {"ml_e08"}
     removed_edges = {"ml_a04->ml_c05::REQUIRES"}
-    
+
     res = plan_with_profile(
-        goal_text="机器学习",
+        goal_text="我想系统学习机器学习基础",
         goal_type="domain",
-        profile=profile,
+        profile=PROFILE,
         pack=pack,
-        removed_edge_ids=removed_edges
+        removed_node_ids=removed_nodes,
+        removed_edge_ids=removed_edges,
     )
-    
-    # 验证逻辑：在 filtered_adj 中不应该存在该边
-    # 由于 plan_with_profile 内部逻辑较多，我们主要验证它能跑通且不报错
-    assert "ordered_ids" in res
+
+    audit = res["audit"]
+    assert audit["pack_version"] == "1.3.0"
+    assert audit["removed_node_ids"] == ["ml_e08"]
+    assert audit["removed_edge_ids"] == ["ml_a04->ml_c05::REQUIRES"]
+    assert "filtered_requires_adj" in audit
+    assert "filtered_requires_rev_adj" in audit
+    assert audit["closure_ids"]
+    assert isinstance(audit["reinforced_ids"], list)
+    assert sorted(audit["final_ids"]) == sorted(res["ordered_ids"])
+    assert "ml_e08" not in audit["filtered_requires_adj"]
+    assert "ml_e08" not in audit["filtered_requires_rev_adj"]
+    assert "ml_c05" not in audit["filtered_requires_adj"].get("ml_a04", [])
+    assert "ml_a04" not in audit["filtered_requires_rev_adj"].get("ml_c05", [])

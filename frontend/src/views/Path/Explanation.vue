@@ -1,11 +1,37 @@
 <template>
   <div class="explanation-section" v-if="explanation">
+    <el-alert
+      v-if="showPolishUnavailable"
+      type="warning"
+      title="请在设置页配置 LLM_API_KEY 并启用解释润色"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 8px;"
+    />
+    <div class="polish-toolbar">
+      <el-switch
+        v-model="polishEnabled"
+        active-text="AI 润色"
+        inline-prompt
+        @change="onPolishChange"
+      />
+      <span class="polish-hint" v-if="polishEnabled">
+        解释文本已经过 LLM 润色；原始规则文本保留在 `raw_*` 字段中可对照查看。
+      </span>
+    </div>
     <el-tabs v-model="activeTab" type="border-card">
       <el-tab-pane label="节点选择" name="nodes">
         <el-table :data="nodeEntries" size="small" stripe>
           <el-table-column prop="node_name" label="知识点" min-width="160" />
           <el-table-column prop="decision_type" label="类型" width="120" />
-          <el-table-column prop="reason" label="选中原因" min-width="280" />
+          <el-table-column prop="reason" label="选中原因" min-width="280">
+            <template #default="{ row }">
+              <div>{{ row.reason }}</div>
+              <div class="raw-text" v-if="row.raw_reason">
+                <span class="raw-label">原始：</span>{{ row.raw_reason }}
+              </div>
+            </template>
+          </el-table-column>
         </el-table>
 
         <el-divider v-if="reinforcementEntries.length > 0" />
@@ -54,7 +80,12 @@
             </template>
           </el-table-column>
           <el-table-column label="原因" min-width="240">
-            <template #default="{ row }">{{ row.reasons.join(', ') }}</template>
+            <template #default="{ row }">
+              <div>{{ row.rationale || '暂无说明' }}</div>
+              <div class="raw-text" v-if="row.raw_rationale">
+                <span class="raw-label">原始：</span>{{ row.raw_rationale }}
+              </div>
+            </template>
           </el-table-column>
         </el-table>
       </el-tab-pane>
@@ -86,7 +117,9 @@
           <el-descriptions-item label="总学时">{{ explanation.budget_explanation.total_hours }} 小时</el-descriptions-item>
           <el-descriptions-item label="每周学时">{{ explanation.budget_explanation.weekly_hours }} 小时</el-descriptions-item>
           <el-descriptions-item label="预计周数">{{ explanation.budget_explanation.estimated_weeks }} 周</el-descriptions-item>
-          <el-descriptions-item label="建议" :span="2">{{ explanation.budget_explanation.suggestion }}</el-descriptions-item>
+          <el-descriptions-item label="建议" :span="2">
+            <div style="white-space: pre-line">{{ explanation.budget_explanation.suggestion }}</div>
+          </el-descriptions-item>
         </el-descriptions>
         <el-empty v-else description="暂无预算说明" />
       </el-tab-pane>
@@ -96,14 +129,33 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import type { ExplanationResponse } from '@/api/modules/plan'
+import { useSettingsStore } from '@/stores/settings'
 
 const props = defineProps<{ explanation: ExplanationResponse | null }>()
+const emit = defineEmits<{ (e: 'polish-change', polish: boolean): void }>()
+
+const settingsStore = useSettingsStore()
+const { llmApiKeySet } = storeToRefs(settingsStore)
 
 const activeTab = ref('nodes')
+const polishEnabled = ref(false)
+
+onMounted(async () => {
+  await settingsStore.refreshServerStatus()
+  polishEnabled.value = settingsStore.llmExplanationPolish
+})
+
+function onPolishChange(value: boolean) {
+  emit('polish-change', value)
+}
 
 const explanation = computed(() => props.explanation)
+const showPolishUnavailable = computed(
+  () => polishEnabled.value === true && llmApiKeySet.value === false,
+)
 const nodeEntries = computed(() => explanation.value?.node_explanations ?? [])
 const reinforcementEntries = computed(() => explanation.value?.reinforcement_explanations ?? [])
 const orderingEntries = computed(() => explanation.value?.ordering_explanations ?? [])
@@ -120,6 +172,24 @@ const budgetTagType = computed(() => {
 
 <style scoped>
 .explanation-section { margin-top: 16px; }
+.polish-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.polish-hint {
+  color: #606266;
+  font-size: 12px;
+}
+.raw-text {
+  color: #909399;
+  font-size: 12px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed #ebeef5;
+}
+.raw-label { font-weight: 600; }
 .hint-text {
   color: #606266;
   font-size: 13px;

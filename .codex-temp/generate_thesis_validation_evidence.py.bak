@@ -1,0 +1,643 @@
+"""Generate structured thesis validation evidence from the fixed scenario matrix."""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+DEFAULT_BASE_URL = "http://localhost:8000/api/v1"
+DEFAULT_MATRIX_FILE = Path(__file__).with_name("thesis_validation_matrix.json")
+DEFAULT_OUTPUT_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "artifacts"
+    / "thesis_validation"
+    / "latest.json"
+)
+DEFAULT_SUMMARY_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "artifacts"
+    / "thesis_validation"
+    / "paper_metrics.json"
+)
+DEFAULT_REQUIRES_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "app"
+    / "domain_packs"
+    / "machine_learning"
+    / "requires_edges.json"
+)
+
+
+async def request_json(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    expected: int = 200,
+) -> Any:
+    response = await client.request(method, path, json=payload)
+    if response.status_code != expected:
+        raise RuntimeError(
+            f"{method} {path} -> HTTP {response.status_code}: {response.text[:500]}"
+        )
+    return response.json()
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_matrix(matrix_file: Path) -> dict[str, Any]:
+    return load_json(matrix_file)
+
+
+def load_requires_edges(requires_file: Path) -> list[dict[str, Any]]:
+    return load_json(requires_file)
+
+
+def index_by_id(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {item["id"]: item for item in items}
+
+
+def build_stage_summary(stages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "stage_index": stage.get("stage_index"),
+            "stage_name": stage.get("stage_name"),
+            "task_count": len(stage.get("tasks", [])),
+            "estimated_hours": stage.get("estimated_hours", 0),
+            "task_node_ids": [task.get("node_id") for task in stage.get("tasks", [])],
+            "task_names": [task.get("name") for task in stage.get("tasks", [])],
+        }
+        for stage in stages
+    ]
+
+
+def build_explanation_counts(explanation: dict[str, Any]) -> dict[str, int]:
+    return {
+        "node_explanations": len(explanation.get("node_explanations", [])),
+        "ordering_explanations": len(explanation.get("ordering_explanations", [])),
+        "stage_explanations": len(explanation.get("stage_explanations", [])),
+        "reinforcement_explanations": len(explanation.get("reinforcement_explanations", [])),
+        "dependency_chain_explanations": len(
+            explanation.get("dependency_chain_explanations", [])
+        ),
+    }
+
+
+def build_checks(
+    plan_response: dict[str, Any],
+    latest_plan_response: dict[str, Any],
+    explanation_counts: dict[str, int],
+) -> dict[str, bool]:
+    return {
+        "plan_generated": plan_response.get("node_count", 0) > 0,
+        "stage_plan_available": len(plan_response.get("stages", [])) > 0,
+        "audit_available": bool(latest_plan_response.get("audit")),
+        "explanations_available": explanation_counts["node_explanations"] > 0,
+    }
+
+
+def utc_now_iso(value: datetime | None = None) -> str:
+    moment = value or datetime.now(timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def get_actual_online_dependency_usage(results: list[dict[str, Any]]) -> dict[str, bool]:
+    llm_used = False
+    search_used = False
+
+    for result in results:
+        goal_result = result.get("latest_plan_response", {}).get("audit", {}).get("goal_result", {})
+        if goal_result.get("resolve_source") == "llm":
+            llm_used = True
+
+        collector_source = result.get("collector_questions_response", {}).get("source")
+        if collector_source == "llm":
+            llm_used = True
+
+        if result.get("search_attempted"):
+            search_used = True
+
+    return {
+        "llm": llm_used,
+        "search": search_used,
+    }
+
+
+def resolve_runtime_mode(actual_usage: dict[str, bool]) -> str:
+    if actual_usage["llm"] and actual_usage["search"]:
+        return "online"
+    if actual_usage["llm"] or actual_usage["search"]:
+        return "hybrid"
+    return "offline"
+
+
+def build_dependency_metadata(
+    health: dict[str, Any],
+    readiness: dict[str, Any],
+    actual_usage: dict[str, bool],
+) -> dict[str, Any]:
+    environment = health.get("environment", {}) if isinstance(health, dict) else {}
+    services = readiness.get("services", {}) if isinstance(readiness, dict) else {}
+    llm_service = services.get("llm", {}) if isinstance(services, dict) else {}
+    search_service = services.get("search", {}) if isinstance(services, dict) else {}
+
+    return {
+        "llm": {
+            "configured": bool(environment.get("llm_api_key_set")),
+            "used_in_run": actual_usage["llm"],
+            "provider": environment.get("llm_provider"),
+            "status": llm_service.get("status"),
+            "ready": llm_service.get("ready"),
+            "reason": llm_service.get("reason"),
+            "base_url": llm_service.get("base_url"),
+            "model": llm_service.get("model"),
+        },
+        "search": {
+            "configured": bool(environment.get("search_api_key_set")),
+            "used_in_run": actual_usage["search"],
+            "provider": search_service.get("provider") or environment.get("search_provider"),
+            "status": search_service.get("status"),
+            "ready": search_service.get("ready"),
+            "reason": search_service.get("reason"),
+        },
+    }
+
+
+def build_run_metadata(
+    *,
+    requested_runtime_mode: str,
+    started_at: datetime,
+    finished_at: datetime,
+    health: dict[str, Any],
+    readiness: dict[str, Any],
+    actual_usage: dict[str, bool],
+) -> dict[str, Any]:
+    resolved_runtime_mode = resolve_runtime_mode(actual_usage)
+
+    return {
+        "started_at_utc": utc_now_iso(started_at),
+        "finished_at_utc": utc_now_iso(finished_at),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 3),
+        "requested_runtime_mode": requested_runtime_mode,
+        "resolved_runtime_mode": resolved_runtime_mode,
+        "uses_online_dependencies": any(actual_usage.values()),
+        "readiness_status": readiness.get("status") if isinstance(readiness, dict) else None,
+        "readiness_ready": readiness.get("ready") if isinstance(readiness, dict) else None,
+        "dependency_metadata": build_dependency_metadata(health, readiness, actual_usage),
+    }
+
+
+def build_requires_lookup(requires_edges: list[dict[str, Any]]) -> dict[str, set[str]]:
+    lookup: dict[str, set[str]] = {}
+    for edge in requires_edges:
+        target = edge.get("target")
+        source = edge.get("source")
+        if not target or not source:
+            continue
+        lookup.setdefault(target, set()).add(source)
+    return lookup
+
+
+def compute_dependency_metrics(
+    results: list[dict[str, Any]],
+    requires_lookup: dict[str, set[str]],
+) -> dict[str, Any]:
+    total_required_edges = 0
+    satisfied_required_edges = 0
+    scenario_summaries: list[dict[str, Any]] = []
+
+    for result in results:
+        if result.get("status") != "ok":
+            scenario_summaries.append(
+                {
+                    "scenario_id": result.get("scenario_id"),
+                    "status": result.get("status"),
+                    "satisfied_required_edges": 0,
+                    "total_required_edges": 0,
+                    "dependency_satisfaction_ratio": 0.0,
+                }
+            )
+            continue
+
+        ordered_node_ids = [
+            task.get("node_id")
+            for stage in result.get("plan_response", {}).get("stages", [])
+            for task in stage.get("tasks", [])
+            if task.get("node_id")
+        ]
+        order_map = {node_id: index for index, node_id in enumerate(ordered_node_ids)}
+
+        scenario_total = 0
+        scenario_satisfied = 0
+        for node_id in ordered_node_ids:
+            for prerequisite_id in requires_lookup.get(node_id, set()):
+                if prerequisite_id not in order_map:
+                    continue
+                scenario_total += 1
+                if order_map[prerequisite_id] < order_map[node_id]:
+                    scenario_satisfied += 1
+
+        total_required_edges += scenario_total
+        satisfied_required_edges += scenario_satisfied
+        ratio = round(scenario_satisfied / scenario_total, 4) if scenario_total else 1.0
+        scenario_summaries.append(
+            {
+                "scenario_id": result.get("scenario_id"),
+                "status": result.get("status"),
+                "satisfied_required_edges": scenario_satisfied,
+                "total_required_edges": scenario_total,
+                "dependency_satisfaction_ratio": ratio,
+            }
+        )
+
+    overall_ratio = (
+        round(satisfied_required_edges / total_required_edges, 4)
+        if total_required_edges
+        else 1.0
+    )
+
+    return {
+        "satisfied_required_edges": satisfied_required_edges,
+        "total_required_edges": total_required_edges,
+        "dependency_satisfaction_ratio": overall_ratio,
+        "scenario_breakdown": scenario_summaries,
+    }
+
+
+def compute_stage_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    stage_count_values: list[int] = []
+    stage_hours_values: list[float] = []
+    per_scenario: list[dict[str, Any]] = []
+
+    for result in results:
+        if result.get("status") != "ok":
+            per_scenario.append(
+                {
+                    "scenario_id": result.get("scenario_id"),
+                    "status": result.get("status"),
+                    "stage_count": 0,
+                    "total_stage_hours": 0,
+                    "stages": [],
+                }
+            )
+            continue
+
+        stage_summary = result.get("stage_summary", [])
+        stage_count = len(stage_summary)
+        total_stage_hours = round(
+            sum(stage.get("estimated_hours", 0) for stage in stage_summary),
+            1,
+        )
+        stage_count_values.append(stage_count)
+        stage_hours_values.append(total_stage_hours)
+        per_scenario.append(
+            {
+                "scenario_id": result.get("scenario_id"),
+                "status": result.get("status"),
+                "stage_count": stage_count,
+                "total_stage_hours": total_stage_hours,
+                "stages": [
+                    {
+                        "stage_name": stage.get("stage_name"),
+                        "task_count": stage.get("task_count", 0),
+                        "estimated_hours": stage.get("estimated_hours", 0),
+                    }
+                    for stage in stage_summary
+                ],
+            }
+        )
+
+    return {
+        "scenario_breakdown": per_scenario,
+        "average_stage_count": round(sum(stage_count_values) / len(stage_count_values), 2)
+        if stage_count_values
+        else 0.0,
+        "average_total_stage_hours": round(sum(stage_hours_values) / len(stage_hours_values), 2)
+        if stage_hours_values
+        else 0.0,
+        "min_stage_count": min(stage_count_values) if stage_count_values else 0,
+        "max_stage_count": max(stage_count_values) if stage_count_values else 0,
+    }
+
+
+def compute_environment_metrics(
+    health: dict[str, Any],
+    readiness: dict[str, Any],
+    run_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    environment = health.get("environment", {}) if isinstance(health, dict) else {}
+    services = readiness.get("services", {}) if isinstance(readiness, dict) else {}
+
+    service_statuses = {
+        service_name: {
+            "status": service.get("status"),
+            "ready": service.get("ready"),
+            "reason": service.get("reason"),
+        }
+        for service_name, service in services.items()
+    }
+
+    return {
+        "prototype_scope": environment.get("prototype_scope"),
+        "delivery_stage": environment.get("delivery_stage"),
+        "python_baseline": environment.get("python_baseline"),
+        "python_version": environment.get("python_version"),
+        "runtime_settings_scope": environment.get("runtime_settings_scope"),
+        "readiness_status": run_metadata.get("readiness_status"),
+        "readiness_ready": run_metadata.get("readiness_ready"),
+        "resolved_runtime_mode": run_metadata.get("resolved_runtime_mode"),
+        "uses_online_dependencies": run_metadata.get("uses_online_dependencies"),
+        "service_statuses": service_statuses,
+    }
+
+
+def build_paper_metrics(
+    *,
+    matrix: dict[str, Any],
+    health: dict[str, Any],
+    readiness: dict[str, Any],
+    run_metadata: dict[str, Any],
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+    requires_lookup: dict[str, set[str]],
+) -> dict[str, Any]:
+    return {
+        "matrix_id": matrix.get("matrix_id"),
+        "change": matrix.get("change"),
+        "citation_ready": True,
+        "scenario_overview": {
+            "goal_template_count": len(matrix.get("goal_templates", [])),
+            "profile_template_count": len(matrix.get("profile_templates", [])),
+            "scenario_count": summary.get("scenario_count", 0),
+            "successful_scenarios": summary.get("successful_scenarios", 0),
+            "failed_scenarios": summary.get("failed_scenarios", 0),
+        },
+        "dependency_correctness": compute_dependency_metrics(results, requires_lookup),
+        "stage_evidence": compute_stage_metrics(results),
+        "environment_state": compute_environment_metrics(health, readiness, run_metadata),
+    }
+
+
+async def capture_context(client: httpx.AsyncClient) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    errors: list[str] = []
+
+    try:
+        health = await request_json(client, "GET", "/health")
+    except Exception as exc:
+        health = {"status": "error", "error": str(exc)}
+        errors.append("health")
+
+    try:
+        readiness = await request_json(client, "GET", "/health/readiness")
+    except Exception as exc:
+        readiness = {"status": "error", "error": str(exc)}
+        errors.append("readiness")
+
+    return health, readiness, errors
+
+
+async def run_scenario(
+    client: httpx.AsyncClient,
+    scenario: dict[str, Any],
+    goals_by_id: dict[str, dict[str, Any]],
+    profiles_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    goal = goals_by_id[scenario["goal_id"]]
+    profile = profiles_by_id[scenario["profile_id"]]
+
+    result: dict[str, Any] = {
+        "scenario_id": scenario["id"],
+        "scenario_title": scenario["title"],
+        "goal": goal,
+        "profile": profile,
+    }
+    search_attempted = False
+    search_results: list[dict[str, Any]] = []
+
+    try:
+        project_response = await request_json(
+            client,
+            "POST",
+            "/projects",
+            payload=goal["project"],
+        )
+        project_id = project_response["id"]
+        collector_questions_response = await request_json(
+            client,
+            "POST",
+            f"/projects/{project_id}/collector/questions",
+        )
+        search_query = goal.get("project", {}).get("goal_text")
+        if search_query:
+            search_attempted = True
+            try:
+                search_payload = await request_json(
+                    client,
+                    "POST",
+                    f"/projects/{project_id}/search",
+                    payload={"query": search_query, "max_results": 3},
+                )
+                search_results = search_payload.get("results", [])
+            except Exception:
+                search_results = []
+        profile_response = await request_json(
+            client,
+            "POST",
+            f"/projects/{project_id}/profiles",
+            payload=profile["profile"],
+        )
+        plan_response = await request_json(
+            client,
+            "POST",
+            f"/projects/{project_id}/plans",
+        )
+        latest_plan_response = await request_json(
+            client,
+            "GET",
+            f"/projects/{project_id}/plans/latest",
+        )
+        explanation_response = await request_json(
+            client,
+            "GET",
+            f"/projects/{project_id}/explanation",
+        )
+
+        explanation_counts = build_explanation_counts(explanation_response)
+        checks = build_checks(plan_response, latest_plan_response, explanation_counts)
+
+        result.update(
+            {
+                "status": "ok",
+                "project_id": project_id,
+                "profile_record_id": profile_response.get("id"),
+                "project_response": project_response,
+                "collector_questions_response": collector_questions_response,
+                "profile_response": profile_response,
+                "plan_response": plan_response,
+                "latest_plan_response": latest_plan_response,
+                "search_attempted": search_attempted,
+                "search_results": search_results,
+                "stage_summary": build_stage_summary(plan_response.get("stages", [])),
+                "explanation_counts": explanation_counts,
+                "explanation_response": explanation_response,
+                "checks": checks,
+            }
+        )
+    except Exception as exc:
+        result.update(
+            {
+                "status": "error",
+                "error": str(exc),
+                "search_attempted": search_attempted,
+                "search_results": search_results,
+            }
+        )
+
+    return result
+
+
+async def generate_evidence(
+    base_url: str,
+    matrix_file: Path,
+    output_file: Path,
+    summary_file: Path,
+    runtime_mode: str,
+    requires_file: Path,
+) -> int:
+    started_at = datetime.now(timezone.utc)
+    matrix = load_matrix(matrix_file)
+    requires_lookup = build_requires_lookup(load_requires_edges(requires_file))
+    goals_by_id = index_by_id(matrix["goal_templates"])
+    profiles_by_id = index_by_id(matrix["profile_templates"])
+
+    async with httpx.AsyncClient(base_url=base_url, timeout=30.0) as client:
+        health, readiness, context_errors = await capture_context(client)
+
+        results: list[dict[str, Any]] = []
+        for scenario in matrix["scenarios"]:
+            print(f"▶ {scenario['id']} - {scenario['title']}")
+            result = await run_scenario(client, scenario, goals_by_id, profiles_by_id)
+            results.append(result)
+            if result["status"] == "ok":
+                print(f"  ✓ project={result['project_id']} nodes={result['plan_response'].get('node_count', 0)}")
+            else:
+                print(f"  ✗ {result['error']}")
+
+    finished_at = datetime.now(timezone.utc)
+    successful_scenarios = sum(1 for item in results if item["status"] == "ok")
+    failed_scenarios = len(results) - successful_scenarios
+
+    summary = {
+        "scenario_count": len(results),
+        "successful_scenarios": successful_scenarios,
+        "failed_scenarios": failed_scenarios,
+        "context_errors": context_errors,
+        "all_scenarios_passed": failed_scenarios == 0 and not context_errors,
+    }
+    actual_usage = get_actual_online_dependency_usage(results)
+    run_metadata = build_run_metadata(
+        requested_runtime_mode=runtime_mode,
+        started_at=started_at,
+        finished_at=finished_at,
+        health=health,
+        readiness=readiness,
+        actual_usage=actual_usage,
+    )
+
+    evidence = {
+        "matrix_id": matrix["matrix_id"],
+        "change": matrix.get("change"),
+        "description": matrix.get("description"),
+        "matrix_file": str(matrix_file),
+        "base_url": base_url,
+        "run_metadata": run_metadata,
+        "health": health,
+        "readiness": readiness,
+        "summary": summary,
+        "results": results,
+    }
+    paper_metrics = build_paper_metrics(
+        matrix=matrix,
+        health=health,
+        readiness=readiness,
+        run_metadata=run_metadata,
+        results=results,
+        summary=summary,
+        requires_lookup=requires_lookup,
+    )
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    summary_file.parent.mkdir(parents=True, exist_ok=True)
+    summary_file.write_text(
+        json.dumps(paper_metrics, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    print(f"\nEvidence written to: {output_file}")
+    print(f"Paper metrics written to: {summary_file}")
+    print(
+        "Summary: "
+        f"{successful_scenarios}/{len(results)} scenarios passed"
+        + ("" if not context_errors else f", context errors={','.join(context_errors)}")
+    )
+
+    return 0 if failed_scenarios == 0 and not context_errors else 1
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Generate thesis validation evidence from the fixed scenario matrix."
+    )
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API base URL")
+    parser.add_argument(
+        "--matrix-file",
+        default=str(DEFAULT_MATRIX_FILE),
+        help="Path to thesis validation matrix JSON",
+    )
+    parser.add_argument(
+        "--output-file",
+        default=str(DEFAULT_OUTPUT_FILE),
+        help="Path to evidence output JSON",
+    )
+    parser.add_argument(
+        "--runtime-mode",
+        default="auto",
+        choices=["auto", "online", "hybrid", "offline"],
+        help="Runtime mode label stored in evidence metadata",
+    )
+    parser.add_argument(
+        "--summary-file",
+        default=str(DEFAULT_SUMMARY_FILE),
+        help="Path to paper metrics JSON",
+    )
+    parser.add_argument(
+        "--requires-file",
+        default=str(DEFAULT_REQUIRES_FILE),
+        help="Path to requires_edges.json used for dependency correctness metrics",
+    )
+    args = parser.parse_args()
+
+    exit_code = asyncio.run(
+        generate_evidence(
+            base_url=args.base_url,
+            matrix_file=Path(args.matrix_file),
+            output_file=Path(args.output_file),
+            summary_file=Path(args.summary_file),
+            runtime_mode=args.runtime_mode,
+            requires_file=Path(args.requires_file),
+        )
+    )
+    sys.exit(exit_code)

@@ -12,6 +12,7 @@ class NodeExplanation(BaseModel):
     reason: str
     gap: Optional[dict[str, float]] = None
     decision_type: str
+    raw_reason: Optional[str] = None
 
 
 class OrderExplanation(BaseModel):
@@ -27,6 +28,8 @@ class StageExplanation(BaseModel):
     node_name: str
     assigned_stage: str
     reasons: list[str]
+    rationale: Optional[str] = None
+    raw_rationale: Optional[str] = None
 
 
 class BudgetExplanation(BaseModel):

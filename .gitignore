@@ -4,6 +4,7 @@ node_modules/
 .claude/
 .serena/
 .pytest_cache/
+.worktrees/
 chatmessage/
 document/
 openspec/

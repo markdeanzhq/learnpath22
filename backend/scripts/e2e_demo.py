@@ -20,6 +20,46 @@ import httpx
 
 DEFAULT_BASE = "http://localhost:8000/api/v1"
 
+
+def _extract_plan_node_ids(plan_payload: dict) -> set[str]:
+    return {
+        task["node_id"]
+        for stage in plan_payload["stages"]
+        for task in stage["tasks"]
+    }
+
+
+def _print_latest_plan_summary_contract(summary: dict, plan_payload: dict):
+    total = len(_extract_plan_node_ids(plan_payload))
+    print(
+        "    tracking summary 口径: latest plan"
+        f"（total_nodes={summary['total_nodes']} / latest_plan_nodes={total}）"
+    )
+
+
+def _assert_summary_matches_plan(
+    summary: dict,
+    plan_payload: dict,
+    *,
+    completed_ids=(),
+    in_progress_ids=(),
+    skipped_ids=(),
+):
+    plan_ids = _extract_plan_node_ids(plan_payload)
+    completed = len(plan_ids & set(completed_ids))
+    in_progress = len(plan_ids & set(in_progress_ids))
+    skipped = len(plan_ids & set(skipped_ids))
+    total = len(plan_ids)
+    pending = total - completed - in_progress - skipped
+    completion_rate = round(completed / total, 3) if total else 0.0
+
+    assert summary["total_nodes"] == total
+    assert summary["completed"] == completed
+    assert summary["in_progress"] == in_progress
+    assert summary["skipped"] == skipped
+    assert summary["pending"] == pending
+    assert summary["completion_rate"] == completion_rate
+
 # ── 画像模板 ─────────────────────────────────────────────────────────
 PROFILE_BEGINNER = {
     "math_level": 2, "coding_level": 2, "ml_level": 1,
@@ -139,10 +179,12 @@ async def run_scenario(client: httpx.AsyncClient, scenario: dict):
     )
     _check(r, f"完成学习: {node_name}")
 
-    # 查看汇总
+    # 查看汇总（按 latest plan 口径统计）
     r = await client.get(f"/projects/{pid}/tracking/summary")
     summary = _check(r, "进度汇总")
-    print(f"    完成 {summary['completed']}/{summary['total_nodes']}  完成率 {summary['completion_rate']*100:.1f}%")
+    _assert_summary_matches_plan(summary, plan, completed_ids=[node_id])
+    _print_latest_plan_summary_contract(summary, plan)
+    print(f"    latest plan 口径: 完成 {summary['completed']}/{summary['total_nodes']}  完成率 {summary['completion_rate']*100:.1f}%")
 
     # 6. 进度感知重规划
     r = await client.post(
@@ -153,6 +195,14 @@ async def run_scenario(client: httpx.AsyncClient, scenario: dict):
     diff = replan["diff"]
     print(f"    已完成(锁定): {len(diff.get('completed', []))} 个")
     print(f"    待重规划: {len(diff.get('pending', []))} 个")
+
+    r = await client.get(f"/projects/{pid}/plans/latest")
+    latest_plan = _check(r, "获取最新路径")
+    r = await client.get(f"/projects/{pid}/tracking/summary")
+    summary = _check(r, "重规划后进度汇总")
+    _assert_summary_matches_plan(summary, latest_plan, completed_ids=[node_id])
+    _print_latest_plan_summary_contract(summary, latest_plan)
+    print(f"    重规划后 summary 与 latest plan 一致，已完成节点是否仍在新计划中: {node_id in _extract_plan_node_ids(latest_plan)}")
 
     # 7. 画像更新重规划
     r = await client.post(

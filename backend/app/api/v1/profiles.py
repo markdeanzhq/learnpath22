@@ -89,6 +89,7 @@ async def submit_answers(
         raise NotFoundError("项目不存在")
 
     mapped = map_answers_to_profile([a.model_dump() for a in req.answers])
+    collector_source = req.source if req.source in {"llm", "static"} else "unknown"
     profile = await create_profile(
         db,
         project_id=project_id,
@@ -99,6 +100,6 @@ async def submit_answers(
         practice_weight=mapped.get("practice_weight", 0.5),
         weekly_hours=mapped.get("weekly_hours", 10.0),
         raw_answers_json=json.dumps([a.model_dump() for a in req.answers], ensure_ascii=False),
-        collector_trace_json=json.dumps({"source": "collector", "mapped": mapped}, ensure_ascii=False),
+        collector_trace_json=json.dumps({"source": collector_source, "mapped": mapped}, ensure_ascii=False),
     )
     return profile

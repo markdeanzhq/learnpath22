@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import get_settings, get_llm_config
+from app.core.config import get_llm_config
 
 # ──────────────────────────────────────────────
 # 静态问卷（兜底，无 LLM 也能用）
@@ -82,6 +82,32 @@ def get_static_questions() -> list[dict[str, Any]]:
     return STATIC_QUESTIONS
 
 
+def is_valid_questionnaire_payload(payload: Any) -> bool:
+    if not isinstance(payload, list) or not payload:
+        return False
+
+    for question in payload:
+        if not isinstance(question, dict):
+            return False
+        if question.get("field") not in ALLOWED_FIELDS:
+            return False
+        if not question.get("id") or not question.get("question"):
+            return False
+
+        options = question.get("options")
+        if not isinstance(options, list) or not options:
+            return False
+        if any(
+            not isinstance(option, dict)
+            or "label" not in option
+            or "value" not in option
+            for option in options
+        ):
+            return False
+
+    return True
+
+
 def map_answers_to_profile(answers: list[dict[str, Any]]) -> dict[str, Any]:
     """确定性映射：将 [{question_id, field, value}] 转为画像参数字典。
 
@@ -139,7 +165,6 @@ async def generate_llm_questions(
     missing_fields: list[str] | None = None,
 ) -> list[dict[str, Any]] | None:
     """用 LLM 生成画像澄清问题。超时或 JSON 非法时返回 None（触发兜底）。"""
-    settings = get_settings()
     llm_cfg = get_llm_config()
     if not llm_cfg["llm_api_key"]:
         return None
@@ -182,9 +207,7 @@ async def generate_llm_questions(
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             questions = json.loads(content)
-            if isinstance(questions, list) and all(
-                "field" in q and q["field"] in ALLOWED_FIELDS for q in questions
-            ):
+            if is_valid_questionnaire_payload(questions):
                 return questions
     except Exception:
         pass

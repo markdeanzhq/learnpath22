@@ -16,6 +16,11 @@
         约 {{ task.estimated_hours }} 小时
       </span>
     </div>
+    <div class="task-actions">
+      <el-button link type="primary" size="small" @click="emit('locateNode', task.node_id)">
+        在图谱中定位
+      </el-button>
+    </div>
   </el-card>
 </template>
 
@@ -25,6 +30,10 @@ import { Star, Clock } from '@element-plus/icons-vue'
 import type { PathTask } from '@/api/modules/plan'
 
 const props = defineProps<{ task: PathTask }>()
+
+const emit = defineEmits<{
+  locateNode: [nodeId: string]
+}>()
 
 const difficultyClass = computed(() => {
   if (props.task.difficulty <= 2) return 'diff-easy'
@@ -69,6 +78,11 @@ const importanceType = computed(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.task-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 
 @media (max-width: 768px) {

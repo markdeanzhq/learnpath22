@@ -1,0 +1,42 @@
+[
+  {
+    "id": "resource_foundation_map",
+    "title": "机器学习预备知识导图",
+    "resource_type": "concept_guide",
+    "description": "用于串起编程基础、线性代数、概率统计和机器学习整体流程的域级速查资料。",
+    "node_ids": ["ml_a01", "ml_a02", "ml_a06", "ml_a09", "ml_b01", "ml_b10"],
+    "stage_ids": ["stage_foundation"]
+  },
+  {
+    "id": "resource_math_drills",
+    "title": "线性代数与概率手算清单",
+    "resource_type": "practice_checklist",
+    "description": "聚焦矩阵运算、导数链式法则与条件概率，适合作为基础阶段的巩固清单。",
+    "node_ids": ["ml_a03", "ml_a04", "ml_a05", "ml_a07", "ml_a08", "ml_a09"],
+    "stage_ids": ["stage_foundation"]
+  },
+  {
+    "id": "resource_supervised_workflow",
+    "title": "监督学习建模流程卡片",
+    "resource_type": "workflow_guide",
+    "description": "覆盖损失函数、梯度下降、逻辑回归与决策树等核心算法的建模步骤提示。",
+    "node_ids": ["ml_c01", "ml_c03", "ml_c05", "ml_c09", "ml_c11", "ml_c12"],
+    "stage_ids": ["stage_core"]
+  },
+  {
+    "id": "resource_generalization_playbook",
+    "title": "泛化与评估排错手册",
+    "resource_type": "diagnostic_guide",
+    "description": "整理过拟合、正则化、交叉验证和偏差方差分析的典型诊断思路。",
+    "node_ids": ["ml_c07", "ml_c08", "ml_d05", "ml_d06", "ml_d07", "ml_d08"],
+    "stage_ids": ["stage_core", "stage_application"]
+  },
+  {
+    "id": "resource_sklearn_case_template",
+    "title": "Scikit-learn 实战模板",
+    "resource_type": "project_template",
+    "description": "把数据加载、基线模型、标准化、调参和案例复盘收敛成可复用的实践模板。",
+    "node_ids": ["ml_e01", "ml_e02", "ml_e03", "ml_e04", "ml_e05", "ml_e06", "ml_e07", "ml_e08"],
+    "stage_ids": ["stage_application"]
+  }
+]

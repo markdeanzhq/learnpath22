@@ -1,7 +1,10 @@
-import uuid
-from datetime import datetime
+from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+import uuid
+from typing import Optional
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -11,6 +14,14 @@ def gen_uuid() -> str:
 
 class Base(DeclarativeBase):
     pass
+
+
+class RuntimeSetting(Base):
+    __tablename__ = "runtime_settings"
+
+    setting_key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    setting_value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class LearningProject(Base):
@@ -25,6 +36,19 @@ class LearningProject(Base):
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # confirmed-resolution fields (task 1.2) — all nullable for backward compatibility
+    requested_goal_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    auto_detected_goal_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    confirmed_target_node_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confirmed_mode: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    confirmed_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confirmed_template_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    confirmed_resolve_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    confirmed_source_breakdown_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confirmed_candidate_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    resolution_pack_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    resolution_confirmed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
 
 class LearnerProfile(Base):
     __tablename__ = "learner_profiles"
@@ -37,9 +61,9 @@ class LearnerProfile(Base):
     theory_weight: Mapped[float] = mapped_column(Float, default=0.5)
     practice_weight: Mapped[float] = mapped_column(Float, default=0.5)
     weekly_hours: Mapped[float] = mapped_column(Float, default=10.0)
-    deadline_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    raw_answers_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    collector_trace_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deadline_weeks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    raw_answers_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    collector_trace_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
@@ -51,7 +75,7 @@ class KnowledgeSource(Base):
     url: Mapped[str] = mapped_column(String(500))
     title: Mapped[str] = mapped_column(String(200))
     source_type: Mapped[str] = mapped_column(String(50))
-    content_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
@@ -62,9 +86,9 @@ class LearningPath(Base):
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
     version: Mapped[int] = mapped_column(Integer, default=1)
     plan_json: Mapped[str] = mapped_column(Text)
-    audit_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    budget_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    total_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    audit_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    budget_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    total_hours: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
@@ -76,7 +100,7 @@ class PathStage(Base):
     stage_index: Mapped[int] = mapped_column(Integer)
     stage_name: Mapped[str] = mapped_column(String(50))
     node_count: Mapped[int] = mapped_column(Integer)
-    estimated_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    estimated_hours: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class PathTask(Base):
@@ -89,7 +113,7 @@ class PathTask(Base):
     order_in_stage: Mapped[int] = mapped_column(Integer)
     difficulty: Mapped[int] = mapped_column(Integer)
     importance: Mapped[int] = mapped_column(Integer)
-    estimated_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    estimated_hours: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
 
 
@@ -100,7 +124,7 @@ class TrackingEvent(Base):
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
     node_id: Mapped[str] = mapped_column(String(50))
     event_type: Mapped[str] = mapped_column(String(20))
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
@@ -114,3 +138,47 @@ class GraphReviewStatus(Base):
     element_id: Mapped[str] = mapped_column(String(100))   # node_id or "source->target::type"
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/confirmed/removed
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ResourceBinding(Base):
+    __tablename__ = "resource_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    path_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_paths.id"))
+    stage_name: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    node_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    title: Mapped[str] = mapped_column(String(200))
+    url: Mapped[str] = mapped_column(String(500))
+    snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(20), default="manual")
+    is_selected: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+
+def _naive_utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _default_expires_at() -> datetime:
+    return _naive_utc_now() + timedelta(hours=24)
+
+
+class GoalResolutionSession(Base):
+    """Stores in-flight goal resolution state with a 24-hour TTL."""
+    __tablename__ = "goal_resolution_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    goal_text_hash: Mapped[str] = mapped_column(String(64))
+    requested_goal_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    auto_detected_goal_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    effective_goal_type: Mapped[str] = mapped_column(String(30))
+    pack_version: Mapped[str] = mapped_column(String(20))
+    graph_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    candidates_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    recommended_candidate_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    expires_at: Mapped[datetime] = mapped_column(default=_default_expires_at)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)

@@ -1,12 +1,11 @@
 """进度追踪 API"""
-import json
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.exceptions import AppError, NotFoundError
-from app.repositories.plan_repository import get_all_planned_node_ids, get_latest_plan
+from app.repositories.plan_repository import get_latest_plan, get_latest_plan_node_ids
 from app.repositories.project_repository import get_project
 from app.repositories.tracking_repository import add_event, get_events
 from app.services.domain_pack_service import get_domain_pack_service
@@ -79,6 +78,6 @@ async def get_summary(
     if not path:
         raise NotFoundError("暂无学习路径，无法统计进度")
 
-    all_node_ids = await get_all_planned_node_ids(db, project_id)
-    summary = await get_tracking_summary(db, project_id, all_node_ids)
+    latest_node_ids = await get_latest_plan_node_ids(db, project_id)
+    summary = await get_tracking_summary(db, project_id, latest_node_ids)
     return summary

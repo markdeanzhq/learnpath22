@@ -1,4 +1,6 @@
 """重规划 API"""
+from __future__ import annotations
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,9 +8,37 @@ from app.api.deps import get_db
 from app.api.v1.plans import _dict_stages_to_list
 from app.core.exceptions import AppError, NotFoundError
 from app.schemas.tracking import ReplanRequest
+from app.services.domain_pack_service import get_domain_pack_service
 from app.services.replan_service import replan
 
 router = APIRouter()
+
+
+def _build_node_name_map(stage_plan: dict[str, list[dict]]) -> dict[str, str]:
+    return {
+        task["node_id"]: task["name"]
+        for tasks in stage_plan.values()
+        for task in tasks
+        if task.get("node_id") and task.get("name")
+    }
+
+
+def _build_diff_details(diff: dict | None, node_name_map: dict[str, str], pack_node_names: dict[str, str]) -> dict | None:
+    if not diff:
+        return None
+
+    details: dict[str, list[dict[str, str]]] = {}
+    for key, node_ids in diff.items():
+        if not node_ids:
+            continue
+        details[key] = [
+            {
+                "node_id": node_id,
+                "node_name": node_name_map.get(node_id) or pack_node_names.get(node_id) or node_id,
+            }
+            for node_id in node_ids
+        ]
+    return details
 
 
 @router.post("/projects/{project_id}/replans")
@@ -24,13 +54,18 @@ async def trigger_replan(
         raise AppError(code=400, message=str(e))
 
     plan_result = result["plan_result"]
+    stages = _dict_stages_to_list(plan_result["stage_plan"])
+    node_name_map = _build_node_name_map(plan_result["stage_plan"])
+    pack = get_domain_pack_service("machine_learning")
+    diff = result.get("diff")
     return {
         "id": result["path_id"],
         "version": result["version"],
         "mode": result["mode"],
-        "stages": _dict_stages_to_list(plan_result["stage_plan"]),
+        "stages": stages,
         "budget_status": plan_result["budget_summary"]["status"],
         "total_hours": plan_result["total_hours"],
-        "diff": result.get("diff"),
+        "diff": diff,
+        "diff_details": _build_diff_details(diff, node_name_map, {nid: node["name"] for nid, node in pack.nodes_by_id.items()}),
         "reason": req.reason,
     }

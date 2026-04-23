@@ -18,6 +18,7 @@
         :review-mode="reviewMode"
         :loading="loading"
         :syncing="syncing"
+        :entity-loading="entityLoading"
         @scope-change="onScopeChange"
         @refresh="onRefresh"
         @sync="onSync"
@@ -26,6 +27,7 @@
         @zoom-out="graphRef?.zoomOut()"
         @fit-view="graphRef?.fitView()"
         @search="onSearch"
+        @show-entities="onShowEntities"
         @toggle-fullscreen="toggleFullscreen"
         @toggle-review="reviewMode = $event"
       />
@@ -74,6 +76,7 @@
           ref="graphRef"
           :elements="elements"
           :layout="layout"
+          :highlight-nodes="selectedNodeId ? [selectedNodeId] : []"
           :review-mode="reviewMode"
           @node-click="onNodeClick"
           @review-node="onReviewNode"
@@ -109,22 +112,30 @@
     </el-card>
 
     <NodeDetail :node="selectedNode" @review-edge="onReviewEdge" />
+    <EntityMetadataDrawer
+      v-model="entityDrawerVisible"
+      :loading="entityLoading"
+      :metadata="entityMetadata"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 import {
   graphApi,
   type GraphData,
   type GraphEdgeData,
   type GraphElement,
+  type GraphEntityMetadata,
   type GraphNodeData,
   type ReviewStatus,
 } from '@/api/modules/graph'
 import GraphCanvas from '@/components/Graph/GraphCanvas.vue'
+import EntityMetadataDrawer from '@/components/Graph/EntityMetadataDrawer.vue'
 import NodeDetail from '@/components/Graph/NodeDetail.vue'
 import GraphToolbar from '@/components/Graph/GraphToolbar.vue'
 import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph/graphMeta'
@@ -147,11 +158,22 @@ type SelectedNodeContext = GraphNodeData & {
 
 const PROJECT_LATEST_PLAN_MISSING = 'project_latest_plan_missing'
 
+function normalizeRouteScope(value: unknown): GraphScope {
+  const nextValue = Array.isArray(value) ? value[0] : value
+  return nextValue === 'domain' ? 'domain' : 'project'
+}
+
+function normalizeRouteNodeId(value: unknown): string | null {
+  const nextValue = Array.isArray(value) ? value[0] : value
+  return typeof nextValue === 'string' && nextValue.trim() ? nextValue : null
+}
+
+const route = useRoute()
 const projectStore = useProjectStore()
 const projectId = computed(() => projectStore.currentProject?.id)
 const elements = ref<GraphElement[]>([])
 const layout = ref<GraphLayout>('cose')
-const scope = ref<GraphScope>('project')
+const scope = ref<GraphScope>(normalizeRouteScope(route.query.scope))
 const graphState = ref<GraphState>('loading')
 const loading = ref(false)
 const syncing = ref(false)
@@ -162,8 +184,13 @@ const selectedNodeId = ref<string | null>(null)
 const graphRef = ref<InstanceType<typeof GraphCanvas>>()
 const pageRef = ref<HTMLDivElement>()
 const reviewMode = ref(false)
+const entityDrawerVisible = ref(false)
+const entityLoading = ref(false)
+const entityMetadata = ref<GraphEntityMetadata | null>(null)
 const categoryLegend = GRAPH_CATEGORY_LEGEND
 const relationLegend = GRAPH_RELATION_LEGEND
+const requestedScope = computed<GraphScope>(() => normalizeRouteScope(route.query.scope))
+const requestedNodeId = computed<string | null>(() => normalizeRouteNodeId(route.query.nodeId))
 const emptyDescription = computed(() =>
   emptyReason.value === PROJECT_LATEST_PLAN_MISSING
     ? '当前项目尚未生成学习路径，暂时无法展示项目子图'
@@ -228,6 +255,19 @@ function applyGraphData(data: GraphData) {
   lastRefreshError.value = ''
   emptyReason.value = data.empty_reason
   graphState.value = nextElements.length > 0 ? 'ready' : 'empty'
+}
+
+async function focusRequestedNode() {
+  const nodeId = requestedNodeId.value
+  if (!nodeId || graphState.value !== 'ready') {
+    return
+  }
+
+  await nextTick()
+  const focused = graphRef.value?.focusNode(nodeId)
+  if (focused) {
+    selectedNodeId.value = nodeId
+  }
 }
 
 function updateNodeReviewStatus(nodeId: string, status: ReviewStatus) {
@@ -314,10 +354,27 @@ watch(
       resetGraphState()
     }
 
+    scope.value = requestedScope.value
     await loadGraph()
+    await focusRequestedNode()
   },
   { immediate: true },
 )
+
+watch(requestedScope, async (nextScope) => {
+  if (scope.value === nextScope || !projectId.value) {
+    return
+  }
+
+  scope.value = nextScope
+  selectedNodeId.value = null
+  await loadGraph()
+  await focusRequestedNode()
+})
+
+watch([requestedNodeId, graphState], async () => {
+  await focusRequestedNode()
+})
 
 function onLayoutChange(newLayout: string) {
   layout.value = newLayout as GraphLayout
@@ -336,6 +393,7 @@ async function onScopeChange(nextScope: GraphScope) {
   scope.value = nextScope
   selectedNodeId.value = null
   await loadGraph()
+  await focusRequestedNode()
 }
 
 async function onRefresh() {
@@ -401,6 +459,21 @@ async function onReviewEdge(edgeId: string, status: string) {
     ElMessage.success('边审核状态已更新')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '边审核失败')
+  }
+}
+
+async function onShowEntities() {
+  if (!projectId.value) return
+
+  entityDrawerVisible.value = true
+  entityLoading.value = true
+
+  try {
+    entityMetadata.value = await graphApi.getGraphEntities(projectId.value)
+  } catch {
+    entityDrawerVisible.value = false
+  } finally {
+    entityLoading.value = false
   }
 }
 

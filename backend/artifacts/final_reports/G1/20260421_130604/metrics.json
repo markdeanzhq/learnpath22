@@ -1,0 +1,530 @@
+{
+  "plan": {
+    "goal": "我想系统学习机器学习基础",
+    "profile": {
+      "math_level": 2,
+      "coding_level": 2,
+      "ml_level": 1,
+      "theory_weight": 0.6,
+      "practice_weight": 0.4,
+      "weekly_hours": 10,
+      "deadline_weeks": 12
+    },
+    "ordered_ids": [
+      "ml_b01",
+      "ml_b02",
+      "ml_b10",
+      "ml_b06",
+      "ml_a01",
+      "ml_a06",
+      "ml_a02",
+      "ml_e01",
+      "ml_a04",
+      "ml_c10",
+      "ml_e02",
+      "ml_b09",
+      "ml_d05",
+      "ml_a07",
+      "ml_a03",
+      "ml_b05",
+      "ml_b04",
+      "ml_c01",
+      "ml_c07",
+      "ml_d06",
+      "ml_a05",
+      "ml_a10",
+      "ml_b08",
+      "ml_e03",
+      "ml_b07",
+      "ml_e04",
+      "ml_c11",
+      "ml_c08",
+      "ml_a08",
+      "ml_a09",
+      "ml_d07",
+      "ml_c02",
+      "ml_c04",
+      "ml_c03",
+      "ml_c05",
+      "ml_c09",
+      "ml_d03",
+      "ml_d02",
+      "ml_d01",
+      "ml_c06",
+      "ml_e06",
+      "ml_c12",
+      "ml_d04",
+      "ml_d08",
+      "ml_e08",
+      "ml_e05",
+      "ml_e07"
+    ],
+    "stage_plan": {
+      "基础准备": [
+        {
+          "node_id": "ml_b01",
+          "name": "什么是机器学习",
+          "difficulty": 1,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 0
+        },
+        {
+          "node_id": "ml_b02",
+          "name": "监督学习",
+          "difficulty": 1,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 1
+        },
+        {
+          "node_id": "ml_b10",
+          "name": "机器学习基本流程",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 2
+        },
+        {
+          "node_id": "ml_b06",
+          "name": "训练集验证集测试集",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 3
+        },
+        {
+          "node_id": "ml_a01",
+          "name": "Python与NumPy基础",
+          "difficulty": 1,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 4
+        },
+        {
+          "node_id": "ml_a06",
+          "name": "概率基础",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 5
+        },
+        {
+          "node_id": "ml_a02",
+          "name": "向量与矩阵",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 6
+        },
+        {
+          "node_id": "ml_a04",
+          "name": "导数与偏导",
+          "difficulty": 3,
+          "importance": 5,
+          "estimated_hours": 4,
+          "order_in_stage": 7
+        },
+        {
+          "node_id": "ml_b09",
+          "name": "模型参数与超参数",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 8
+        },
+        {
+          "node_id": "ml_a07",
+          "name": "条件概率",
+          "difficulty": 3,
+          "importance": 4,
+          "estimated_hours": 3,
+          "order_in_stage": 9
+        },
+        {
+          "node_id": "ml_a03",
+          "name": "矩阵运算",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 3,
+          "order_in_stage": 10
+        },
+        {
+          "node_id": "ml_b05",
+          "name": "数据集与样本",
+          "difficulty": 1,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 11
+        },
+        {
+          "node_id": "ml_b04",
+          "name": "特征与标签",
+          "difficulty": 1,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 12
+        },
+        {
+          "node_id": "ml_a05",
+          "name": "链式法则",
+          "difficulty": 3,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 13
+        },
+        {
+          "node_id": "ml_a10",
+          "name": "数据可视化与统计观察",
+          "difficulty": 1,
+          "importance": 3,
+          "estimated_hours": 2,
+          "order_in_stage": 14
+        },
+        {
+          "node_id": "ml_b08",
+          "name": "数据预处理",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 15
+        },
+        {
+          "node_id": "ml_b07",
+          "name": "特征工程基础",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 3,
+          "order_in_stage": 16
+        },
+        {
+          "node_id": "ml_a08",
+          "name": "随机变量与分布",
+          "difficulty": 3,
+          "importance": 4,
+          "estimated_hours": 4,
+          "order_in_stage": 17
+        },
+        {
+          "node_id": "ml_a09",
+          "name": "均值方差协方差",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 3,
+          "order_in_stage": 18
+        }
+      ],
+      "核心掌握": [
+        {
+          "node_id": "ml_c10",
+          "name": "Sigmoid与概率输出",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 0
+        },
+        {
+          "node_id": "ml_c01",
+          "name": "线性回归",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 4,
+          "order_in_stage": 1
+        },
+        {
+          "node_id": "ml_c07",
+          "name": "欠拟合与过拟合",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 2
+        },
+        {
+          "node_id": "ml_c11",
+          "name": "二分类与决策阈值",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 3
+        },
+        {
+          "node_id": "ml_c08",
+          "name": "正则化",
+          "difficulty": 3,
+          "importance": 4,
+          "estimated_hours": 3,
+          "order_in_stage": 4
+        },
+        {
+          "node_id": "ml_c02",
+          "name": "预测值与残差",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 5
+        },
+        {
+          "node_id": "ml_c04",
+          "name": "均方误差MSE",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 6
+        },
+        {
+          "node_id": "ml_c03",
+          "name": "损失函数",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 7
+        },
+        {
+          "node_id": "ml_c05",
+          "name": "梯度下降",
+          "difficulty": 3,
+          "importance": 5,
+          "estimated_hours": 4,
+          "order_in_stage": 8
+        },
+        {
+          "node_id": "ml_c09",
+          "name": "逻辑回归",
+          "difficulty": 3,
+          "importance": 5,
+          "estimated_hours": 4,
+          "order_in_stage": 9
+        },
+        {
+          "node_id": "ml_c06",
+          "name": "学习率",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 10
+        },
+        {
+          "node_id": "ml_c12",
+          "name": "决策树基础",
+          "difficulty": 2,
+          "importance": 3,
+          "estimated_hours": 3,
+          "order_in_stage": 11
+        }
+      ],
+      "应用突破": [
+        {
+          "node_id": "ml_e01",
+          "name": "scikit-learn基本使用",
+          "difficulty": 1,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 0
+        },
+        {
+          "node_id": "ml_e02",
+          "name": "数据加载与划分",
+          "difficulty": 1,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 1
+        },
+        {
+          "node_id": "ml_d05",
+          "name": "交叉验证",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 2
+        },
+        {
+          "node_id": "ml_d06",
+          "name": "模型泛化",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 3
+        },
+        {
+          "node_id": "ml_e03",
+          "name": "训练一个基线模型",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 4
+        },
+        {
+          "node_id": "ml_e04",
+          "name": "特征标准化",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 5
+        },
+        {
+          "node_id": "ml_d07",
+          "name": "偏差与方差",
+          "difficulty": 3,
+          "importance": 4,
+          "estimated_hours": 3,
+          "order_in_stage": 6
+        },
+        {
+          "node_id": "ml_d03",
+          "name": "混淆矩阵",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 7
+        },
+        {
+          "node_id": "ml_d02",
+          "name": "精确率与召回率",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 8
+        },
+        {
+          "node_id": "ml_d01",
+          "name": "分类准确率",
+          "difficulty": 1,
+          "importance": 3,
+          "estimated_hours": 1,
+          "order_in_stage": 9
+        },
+        {
+          "node_id": "ml_e06",
+          "name": "错误分析",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 10
+        },
+        {
+          "node_id": "ml_d04",
+          "name": "ROC与AUC基础",
+          "difficulty": 3,
+          "importance": 3,
+          "estimated_hours": 2,
+          "order_in_stage": 11
+        },
+        {
+          "node_id": "ml_d08",
+          "name": "模型选择基础",
+          "difficulty": 3,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 12
+        },
+        {
+          "node_id": "ml_e08",
+          "name": "小型回归案例实践",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 4,
+          "order_in_stage": 13
+        },
+        {
+          "node_id": "ml_e05",
+          "name": "超参数调优基础",
+          "difficulty": 3,
+          "importance": 4,
+          "estimated_hours": 3,
+          "order_in_stage": 14
+        },
+        {
+          "node_id": "ml_e07",
+          "name": "小型分类案例实践",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 4,
+          "order_in_stage": 15
+        }
+      ]
+    },
+    "total_hours": 125,
+    "node_count": 47,
+    "reinforced_ids": [],
+    "target_node_ids": [
+      "ml_c09",
+      "ml_d08",
+      "ml_e03",
+      "ml_e07",
+      "ml_e08"
+    ],
+    "mode": "steady"
+  },
+  "baseline": {
+    "name": "周志华《机器学习》教材主干节点序列",
+    "source": "周志华. 机器学习[M]. 北京: 清华大学出版社, 2016."
+  },
+  "metrics": {
+    "M1_dependency_satisfaction": {
+      "checked_edges": 66,
+      "satisfied": 66,
+      "violations": [],
+      "satisfaction_rate": 1.0
+    },
+    "M2_cycle_check": {
+      "is_dag": true,
+      "error": null
+    },
+    "M3_kendall_vs_baseline": {
+      "tau": 0.25,
+      "common_nodes": 33,
+      "baseline_size": 33,
+      "path_size": 47
+    },
+    "M4_type_coverage": {
+      "per_group": {
+        "A": {
+          "label": "数学与编程基础",
+          "total": 10,
+          "covered": 10,
+          "rate": 1.0
+        },
+        "B": {
+          "label": "机器学习概念",
+          "total": 9,
+          "covered": 9,
+          "rate": 1.0
+        },
+        "C": {
+          "label": "监督学习算法",
+          "total": 12,
+          "covered": 12,
+          "rate": 1.0
+        },
+        "D": {
+          "label": "模型评估",
+          "total": 8,
+          "covered": 8,
+          "rate": 1.0
+        },
+        "E": {
+          "label": "实践入门",
+          "total": 8,
+          "covered": 8,
+          "rate": 1.0
+        }
+      },
+      "backbone_total": 43,
+      "backbone_covered": 43,
+      "backbone_rate": 1.0,
+      "main_path_total": 24,
+      "main_path_covered": 24,
+      "main_path_coverage": 1.0
+    },
+    "M5_stage_closure": {
+      "stages": [
+        "基础准备",
+        "核心掌握",
+        "应用突破"
+      ],
+      "checked_edges": 66,
+      "violations": [],
+      "closure_completeness_rate": 1.0
+    }
+  }
+}

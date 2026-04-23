@@ -4,7 +4,6 @@
   {"source":"ml_d01","target":"ml_d02","reason":"都属于分类评价指标，适合横向比较"},
   {"source":"ml_d02","target":"ml_d04","reason":"都属于分类评估视角的延伸"},
   {"source":"ml_c09","target":"ml_c12","reason":"都是首版分类模型代表，可横向比较"},
-  {"source":"ml_b02","target":"ml_b03","reason":"机器学习总体框架下的两类学习范式"},
   {"source":"ml_b07","target":"ml_b08","reason":"经常共同出现，边界不同但学习上关系很近"},
   {"source":"ml_d05","target":"ml_d08","reason":"经常同时出现，前者服务于后者"},
   {"source":"ml_b08","target":"ml_e04","reason":"理论预处理与具体操作实例的映射"},

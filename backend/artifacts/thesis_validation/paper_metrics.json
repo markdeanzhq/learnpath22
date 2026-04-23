@@ -1,0 +1,341 @@
+{
+  "matrix_id": "thesis-validation-v1",
+  "change": "complete-domain-pack-edges",
+  "citation_ready": true,
+  "scenario_overview": {
+    "goal_template_count": 3,
+    "profile_template_count": 3,
+    "scenario_count": 9,
+    "successful_scenarios": 9,
+    "failed_scenarios": 0
+  },
+  "dependency_correctness": {
+    "satisfied_required_edges": 306,
+    "total_required_edges": 306,
+    "dependency_satisfaction_ratio": 1.0,
+    "scenario_breakdown": [
+      {
+        "scenario_id": "scenario_domain_beginner",
+        "status": "ok",
+        "satisfied_required_edges": 66,
+        "total_required_edges": 66,
+        "dependency_satisfaction_ratio": 1.0
+      },
+      {
+        "scenario_id": "scenario_domain_intermediate",
+        "status": "ok",
+        "satisfied_required_edges": 66,
+        "total_required_edges": 66,
+        "dependency_satisfaction_ratio": 1.0
+      },
+      {
+        "scenario_id": "scenario_domain_focused",
+        "status": "ok",
+        "satisfied_required_edges": 66,
+        "total_required_edges": 66,
+        "dependency_satisfaction_ratio": 1.0
+      },
+      {
+        "scenario_id": "scenario_problem_beginner",
+        "status": "ok",
+        "satisfied_required_edges": 22,
+        "total_required_edges": 22,
+        "dependency_satisfaction_ratio": 1.0
+      },
+      {
+        "scenario_id": "scenario_problem_intermediate",
+        "status": "ok",
+        "satisfied_required_edges": 21,
+        "total_required_edges": 21,
+        "dependency_satisfaction_ratio": 1.0
+      },
+      {
+        "scenario_id": "scenario_problem_focused",
+        "status": "ok",
+        "satisfied_required_edges": 22,
+        "total_required_edges": 22,
+        "dependency_satisfaction_ratio": 1.0
+      },
+      {
+        "scenario_id": "scenario_concept_beginner",
+        "status": "ok",
+        "satisfied_required_edges": 15,
+        "total_required_edges": 15,
+        "dependency_satisfaction_ratio": 1.0
+      },
+      {
+        "scenario_id": "scenario_concept_intermediate",
+        "status": "ok",
+        "satisfied_required_edges": 13,
+        "total_required_edges": 13,
+        "dependency_satisfaction_ratio": 1.0
+      },
+      {
+        "scenario_id": "scenario_concept_focused",
+        "status": "ok",
+        "satisfied_required_edges": 15,
+        "total_required_edges": 15,
+        "dependency_satisfaction_ratio": 1.0
+      }
+    ]
+  },
+  "stage_evidence": {
+    "scenario_breakdown": [
+      {
+        "scenario_id": "scenario_domain_beginner",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 125,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 19,
+            "estimated_hours": 51
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 12,
+            "estimated_hours": 34
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 16,
+            "estimated_hours": 40
+          }
+        ]
+      },
+      {
+        "scenario_id": "scenario_domain_intermediate",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 125,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 19,
+            "estimated_hours": 51
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 12,
+            "estimated_hours": 34
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 16,
+            "estimated_hours": 40
+          }
+        ]
+      },
+      {
+        "scenario_id": "scenario_domain_focused",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 125,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 19,
+            "estimated_hours": 51
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 12,
+            "estimated_hours": 34
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 16,
+            "estimated_hours": 40
+          }
+        ]
+      },
+      {
+        "scenario_id": "scenario_problem_beginner",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 64,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 16,
+            "estimated_hours": 41
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 8,
+            "estimated_hours": 23
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 0,
+            "estimated_hours": 0
+          }
+        ]
+      },
+      {
+        "scenario_id": "scenario_problem_intermediate",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 54,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 12,
+            "estimated_hours": 31
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 8,
+            "estimated_hours": 23
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 0,
+            "estimated_hours": 0
+          }
+        ]
+      },
+      {
+        "scenario_id": "scenario_problem_focused",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 64,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 16,
+            "estimated_hours": 41
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 8,
+            "estimated_hours": 23
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 0,
+            "estimated_hours": 0
+          }
+        ]
+      },
+      {
+        "scenario_id": "scenario_concept_beginner",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 53,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 15,
+            "estimated_hours": 38
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 5,
+            "estimated_hours": 15
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 0,
+            "estimated_hours": 0
+          }
+        ]
+      },
+      {
+        "scenario_id": "scenario_concept_intermediate",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 38,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 9,
+            "estimated_hours": 23
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 5,
+            "estimated_hours": 15
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 0,
+            "estimated_hours": 0
+          }
+        ]
+      },
+      {
+        "scenario_id": "scenario_concept_focused",
+        "status": "ok",
+        "stage_count": 3,
+        "total_stage_hours": 53,
+        "stages": [
+          {
+            "stage_name": "基础准备",
+            "task_count": 15,
+            "estimated_hours": 38
+          },
+          {
+            "stage_name": "核心掌握",
+            "task_count": 5,
+            "estimated_hours": 15
+          },
+          {
+            "stage_name": "应用突破",
+            "task_count": 0,
+            "estimated_hours": 0
+          }
+        ]
+      }
+    ],
+    "average_stage_count": 3.0,
+    "average_total_stage_hours": 77.89,
+    "min_stage_count": 3,
+    "max_stage_count": 3
+  },
+  "environment_state": {
+    "prototype_scope": "machine_learning_only",
+    "delivery_stage": "graduation_prototype",
+    "python_baseline": "3.12",
+    "python_version": "3.12.11",
+    "runtime_settings_scope": "sqlite-persisted",
+    "readiness_status": "degraded",
+    "readiness_ready": false,
+    "core_ready": false,
+    "demo_ready": false,
+    "enhanced_ready": false,
+    "readiness_contract_mode": "native_dual_layer",
+    "readiness_contract_normalized": false,
+    "tracking_summary_scope": "latest_plan",
+    "resolved_runtime_mode": "offline",
+    "uses_online_dependencies": false,
+    "service_statuses": {
+      "sqlite": {
+        "status": "ok",
+        "ready": true,
+        "reason": null
+      },
+      "neo4j": {
+        "status": "ok",
+        "ready": true,
+        "reason": null
+      },
+      "graph_sync": {
+        "status": "stale",
+        "ready": false,
+        "reason": "seed_metadata_stale"
+      },
+      "llm": {
+        "status": "skipped",
+        "ready": false,
+        "reason": "LLM_API_KEY not configured"
+      },
+      "search": {
+        "status": "skipped",
+        "ready": false,
+        "reason": "搜索服务未配置"
+      }
+    }
+  }
+}

@@ -32,6 +32,9 @@
               难度 {{ task.difficulty }}
             </el-tag>
             <span v-if="task.estimated_hours" class="task-hours">{{ task.estimated_hours }}h</span>
+            <el-button link type="primary" size="small" @click="handleLocateNode(task.node_id)">
+              在图谱中定位
+            </el-button>
           </div>
 
           <el-button-group size="small">
@@ -59,6 +62,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { SuccessFilled, Loading, RemoveFilled, MoreFilled } from '@element-plus/icons-vue'
 import type { PathStage } from '@/api/modules/plan'
 import type { TrackingEventResponse } from '@/api/modules/tracking'
@@ -68,10 +72,12 @@ const props = defineProps<{
   events: TrackingEventResponse[]
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   markStatus: [nodeId: string, eventType: 'start' | 'complete' | 'skip']
+  locateNode: [nodeId: string]
 }>()
 
+const router = useRouter()
 const activeStages = computed(() => props.stages.map(s => s.stage_index))
 
 const statusMap = computed(() => {
@@ -102,6 +108,17 @@ function difficultyType(d: number): '' | 'success' | 'warning' | 'danger' | 'inf
   if (d <= 2) return 'success'
   if (d <= 3) return ''
   return 'warning'
+}
+
+function handleLocateNode(nodeId: string) {
+  emit('locateNode', nodeId)
+  router.push({
+    name: 'Knowledge',
+    query: {
+      nodeId,
+      scope: 'project',
+    },
+  })
 }
 </script>
 

@@ -6,6 +6,59 @@ from unittest.mock import AsyncMock
 from app.db.neo4j import Neo4jDriverError
 
 
+ENTITY_METADATA = {
+    "domain": "machine_learning",
+    "stages": [
+        {
+            "id": "stage_foundation",
+            "name": "基础准备",
+            "order": 1,
+            "description": "foundation",
+            "category_keys": ["foundation"],
+            "node_ids": ["ml_a01", "ml_a02"],
+            "resource_ids": ["resource_foundation_map"],
+        }
+    ],
+    "resources": [
+        {
+            "id": "resource_foundation_map",
+            "title": "机器学习预备知识导图",
+            "resource_type": "concept_guide",
+            "description": "guide",
+            "stage_ids": ["stage_foundation"],
+            "node_ids": ["ml_a01", "ml_a02"],
+        }
+    ],
+    "relationships": {
+        "stage_sequences": [],
+        "stage_nodes": [
+            {"stage_id": "stage_foundation", "node_id": "ml_a01", "type": "CONTAINS"},
+            {"stage_id": "stage_foundation", "node_id": "ml_a02", "type": "CONTAINS"},
+        ],
+        "stage_resources": [
+            {
+                "stage_id": "stage_foundation",
+                "resource_id": "resource_foundation_map",
+                "type": "HAS_RESOURCE",
+            }
+        ],
+        "resource_nodes": [
+            {
+                "resource_id": "resource_foundation_map",
+                "node_id": "ml_a01",
+                "type": "COVERS",
+            },
+            {
+                "resource_id": "resource_foundation_map",
+                "node_id": "ml_a02",
+                "type": "COVERS",
+            },
+        ],
+    },
+    "is_empty": False,
+}
+
+
 def _sync_service(*, force_result=None, project_result=None, force_error=None, project_error=None):
     force_sync_domain_pack = AsyncMock()
     sync_domain_pack = AsyncMock()
@@ -222,6 +275,42 @@ async def test_get_graph_maps_neo4j_runtime_error(client, project, monkeypatch):
     assert resp.status_code == 500
     assert resp.json() == {
         "error": "图谱查询失败: Neo4j 查询执行失败: boom",
+        "code": 500,
+    }
+
+
+async def test_get_graph_entities_returns_read_only_stage_resource_view(client, project, monkeypatch):
+    entity_query = AsyncMock(return_value=ENTITY_METADATA)
+    monkeypatch.setattr("app.api.v1.graph.get_graph_entity_metadata", entity_query)
+    monkeypatch.setattr(
+        "app.api.v1.graph.get_graph_sync_service",
+        lambda neo4j: (_ for _ in ()).throw(AssertionError("GET /graph/entities should not sync graph")),
+    )
+
+    resp = await client.get(f"/api/v1/projects/{project['id']}/graph/entities")
+
+    assert resp.status_code == 200
+    assert resp.json() == ENTITY_METADATA
+    entity_query.assert_awaited_once_with(None, "machine_learning")
+
+
+async def test_get_graph_entities_requires_existing_project(client):
+    resp = await client.get("/api/v1/projects/not-found/graph/entities")
+    assert resp.status_code == 404
+    assert resp.json() == {"error": "项目不存在", "code": 404}
+
+
+async def test_get_graph_entities_maps_neo4j_runtime_error(client, project, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.v1.graph.get_graph_entity_metadata",
+        AsyncMock(side_effect=Neo4jDriverError("Neo4j 查询执行失败: entities boom")),
+    )
+
+    resp = await client.get(f"/api/v1/projects/{project['id']}/graph/entities")
+
+    assert resp.status_code == 500
+    assert resp.json() == {
+        "error": "扩展实体查询失败: Neo4j 查询执行失败: entities boom",
         "code": 500,
     }
 

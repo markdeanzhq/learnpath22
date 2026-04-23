@@ -60,6 +60,7 @@ export interface NodeExplanation {
   reason: string
   gap?: Record<string, number> | null
   decision_type: string
+  raw_reason?: string | null
 }
 
 export interface OrderExplanation {
@@ -75,6 +76,8 @@ export interface StageExplanation {
   node_name: string
   assigned_stage: string
   reasons: string[]
+  rationale?: string | null
+  raw_rationale?: string | null
 }
 
 export interface BudgetExplanation {
@@ -132,6 +135,11 @@ export interface ReplanDiff {
   pending?: string[]
 }
 
+export interface ReplanDiffDetailItem {
+  node_id: string
+  node_name: string
+}
+
 export interface ReplanResult {
   id: string
   version: number
@@ -140,6 +148,7 @@ export interface ReplanResult {
   budget_status: string
   total_hours: number
   diff: ReplanDiff | null
+  diff_details?: Partial<Record<keyof ReplanDiff, ReplanDiffDetailItem[]>> | null
   reason: string
 }
 
@@ -148,8 +157,8 @@ export const planApi = {
     request.post(`/projects/${projectId}/plans`),
   getLatest: (projectId: string): Promise<LearningPlan> =>
     request.get(`/projects/${projectId}/plans/latest`),
-  getExplanation: (projectId: string): Promise<ExplanationResponse> =>
-    request.get(`/projects/${projectId}/explanation`),
+  getExplanation: (projectId: string, polish = false): Promise<ExplanationResponse> =>
+    request.get(`/projects/${projectId}/explanation`, { params: { polish } }),
   replan: (projectId: string, mode: string, reason?: string): Promise<ReplanResult> =>
     request.post(`/projects/${projectId}/replans`, {
       mode,

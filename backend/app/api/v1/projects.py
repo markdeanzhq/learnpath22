@@ -5,15 +5,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.core.exceptions import NotFoundError
 from app.repositories.project_repository import (
-    create_project,
     delete_project,
     get_project,
     list_projects,
 )
+from app.schemas.goal_resolution import GoalResolutionPreviewRequest, GoalResolutionPreviewResponse
 from app.schemas.project import (
     CreateProjectRequest,
     DeleteProjectResponse,
     ProjectResponse,
+    UpdateProjectGoalResolutionRequest,
+)
+from app.services.project_resolution_service import (
+    create_project_from_resolution_session,
+    preview_project_goal_resolution,
+    update_project_goal_resolution,
 )
 
 router = APIRouter()
@@ -24,14 +30,48 @@ async def create_project_endpoint(
     req: CreateProjectRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    project = await create_project(
+    return await create_project_from_resolution_session(
         db,
         title=req.title,
         goal_text=req.goal_text,
-        goal_type=req.goal_type,
+        domain=req.domain,
+        resolution_session_id=req.resolution_session_id,
+        selected_candidate_id=req.selected_candidate_id,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/goal-resolution/preview",
+    response_model=GoalResolutionPreviewResponse,
+)
+async def preview_project_goal_resolution_endpoint(
+    project_id: str,
+    req: GoalResolutionPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await preview_project_goal_resolution(
+        db,
+        project_id=project_id,
+        goal_text=req.goal_text,
+        requested_goal_type=req.requested_goal_type,
         domain=req.domain,
     )
-    return project
+
+
+@router.put("/projects/{project_id}/goal-resolution", response_model=ProjectResponse)
+async def update_project_goal_resolution_endpoint(
+    project_id: str,
+    req: UpdateProjectGoalResolutionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await update_project_goal_resolution(
+        db,
+        project_id=project_id,
+        goal_text=req.goal_text,
+        domain=req.domain,
+        resolution_session_id=req.resolution_session_id,
+        selected_candidate_id=req.selected_candidate_id,
+    )
 
 
 @router.get("/projects", response_model=list[ProjectResponse])

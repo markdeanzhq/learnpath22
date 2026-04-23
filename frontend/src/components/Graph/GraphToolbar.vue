@@ -43,6 +43,8 @@
         @clear="handleSearch"
       />
 
+      <el-button size="small" @click="emit('showEntities')" :loading="entityLoading">扩展实体</el-button>
+
       <el-button size="small" :icon="FullScreen" @click="emit('toggleFullscreen')" />
 
       <el-divider direction="vertical" />
@@ -72,6 +74,7 @@ defineProps<{
   reviewMode?: boolean
   loading?: boolean
   syncing?: boolean
+  entityLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -83,6 +86,7 @@ const emit = defineEmits<{
   zoomOut: []
   fitView: []
   search: [keyword: string]
+  showEntities: []
   toggleFullscreen: []
   toggleReview: [enabled: boolean]
 }>()

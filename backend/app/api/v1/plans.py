@@ -1,5 +1,7 @@
 """路径规划 API"""
 import json
+from copy import deepcopy
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +18,7 @@ from app.repositories.project_repository import get_project
 from app.repositories.graph_review_repository import get_removed_node_ids, get_removed_edge_ids
 from app.schemas.explanation import ExplanationResponse
 from app.services.domain_pack_service import get_domain_pack_service
-from app.services.explanation_service import build_explanation
+from app.services.explanation_service import build_explanation, polish_explanation
 from app.services.planner_service import plan_with_profile
 
 router = APIRouter()
@@ -33,6 +35,55 @@ def _dict_stages_to_list(stage_dict: dict) -> list[dict]:
             "estimated_hours": sum(t.get("estimated_hours", 0) for t in tasks),
         })
     return result
+
+
+def _load_json_list(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return []
+    try:
+        data = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, str) and item]
+
+
+def _load_json_dict(raw_value: str | None) -> dict[str, Any]:
+    if not raw_value:
+        return {}
+    try:
+        data = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _build_confirmed_goal_result(project) -> dict[str, Any] | None:
+    confirmed_target_node_ids = _load_json_list(project.confirmed_target_node_ids_json)
+    if not confirmed_target_node_ids:
+        return None
+    return {
+        "goal_text": project.goal_text,
+        "goal_type": project.goal_type,
+        "target_node_ids": list(confirmed_target_node_ids),
+        "confirmed_target_node_ids": list(confirmed_target_node_ids),
+        "effective_target_node_ids": list(confirmed_target_node_ids),
+        "mode": project.confirmed_mode or "steady",
+        "description": project.confirmed_description or project.goal_text,
+        "template_id": project.confirmed_template_id,
+        "resolve_source": project.confirmed_resolve_source or "confirmed",
+        "candidate_id": project.confirmed_candidate_id,
+        "selected_candidate_id": project.confirmed_candidate_id,
+        "recommended_candidate_id": project.confirmed_candidate_id,
+        "requested_goal_type": project.requested_goal_type,
+        "auto_detected_goal_type": project.auto_detected_goal_type,
+        "effective_goal_type": project.goal_type,
+        "goal_type_source": "confirmed_resolution",
+        "source_breakdown": _load_json_dict(project.confirmed_source_breakdown_json),
+        "score_breakdown": {},
+        "warnings": [],
+    }
 
 
 @router.post("/projects/{project_id}/plans")
@@ -61,6 +112,7 @@ async def generate_plan(
     removed_nodes = await get_removed_node_ids(db, project_id)
     removed_edges = await get_removed_edge_ids(db, project_id)
 
+    confirmed_goal_result = _build_confirmed_goal_result(project)
     plan_result = plan_with_profile(
         goal_text=project.goal_text,
         goal_type=project.goal_type,
@@ -68,7 +120,11 @@ async def generate_plan(
         pack=pack,
         removed_node_ids=removed_nodes,
         removed_edge_ids=removed_edges,
+        confirmed_goal_result=deepcopy(confirmed_goal_result) if confirmed_goal_result else None,
     )
+
+    if confirmed_goal_result and not plan_result["goal_result"]["target_node_ids"]:
+        raise AppError(code=409, message="GOAL_TARGETS_REMOVED")
 
     version = await get_plan_version_count(db, project_id) + 1
     path = await save_plan(db, project_id, plan_result, version=version)
@@ -118,9 +174,10 @@ async def get_latest_plan_endpoint(
 @router.get("/projects/{project_id}/explanation", response_model=ExplanationResponse)
 async def get_explanation(
     project_id: str,
+    polish: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取最新路径的结构化解释。"""
+    """获取最新路径的结构化解释。`polish=true` 时启用可选 LLM 自然语言润色。"""
     project = await get_project(db, project_id)
     if not project:
         raise NotFoundError("项目不存在")
@@ -134,4 +191,12 @@ async def get_explanation(
         raise NotFoundError("暂无审计数据")
 
     pack = get_domain_pack_service(project.domain)
-    return build_explanation(audit, pack.nodes_by_id)
+    response = build_explanation(
+        audit,
+        pack.nodes_by_id,
+        pack.requires_rev_adj,
+        pack.scoring_config,
+    )
+    if polish:
+        response = polish_explanation(response)
+    return response

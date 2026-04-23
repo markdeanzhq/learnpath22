@@ -85,7 +85,7 @@ async function handleSubmit() {
       field: q.field,
       value: answers[q.id],
     }))
-    await profileApi.submitAnswers(props.projectId, { answers: answerList })
+    await profileApi.submitAnswers(props.projectId, { source: source.value, answers: answerList })
     emit('completed')
   } finally {
     submitting.value = false

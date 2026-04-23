@@ -1,5 +1,40 @@
 """Profiles API 集成测试"""
 
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+from sqlalchemy import select
+
+from app.models.sqlite_models import LearnerProfile
+from app.services.profile_collector_service import (
+    generate_llm_questions,
+    get_collector_questions,
+    get_static_questions,
+)
+
+
+def _mock_async_client(*, response=None, side_effect=None):
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = False
+    if side_effect is not None:
+        mock_client.post = AsyncMock(side_effect=side_effect)
+    else:
+        mock_client.post = AsyncMock(return_value=response)
+    return mock_client
+
+
+async def _get_latest_profile_row(db_session, project_id: str) -> LearnerProfile:
+    result = await db_session.execute(
+        select(LearnerProfile)
+        .where(LearnerProfile.project_id == project_id)
+        .order_by(LearnerProfile.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one()
+
 
 async def test_submit_profile(client, project):
     resp = await client.post(
@@ -60,3 +95,177 @@ async def test_profile_validation_out_of_range(client, project):
         json={"math_level": 6},
     )
     assert resp.status_code == 422
+
+
+async def test_collector_questions_returns_llm_source(client, project, monkeypatch):
+    llm_questions = [
+        {
+            "id": "llm_q1",
+            "field": "math_level",
+            "question": "你对线性代数熟悉吗？",
+            "options": [{"label": "一般", "value": 3}],
+        }
+    ]
+    collector_query = AsyncMock(return_value=(llm_questions, "llm"))
+    monkeypatch.setattr("app.api.v1.profiles.get_collector_questions", collector_query)
+
+    resp = await client.post(f"/api/v1/projects/{project['id']}/collector/questions")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"questions": llm_questions, "source": "llm"}
+    collector_query.assert_awaited_once_with(project["goal_text"])
+
+
+async def test_collector_questions_returns_static_source(client, project, monkeypatch):
+    collector_query = AsyncMock(return_value=(get_static_questions(), "static"))
+    monkeypatch.setattr("app.api.v1.profiles.get_collector_questions", collector_query)
+
+    resp = await client.post(f"/api/v1/projects/{project['id']}/collector/questions")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source"] == "static"
+    assert data["questions"] == get_static_questions()
+    collector_query.assert_awaited_once_with(project["goal_text"])
+
+
+@pytest.mark.parametrize(
+    ("mock_content", "expected_source"),
+    [
+        (
+            json.dumps(
+                [
+                    {
+                        "id": "llm_q1",
+                        "field": "coding_level",
+                        "question": "你能独立写 Python 脚本吗？",
+                        "options": [{"label": "可以", "value": 4}],
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            "llm",
+        ),
+        ("not-json", "static"),
+        (
+            json.dumps(
+                [
+                    {
+                        "id": "llm_q1",
+                        "field": "unknown_field",
+                        "question": "非法字段",
+                        "options": [{"label": "x", "value": 1}],
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            "static",
+        ),
+        (json.dumps([], ensure_ascii=False), "static"),
+    ],
+)
+async def test_get_collector_questions_uses_llm_or_static_by_payload_validity(
+    mock_content,
+    expected_source,
+):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": mock_content}}]
+    }
+
+    with (
+        patch(
+            "app.services.profile_collector_service.get_llm_config",
+            return_value={
+                "llm_api_key": "test-key",
+                "llm_base_url": "https://llm.example.com/v1",
+                "llm_model": "test-model",
+            },
+        ),
+        patch("httpx.AsyncClient", return_value=_mock_async_client(response=mock_response)),
+    ):
+        questions, source = await get_collector_questions("我想系统学习机器学习基础")
+
+    assert source == expected_source
+    if expected_source == "llm":
+        assert questions[0]["id"] == "llm_q1"
+        assert questions[0]["field"] == "coding_level"
+    else:
+        assert questions == get_static_questions()
+
+
+@pytest.mark.parametrize(
+    "side_effect",
+    [
+        httpx.TimeoutException("timeout"),
+        httpx.HTTPStatusError(
+            "unauthorized",
+            request=httpx.Request("POST", "https://llm.example.com/v1/chat/completions"),
+            response=httpx.Response(
+                401,
+                request=httpx.Request("POST", "https://llm.example.com/v1/chat/completions"),
+            ),
+        ),
+    ],
+)
+async def test_generate_llm_questions_returns_none_on_transport_failures(side_effect):
+    with (
+        patch(
+            "app.services.profile_collector_service.get_llm_config",
+            return_value={
+                "llm_api_key": "test-key",
+                "llm_base_url": "https://llm.example.com/v1",
+                "llm_model": "test-model",
+            },
+        ),
+        patch("httpx.AsyncClient", return_value=_mock_async_client(side_effect=side_effect)),
+    ):
+        questions = await generate_llm_questions("我想系统学习机器学习基础")
+
+    assert questions is None
+
+
+@pytest.mark.parametrize("source", ["llm", "static"])
+async def test_collector_submit_persists_source_marker_and_mapped_answers(
+    client,
+    project,
+    db_session,
+    source,
+):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/collector/submit",
+        json={
+            "source": source,
+            "answers": [
+                {"question_id": "q_math", "field": "math_level", "value": 4},
+                {"question_id": "q_preference", "field": "theory_weight", "value": 0.6},
+                {"question_id": "q_hours", "field": "weekly_hours", "value": 12},
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["math_level"] == 4
+    assert data["theory_weight"] == 0.6
+    assert data["practice_weight"] == 0.4
+    assert data["weekly_hours"] == 12
+
+    profile = await _get_latest_profile_row(db_session, project["id"])
+    assert json.loads(profile.raw_answers_json) == [
+        {"question_id": "q_math", "field": "math_level", "value": 4},
+        {"question_id": "q_preference", "field": "theory_weight", "value": 0.6},
+        {"question_id": "q_hours", "field": "weekly_hours", "value": 12},
+    ]
+    assert json.loads(profile.collector_trace_json) == {
+        "source": source,
+        "mapped": {
+            "math_level": 4,
+            "coding_level": 1,
+            "ml_level": 1,
+            "theory_weight": 0.6,
+            "practice_weight": 0.4,
+            "weekly_hours": 12.0,
+        },
+    }

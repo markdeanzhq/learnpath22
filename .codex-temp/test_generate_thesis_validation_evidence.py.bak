@@ -1,0 +1,150 @@
+from unittest.mock import AsyncMock, patch
+from datetime import datetime, timezone
+
+import pytest
+
+from scripts.generate_thesis_validation_evidence import (
+    build_run_metadata,
+    get_actual_online_dependency_usage,
+    run_scenario,
+)
+
+
+def test_build_run_metadata_distinguishes_configured_and_used_online_dependencies():
+    actual_usage = {"llm": False, "search": True}
+    metadata = build_run_metadata(
+        requested_runtime_mode="online",
+        started_at=datetime(2026, 4, 14, 12, 0, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 4, 14, 12, 0, 5, tzinfo=timezone.utc),
+        health={
+            "environment": {
+                "llm_api_key_set": True,
+                "llm_provider": "openai_compatible",
+                "search_api_key_set": True,
+                "search_provider": "tavily",
+            }
+        },
+        readiness={
+            "status": "ready",
+            "ready": True,
+            "services": {
+                "llm": {
+                    "status": "ok",
+                    "ready": True,
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "demo-model",
+                },
+                "search": {
+                    "status": "ok",
+                    "ready": True,
+                    "provider": "tavily",
+                },
+            },
+        },
+        actual_usage=actual_usage,
+    )
+
+    assert metadata["requested_runtime_mode"] == "online"
+    assert metadata["resolved_runtime_mode"] == "hybrid"
+    assert metadata["uses_online_dependencies"] is True
+    assert metadata["dependency_metadata"]["llm"]["configured"] is True
+    assert metadata["dependency_metadata"]["llm"]["used_in_run"] is False
+    assert metadata["dependency_metadata"]["search"]["configured"] is True
+    assert metadata["dependency_metadata"]["search"]["used_in_run"] is True
+
+
+def test_get_actual_online_dependency_usage_distinguishes_configured_and_used_sources():
+    usage = get_actual_online_dependency_usage(
+        [
+            {
+                "status": "ok",
+                "collector_questions_response": {"source": "llm"},
+                "latest_plan_response": {
+                    "audit": {"goal_result": {"resolve_source": "template"}}
+                },
+                "search_attempted": False,
+            },
+            {
+                "status": "ok",
+                "collector_questions_response": {"source": "static"},
+                "latest_plan_response": {
+                    "audit": {"goal_result": {"resolve_source": "llm"}}
+                },
+                "search_attempted": True,
+                "search_results": [],
+            },
+        ]
+    )
+
+    assert usage == {"llm": True, "search": True}
+
+
+def test_get_actual_online_dependency_usage_counts_failed_search_attempts():
+    usage = get_actual_online_dependency_usage(
+        [
+            {
+                "status": "error",
+                "search_attempted": True,
+            },
+        ]
+    )
+
+    assert usage == {"llm": False, "search": True}
+
+
+@pytest.mark.asyncio
+async def test_run_scenario_marks_failed_search_attempts_as_attempted():
+    scenario = {
+        "id": "scenario-1",
+        "title": "scenario title",
+        "goal_id": "goal-1",
+        "profile_id": "profile-1",
+    }
+    goals_by_id = {
+        "goal-1": {
+            "project": {
+                "title": "机器学习入门",
+                "goal_text": "我想系统学习机器学习基础",
+                "goal_type": "domain",
+                "domain": "machine_learning",
+            }
+        }
+    }
+    profiles_by_id = {
+        "profile-1": {
+            "profile": {
+                "math_level": 2,
+                "coding_level": 2,
+                "ml_level": 1,
+                "theory_weight": 0.6,
+                "practice_weight": 0.4,
+                "weekly_hours": 10,
+                "deadline_weeks": 12,
+            }
+        }
+    }
+
+    with patch(
+        "scripts.generate_thesis_validation_evidence.request_json",
+        AsyncMock(
+            side_effect=[
+                {"id": "project-1"},
+                {"source": "static"},
+                RuntimeError("search boom"),
+                {"id": "profile-record-1"},
+                {"node_count": 1, "stages": []},
+                {"audit": {"goal_result": {"resolve_source": "template"}}},
+                {},
+            ]
+        ),
+    ):
+        result = await run_scenario(
+            object(),
+            scenario,
+            goals_by_id,
+            profiles_by_id,
+        )
+
+    assert result["status"] == "ok"
+    assert result["search_attempted"] is True
+    assert result["search_results"] == []

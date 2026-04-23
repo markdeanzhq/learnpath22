@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { projectApi, type Project, type CreateProjectDto } from '@/api/modules/project'
+import { projectApi, type CreateProjectDto, type GoalType, type Project, type ProjectGoalResolutionSummary } from '@/api/modules/project'
 
 const CURRENT_PROJECT_STORAGE_KEY = 'learnpath:current-project'
 
@@ -9,6 +9,28 @@ function getStorage() {
     return null
   }
   return window.localStorage
+}
+
+function isGoalType(value: unknown): value is GoalType {
+  return value === 'domain' || value === 'concept' || value === 'problem'
+}
+
+function sanitizeGoalResolution(input: unknown): ProjectGoalResolutionSummary | null {
+  if (!input || typeof input !== 'object') {
+    return null
+  }
+
+  const raw = input as Record<string, unknown>
+  if (typeof raw.selected_candidate_id !== 'string' || !Array.isArray(raw.confirmed_target_node_ids)) {
+    return null
+  }
+
+  return {
+    requested_goal_type: isGoalType(raw.requested_goal_type) ? raw.requested_goal_type : null,
+    auto_detected_goal_type: isGoalType(raw.auto_detected_goal_type) ? raw.auto_detected_goal_type : null,
+    selected_candidate_id: raw.selected_candidate_id,
+    confirmed_target_node_ids: raw.confirmed_target_node_ids.filter((item): item is string => typeof item === 'string'),
+  }
 }
 
 function sanitizeProject(input: unknown): Project | null {
@@ -29,6 +51,8 @@ function sanitizeProject(input: unknown): Project | null {
     domain: typeof raw.domain === 'string' ? raw.domain : '',
     status: typeof raw.status === 'string' ? raw.status : '',
     created_at: typeof raw.created_at === 'string' ? raw.created_at : '',
+    updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : '',
+    goal_resolution: sanitizeGoalResolution(raw.goal_resolution),
   }
 }
 

@@ -1,0 +1,135 @@
+{
+  "matrix_id": "thesis-validation-v1",
+  "change": "complete-domain-pack-edges",
+  "description": "固定的论文验证输入集，覆盖 3 类目标 × 3 类学习者画像，共 9 个稳定对比场景。",
+  "domain": "machine_learning",
+  "goal_templates": [
+    {
+      "id": "goal_domain_ml_foundation",
+      "label": "领域型目标：系统学习机器学习基础",
+      "project": {
+        "title": "机器学习基础学习计划",
+        "goal_text": "我想系统学习机器学习基础",
+        "goal_type": "domain",
+        "domain": "machine_learning"
+      }
+    },
+    {
+      "id": "goal_problem_logistic_regression",
+      "label": "问题型目标：理解逻辑回归分类原理",
+      "project": {
+        "title": "逻辑回归分类原理探究",
+        "goal_text": "我想搞懂逻辑回归为什么能做分类",
+        "goal_type": "problem",
+        "domain": "machine_learning"
+      }
+    },
+    {
+      "id": "goal_concept_gradient_descent",
+      "label": "概念型目标：理解梯度下降",
+      "project": {
+        "title": "深入理解梯度下降",
+        "goal_text": "理解梯度下降",
+        "goal_type": "concept",
+        "domain": "machine_learning"
+      }
+    }
+  ],
+  "profile_templates": [
+    {
+      "id": "profile_beginner_theory",
+      "label": "基础薄弱 / 偏理论 / 充足周期",
+      "profile": {
+        "math_level": 2,
+        "coding_level": 2,
+        "ml_level": 1,
+        "theory_weight": 0.6,
+        "practice_weight": 0.4,
+        "weekly_hours": 10,
+        "deadline_weeks": 12
+      }
+    },
+    {
+      "id": "profile_intermediate_practice",
+      "label": "有编程基础 / 偏实践 / 中等周期",
+      "profile": {
+        "math_level": 3,
+        "coding_level": 4,
+        "ml_level": 2,
+        "theory_weight": 0.4,
+        "practice_weight": 0.6,
+        "weekly_hours": 15,
+        "deadline_weeks": 8
+      }
+    },
+    {
+      "id": "profile_focused_fast_track",
+      "label": "概念聚焦 / 偏理论 / 紧周期",
+      "profile": {
+        "math_level": 3,
+        "coding_level": 3,
+        "ml_level": 1,
+        "theory_weight": 0.7,
+        "practice_weight": 0.3,
+        "weekly_hours": 8,
+        "deadline_weeks": 6
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "scenario_domain_beginner",
+      "title": "领域型目标 × 基础薄弱画像",
+      "goal_id": "goal_domain_ml_foundation",
+      "profile_id": "profile_beginner_theory"
+    },
+    {
+      "id": "scenario_domain_intermediate",
+      "title": "领域型目标 × 偏实践画像",
+      "goal_id": "goal_domain_ml_foundation",
+      "profile_id": "profile_intermediate_practice"
+    },
+    {
+      "id": "scenario_domain_focused",
+      "title": "领域型目标 × 紧周期画像",
+      "goal_id": "goal_domain_ml_foundation",
+      "profile_id": "profile_focused_fast_track"
+    },
+    {
+      "id": "scenario_problem_beginner",
+      "title": "问题型目标 × 基础薄弱画像",
+      "goal_id": "goal_problem_logistic_regression",
+      "profile_id": "profile_beginner_theory"
+    },
+    {
+      "id": "scenario_problem_intermediate",
+      "title": "问题型目标 × 偏实践画像",
+      "goal_id": "goal_problem_logistic_regression",
+      "profile_id": "profile_intermediate_practice"
+    },
+    {
+      "id": "scenario_problem_focused",
+      "title": "问题型目标 × 紧周期画像",
+      "goal_id": "goal_problem_logistic_regression",
+      "profile_id": "profile_focused_fast_track"
+    },
+    {
+      "id": "scenario_concept_beginner",
+      "title": "概念型目标 × 基础薄弱画像",
+      "goal_id": "goal_concept_gradient_descent",
+      "profile_id": "profile_beginner_theory"
+    },
+    {
+      "id": "scenario_concept_intermediate",
+      "title": "概念型目标 × 偏实践画像",
+      "goal_id": "goal_concept_gradient_descent",
+      "profile_id": "profile_intermediate_practice"
+    },
+    {
+      "id": "scenario_concept_focused",
+      "title": "概念型目标 × 紧周期画像",
+      "goal_id": "goal_concept_gradient_descent",
+      "profile_id": "profile_focused_fast_track"
+    }
+  ]
+}

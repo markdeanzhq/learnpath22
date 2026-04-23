@@ -132,3 +132,132 @@ async def get_path_subgraph(
     driver: Neo4jDriver, node_ids: list[str]
 ) -> dict[str, Any]:
     return await get_graph_elements(driver, scope=GRAPH_SCOPE_PROJECT, node_ids=node_ids)
+
+
+async def get_graph_entity_metadata(
+    driver: Neo4jDriver,
+    domain: str,
+) -> dict[str, Any]:
+    stages_data = await driver.execute_query(
+        "MATCH (s:Stage) WHERE s.domain = $domain RETURN s ORDER BY s.order, s.id",
+        {"domain": domain},
+    )
+    resources_data = await driver.execute_query(
+        "MATCH (r:Resource) WHERE r.domain = $domain RETURN r ORDER BY r.id",
+        {"domain": domain},
+    )
+    stage_sequence_data = await driver.execute_query(
+        "MATCH (a:Stage)-[:PRECEDES]->(b:Stage) "
+        "WHERE a.domain = $domain AND b.domain = $domain "
+        "RETURN a.id AS source, b.id AS target ORDER BY source, target",
+        {"domain": domain},
+    )
+    stage_node_data = await driver.execute_query(
+        "MATCH (s:Stage)-[:CONTAINS]->(n:KnowledgeNode) "
+        "WHERE s.domain = $domain AND n.domain = $domain "
+        "RETURN s.id AS stage_id, n.id AS node_id ORDER BY stage_id, node_id",
+        {"domain": domain},
+    )
+    stage_resource_data = await driver.execute_query(
+        "MATCH (s:Stage)-[:HAS_RESOURCE]->(r:Resource) "
+        "WHERE s.domain = $domain AND r.domain = $domain "
+        "RETURN s.id AS stage_id, r.id AS resource_id ORDER BY stage_id, resource_id",
+        {"domain": domain},
+    )
+    resource_node_data = await driver.execute_query(
+        "MATCH (r:Resource)-[:COVERS]->(n:KnowledgeNode) "
+        "WHERE r.domain = $domain AND n.domain = $domain "
+        "RETURN r.id AS resource_id, n.id AS node_id ORDER BY resource_id, node_id",
+        {"domain": domain},
+    )
+
+    stages = [
+        {
+            "id": record["s"].get("id"),
+            "name": record["s"].get("name"),
+            "order": record["s"].get("order"),
+            "description": record["s"].get("description", ""),
+            "category_keys": record["s"].get("category_keys", []),
+            "node_ids": [],
+            "resource_ids": [],
+        }
+        for record in stages_data
+    ]
+    resources = [
+        {
+            "id": record["r"].get("id"),
+            "title": record["r"].get("title"),
+            "resource_type": record["r"].get("resource_type"),
+            "description": record["r"].get("description", ""),
+            "stage_ids": [],
+            "node_ids": [],
+        }
+        for record in resources_data
+    ]
+
+    stages_by_id = {stage["id"]: stage for stage in stages}
+    resources_by_id = {resource["id"]: resource for resource in resources}
+
+    stage_sequences = [
+        {"source": record["source"], "target": record["target"], "type": "PRECEDES"}
+        for record in stage_sequence_data
+    ]
+    stage_nodes = [
+        {"stage_id": record["stage_id"], "node_id": record["node_id"], "type": "CONTAINS"}
+        for record in stage_node_data
+    ]
+    stage_resources = [
+        {
+            "stage_id": record["stage_id"],
+            "resource_id": record["resource_id"],
+            "type": "HAS_RESOURCE",
+        }
+        for record in stage_resource_data
+    ]
+    resource_nodes = [
+        {
+            "resource_id": record["resource_id"],
+            "node_id": record["node_id"],
+            "type": "COVERS",
+        }
+        for record in resource_node_data
+    ]
+
+    for relation in stage_nodes:
+        stage = stages_by_id.get(relation["stage_id"])
+        if stage is not None:
+            stage["node_ids"].append(relation["node_id"])
+
+    for relation in stage_resources:
+        stage = stages_by_id.get(relation["stage_id"])
+        resource = resources_by_id.get(relation["resource_id"])
+        if stage is not None:
+            stage["resource_ids"].append(relation["resource_id"])
+        if resource is not None:
+            resource["stage_ids"].append(relation["stage_id"])
+
+    for relation in resource_nodes:
+        resource = resources_by_id.get(relation["resource_id"])
+        if resource is not None:
+            resource["node_ids"].append(relation["node_id"])
+
+    for stage in stages:
+        stage["node_ids"].sort()
+        stage["resource_ids"].sort()
+
+    for resource in resources:
+        resource["stage_ids"].sort()
+        resource["node_ids"].sort()
+
+    return {
+        "domain": domain,
+        "stages": stages,
+        "resources": resources,
+        "relationships": {
+            "stage_sequences": stage_sequences,
+            "stage_nodes": stage_nodes,
+            "stage_resources": stage_resources,
+            "resource_nodes": resource_nodes,
+        },
+        "is_empty": len(stages) == 0 and len(resources) == 0,
+    }

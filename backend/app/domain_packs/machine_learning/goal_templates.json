@@ -3,7 +3,9 @@
     "id": "domain_ml_full",
     "goal_type": "domain",
     "pattern": ["系统学习", "机器学习基础", "机器学习入门", "ML基础"],
-    "target_node_ids": ["ml_c09", "ml_d08", "ml_e03", "ml_e07"],
+    "negative_patterns": ["逻辑回归为什么能做分类", "推导梯度下降", "偏差和方差", "理解梯度下降"],
+    "priority": 40,
+    "target_node_ids": ["ml_c09", "ml_d08", "ml_e03", "ml_e07", "ml_e08"],
     "mode": "steady",
     "description": "系统学习机器学习基础 — 完整三阶段路径"
   },
@@ -11,6 +13,8 @@
     "id": "domain_ml_math",
     "goal_type": "domain",
     "pattern": ["机器学习数学基础", "数学基础"],
+    "negative_patterns": ["逻辑回归", "监督学习", "案例实践"],
+    "priority": 55,
     "target_node_ids": ["ml_a04", "ml_a05", "ml_a06", "ml_a07", "ml_a08"],
     "mode": "steady",
     "description": "机器学习数学基础 — 聚焦数学前置"
@@ -19,6 +23,8 @@
     "id": "domain_supervised",
     "goal_type": "domain",
     "pattern": ["监督学习基础", "监督学习"],
+    "negative_patterns": ["为什么", "推导", "区别"],
+    "priority": 60,
     "target_node_ids": ["ml_c09", "ml_c12", "ml_d08"],
     "mode": "steady",
     "description": "监督学习基础 — 覆盖回归与分类主干"
@@ -27,6 +33,8 @@
     "id": "concept_gradient_descent",
     "goal_type": "concept",
     "pattern": ["梯度下降", "gradient descent"],
+    "negative_patterns": ["更新公式", "推导"],
+    "priority": 75,
     "target_node_ids": ["ml_c05"],
     "mode": "efficient",
     "description": "理解梯度下降"
@@ -35,6 +43,8 @@
     "id": "concept_logistic_regression",
     "goal_type": "concept",
     "pattern": ["逻辑回归", "logistic regression"],
+    "negative_patterns": ["为什么能做分类", "分类阈值"],
+    "priority": 78,
     "target_node_ids": ["ml_c09"],
     "mode": "efficient",
     "description": "理解逻辑回归"
@@ -43,6 +53,8 @@
     "id": "concept_overfitting",
     "goal_type": "concept",
     "pattern": ["过拟合", "欠拟合", "overfitting"],
+    "negative_patterns": [],
+    "priority": 72,
     "target_node_ids": ["ml_c07", "ml_c08"],
     "mode": "efficient",
     "description": "理解过拟合与正则化"
@@ -51,6 +63,8 @@
     "id": "problem_logistic_classification",
     "goal_type": "problem",
     "pattern": ["逻辑回归为什么能做分类", "逻辑回归分类"],
+    "negative_patterns": ["系统学习", "入门", "全面"],
+    "priority": 90,
     "target_node_ids": ["ml_c09", "ml_c10", "ml_c11"],
     "mode": "efficient",
     "description": "搞懂逻辑回归为什么能做分类"
@@ -59,6 +73,8 @@
     "id": "problem_gradient_derivation",
     "goal_type": "problem",
     "pattern": ["梯度下降更新公式", "推导梯度下降"],
+    "negative_patterns": ["系统学习", "入门", "基础"],
+    "priority": 88,
     "target_node_ids": ["ml_c05", "ml_c06"],
     "mode": "efficient",
     "description": "推导梯度下降更新公式"
@@ -67,6 +83,8 @@
     "id": "problem_bias_variance",
     "goal_type": "problem",
     "pattern": ["偏差和方差", "偏差方差", "bias variance"],
+    "negative_patterns": ["系统学习", "基础", "入门"],
+    "priority": 86,
     "target_node_ids": ["ml_d07", "ml_c07", "ml_d06"],
     "mode": "efficient",
     "description": "搞懂偏差和方差的区别"

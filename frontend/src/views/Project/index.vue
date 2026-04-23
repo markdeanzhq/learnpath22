@@ -59,8 +59,18 @@
             <el-step title="完成" />
           </el-steps>
 
-          <!-- Step 0: 创建项目 -->
-          <GoalForm v-if="step === 0" @created="onProjectCreated" />
+          <!-- Step 0: 创建项目 / 重新确认目标 -->
+          <GoalForm
+            v-if="step === 0"
+            :mode="goalFormMode"
+            :project-id="currentProjectId"
+            :project-title="projectStore.currentProject?.title ?? ''"
+            :initial-goal-text="projectStore.currentProject?.goal_text ?? ''"
+            :initial-goal-type="goalFormMode === 'reconfirm' ? (projectStore.currentProject?.goal_type as any) : 'auto'"
+            :reconfirm-reason="reconfirmReason"
+            @created="onProjectCreated"
+            @updated="onGoalResolutionUpdated"
+          />
 
           <!-- Step 1: 画像采集 -->
           <ProfileQuestionnaire
@@ -95,8 +105,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Document } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
@@ -107,6 +117,7 @@ import GoalForm from './components/GoalForm.vue'
 import ProfileQuestionnaire from './components/ProfileQuestionnaire.vue'
 
 const router = useRouter()
+const route = useRoute()
 const projectStore = useProjectStore()
 const planStore = usePlanStore()
 const trackingStore = useTrackingStore()
@@ -115,20 +126,49 @@ const step = ref(-1)
 const currentProjectId = ref('')
 const generatingPlan = ref(false)
 const deletingProjectId = ref('')
+const goalFormMode = ref<'create' | 'reconfirm'>('create')
+const reconfirmReason = ref('')
 
 onMounted(() => {
   projectStore.loadList()
 })
 
+watch(
+  () => [route.query.mode, route.query.projectId, route.query.reason] as const,
+  ([mode, projectId, reason]) => {
+    if (mode !== 'reconfirm' || typeof projectId !== 'string') {
+      return
+    }
+    currentProjectId.value = projectId
+    goalFormMode.value = 'reconfirm'
+    reconfirmReason.value = typeof reason === 'string' ? reason : ''
+    step.value = 0
+  },
+  { immediate: true },
+)
+
 function startCreate() {
   step.value = 0
   currentProjectId.value = ''
+  goalFormMode.value = 'create'
+  reconfirmReason.value = ''
 }
 
 function onProjectCreated(project: Project) {
   currentProjectId.value = project.id
+  goalFormMode.value = 'create'
+  reconfirmReason.value = ''
   step.value = 1
   projectStore.loadList()
+}
+
+function onGoalResolutionUpdated(project: Project) {
+  currentProjectId.value = project.id
+  projectStore.setCurrentProject(project)
+  goalFormMode.value = 'create'
+  reconfirmReason.value = ''
+  step.value = -1
+  router.replace('/project')
 }
 
 function onProfileCompleted() {
@@ -141,6 +181,19 @@ async function goToPath() {
   try {
     await planStore.generate(currentProjectId.value)
     router.push('/path')
+  } catch (e: any) {
+    if (e?.response?.status === 409 && e?.response?.data?.error === 'GOAL_TARGETS_REMOVED') {
+      router.push({
+        path: '/project',
+        query: {
+          mode: 'reconfirm',
+          projectId: currentProjectId.value,
+          reason: 'goal-targets-removed',
+        },
+      })
+      return
+    }
+    throw e
   } finally {
     generatingPlan.value = false
   }

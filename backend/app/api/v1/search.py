@@ -34,4 +34,9 @@ async def search_resources(
     except AppError:
         raise
 
-    return {"query": req.query, "results": results, "count": len(results)}
+    return {
+        "query": req.query,
+        "results": results,
+        "count": len(results),
+        "source": "tavily",
+    }

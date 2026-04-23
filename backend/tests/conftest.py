@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.core.config import replace_runtime_settings
 from app.models.sqlite_models import (
     Base,
     GraphReviewStatus,
@@ -16,6 +17,7 @@ from app.models.sqlite_models import (
     LearningPath,
     PathStage,
     PathTask,
+    ResourceBinding,
     TrackingEvent,
 )
 
@@ -49,6 +51,7 @@ async def _override_get_neo4j():
 @pytest.fixture
 async def client():
     """Provide an httpx async client backed by an in-memory test database."""
+    replace_runtime_settings({})
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -71,6 +74,7 @@ async def client():
 
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    replace_runtime_settings({})
 
 
 @pytest.fixture
@@ -80,19 +84,40 @@ async def db_session():
 
 
 @pytest.fixture
-async def project(client):
-    """Create a test project and return its JSON."""
+async def goal_resolution_preview(client):
+    """Create a reusable goal resolution preview session and return its JSON."""
+    preview_resp = await client.post(
+        "/api/v1/goal-resolution/preview",
+        json={
+            "goal_text": "我想系统学习机器学习基础",
+            "domain": "machine_learning",
+        },
+    )
+    assert preview_resp.status_code == 200
+    return preview_resp.json()
+
+
+@pytest.fixture
+async def confirmed_project(client, goal_resolution_preview):
+    """Create a confirmed project from a resolution session and return its JSON."""
     resp = await client.post(
         "/api/v1/projects",
         json={
             "title": "测试项目",
             "goal_text": "我想系统学习机器学习基础",
-            "goal_type": "domain",
             "domain": "machine_learning",
+            "resolution_session_id": goal_resolution_preview["session_id"],
+            "selected_candidate_id": goal_resolution_preview["recommended_candidate_id"],
         },
     )
     assert resp.status_code == 200
     return resp.json()
+
+
+@pytest.fixture
+async def project(confirmed_project):
+    """Backwards-compatible alias for the confirmed project fixture."""
+    return confirmed_project
 
 
 @pytest.fixture

@@ -1,10 +1,16 @@
 {
   "domain": "machine_learning",
-  "version": "v1",
+  "version": "1.3.0",
   "name": "机器学习基础",
-  "description": "面向机器学习基础学习场景的知识包，包含48个知识点",
-  "node_count": 48,
-  "groups": ["A", "B", "C", "D", "E"],
+  "description": "面向机器学习基础学习场景的知识包，包含47个知识点。v1.3.0: 面向闭包完整性与解释一致性的结构校准。",
+  "node_count": 47,
+  "groups": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E"
+  ],
   "group_names": {
     "A": "数学与编程基础",
     "B": "机器学习入门骨架",
@@ -12,6 +18,30 @@
     "D": "评估与泛化",
     "E": "实践与应用闭环"
   },
-  "stages": ["基础准备", "核心掌握", "应用突破"],
-  "supported_goal_types": ["domain", "concept", "problem"]
+  "stages": [
+    "基础准备",
+    "核心掌握",
+    "应用突破"
+  ],
+  "supported_goal_types": [
+    "domain",
+    "concept",
+    "problem"
+  ],
+  "default_goal_policy": {
+    "by_goal_type": {
+      "domain": {
+        "target_node_ids": [
+          "ml_c09",
+          "ml_d08",
+          "ml_e03",
+          "ml_e07",
+          "ml_e08"
+        ],
+        "mode": "steady",
+        "description": "系统学习机器学习基础 — 完整三阶段路径",
+        "resolve_source": "domain_default"
+      }
+    }
+  }
 }

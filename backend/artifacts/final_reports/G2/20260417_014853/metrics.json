@@ -1,0 +1,250 @@
+{
+  "plan": {
+    "goal": "理解梯度下降",
+    "profile": {
+      "math_level": 2,
+      "coding_level": 2,
+      "ml_level": 1,
+      "theory_weight": 0.6,
+      "practice_weight": 0.4,
+      "weekly_hours": 10,
+      "deadline_weeks": 12
+    },
+    "ordered_ids": [
+      "ml_a04",
+      "ml_b04",
+      "ml_a05",
+      "ml_a02",
+      "ml_b02",
+      "ml_b01",
+      "ml_b06",
+      "ml_b10",
+      "ml_a06",
+      "ml_b08",
+      "ml_a03",
+      "ml_c01",
+      "ml_c02",
+      "ml_c04",
+      "ml_c03",
+      "ml_c05"
+    ],
+    "stage_plan": {
+      "基础准备": [
+        {
+          "node_id": "ml_a04",
+          "name": "导数与偏导",
+          "difficulty": 3,
+          "importance": 5,
+          "estimated_hours": 4,
+          "order_in_stage": 0
+        },
+        {
+          "node_id": "ml_b04",
+          "name": "特征与标签",
+          "difficulty": 1,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 1
+        },
+        {
+          "node_id": "ml_a05",
+          "name": "链式法则",
+          "difficulty": 3,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 2
+        },
+        {
+          "node_id": "ml_a02",
+          "name": "向量与矩阵",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 3
+        },
+        {
+          "node_id": "ml_b02",
+          "name": "监督学习",
+          "difficulty": 1,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 4
+        },
+        {
+          "node_id": "ml_b01",
+          "name": "什么是机器学习",
+          "difficulty": 1,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 5
+        },
+        {
+          "node_id": "ml_b06",
+          "name": "训练集验证集测试集",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 2,
+          "order_in_stage": 6
+        },
+        {
+          "node_id": "ml_b10",
+          "name": "机器学习基本流程",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 7
+        },
+        {
+          "node_id": "ml_a06",
+          "name": "概率基础",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 8
+        },
+        {
+          "node_id": "ml_b08",
+          "name": "数据预处理",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 9
+        },
+        {
+          "node_id": "ml_a03",
+          "name": "矩阵运算",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 3,
+          "order_in_stage": 10
+        }
+      ],
+      "核心掌握": [
+        {
+          "node_id": "ml_c01",
+          "name": "线性回归",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 4,
+          "order_in_stage": 0
+        },
+        {
+          "node_id": "ml_c02",
+          "name": "预测值与残差",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 1
+        },
+        {
+          "node_id": "ml_c04",
+          "name": "均方误差MSE",
+          "difficulty": 2,
+          "importance": 4,
+          "estimated_hours": 2,
+          "order_in_stage": 2
+        },
+        {
+          "node_id": "ml_c03",
+          "name": "损失函数",
+          "difficulty": 2,
+          "importance": 5,
+          "estimated_hours": 3,
+          "order_in_stage": 3
+        },
+        {
+          "node_id": "ml_c05",
+          "name": "梯度下降",
+          "difficulty": 3,
+          "importance": 5,
+          "estimated_hours": 4,
+          "order_in_stage": 4
+        }
+      ],
+      "应用突破": []
+    },
+    "total_hours": 44,
+    "node_count": 16,
+    "reinforced_ids": [
+      "ml_b10",
+      "ml_b06",
+      "ml_b02",
+      "ml_a06",
+      "ml_b08",
+      "ml_b01"
+    ],
+    "target_node_ids": [
+      "ml_c05"
+    ],
+    "mode": "efficient"
+  },
+  "baseline": {
+    "name": "周志华《机器学习》教材主干节点序列",
+    "source": "周志华. 机器学习[M]. 北京: 清华大学出版社, 2016."
+  },
+  "metrics": {
+    "M1_dependency_satisfaction": {
+      "checked_edges": 9,
+      "satisfied": 9,
+      "violations": [],
+      "satisfaction_rate": 1.0
+    },
+    "M2_cycle_check": {
+      "is_dag": true,
+      "error": null
+    },
+    "M3_kendall_vs_baseline": {
+      "tau": 0.3333,
+      "common_nodes": 15,
+      "baseline_size": 34,
+      "path_size": 16
+    },
+    "M4_type_coverage": {
+      "per_group": {
+        "A": {
+          "label": "数学与编程基础",
+          "total": 10,
+          "covered": 5,
+          "rate": 0.5
+        },
+        "B": {
+          "label": "机器学习概念",
+          "total": 10,
+          "covered": 6,
+          "rate": 0.6
+        },
+        "C": {
+          "label": "监督学习算法",
+          "total": 12,
+          "covered": 5,
+          "rate": 0.4167
+        },
+        "D": {
+          "label": "模型评估",
+          "total": 8,
+          "covered": 0,
+          "rate": 0.0
+        },
+        "E": {
+          "label": "实践入门",
+          "total": 8,
+          "covered": 0,
+          "rate": 0.0
+        }
+      },
+      "backbone_total": 43,
+      "backbone_covered": 16,
+      "backbone_rate": 0.3721
+    },
+    "M5_stage_closure": {
+      "stages": [
+        "基础准备",
+        "核心掌握",
+        "应用突破"
+      ],
+      "checked_edges": 9,
+      "violations": [],
+      "closure_completeness_rate": 1.0
+    }
+  }
+}

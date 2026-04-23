@@ -23,6 +23,10 @@ Base URL: `/api/v1`
 }
 ```
 
+说明：
+- 当前版本为单领域原型，`domain` 仅支持 `machine_learning`
+- 传入其他领域值会在请求校验阶段返回 `422`
+
 **删除项目响应示例:**
 ```json
 {
@@ -95,11 +99,43 @@ Base URL: `/api/v1`
 }
 ```
 
+**重规划响应补充字段：**
+```json
+{
+  "id": "uuid",
+  "version": 2,
+  "mode": "progress_aware",
+  "diff": {
+    "completed": ["ml_a01"],
+    "pending": ["ml_b02"]
+  },
+  "diff_details": {
+    "completed": [
+      {
+        "node_id": "ml_a01",
+        "node_name": "线性代数基础"
+      }
+    ],
+    "pending": [
+      {
+        "node_id": "ml_b02",
+        "node_name": "概率统计基础"
+      }
+    ]
+  }
+}
+```
+
+说明：
+- `mode` 支持 `progress_aware` 与 `profile_update`
+- `diff` 提供节点 ID 级差异
+- `diff_details` 提供面向前端展示的可读名称，避免页面直接暴露节点 ID
+
 ## 结构化解释
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | /projects/{id}/explanation | 获取路径解释（阶段 3 实现） |
+| GET | /projects/{id}/explanation | 获取路径解释 |
 
 ## 进度追踪
 
@@ -107,9 +143,14 @@ Base URL: `/api/v1`
 |------|------|------|
 | POST | /projects/{id}/tracking/events | 记录学习事件 |
 | GET | /projects/{id}/tracking/events | 列出所有事件 |
-| GET | /projects/{id}/tracking/summary | 获取进度汇总 |
+| GET | /projects/{id}/tracking/summary | 获取按 `latest plan` 口径计算的进度汇总 |
 
 **学习事件类型:** `start` / `complete` / `skip`
+
+说明：
+- `tracking/summary` 以当前最新路径版本中的节点集合为统计口径
+- 已经被最新计划移除的节点不会继续计入 `total_nodes`
+- 该口径同时用于 e2e 脚本、论文验证证据和前端 Dashboard 展示
 
 ## 知识图谱
 
@@ -117,13 +158,46 @@ Base URL: `/api/v1`
 |------|------|------|
 | GET | /projects/{id}/graph | 获取项目关联的图谱数据 |
 | GET | /projects/{id}/graph/subgraph?node_ids=a,b | 获取指定节点的子图 |
+| GET | /projects/{id}/graph/entities | 获取 Stage / Resource 等扩展实体的只读摘要 |
 | POST | /graph/seed | 同步 Domain Pack 到 Neo4j（全局操作） |
+
+说明：
+- `graph/entities` 只返回扩展实体展示数据，不会触发图谱重同步
+- 前端 Knowledge 页使用该接口展示 `Stage` / `Resource` 只读信息
+- Path / Dashboard 的“在图谱中定位”会跳转到 Knowledge，并由图谱画布聚焦对应 `nodeId`
 
 ## 搜索
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | /projects/{id}/search | 搜索学习资料（阶段 5 实现） |
+| POST | /projects/{id}/search | 搜索学习资料（在线增强） |
+
+说明：
+- 搜索能力服务于学习资料补充，不参与路径主链正确性判定
+- 搜索结果可在前端路径页中进一步手动绑定到指定阶段
+
+## 路径资源增强
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | /projects/{id}/plans/{path_id}/resources | 获取当前路径的阶段资源列表（静态保底 + 已绑定动态资源） |
+| POST | /projects/{id}/plans/{path_id}/resources/recommend | 按阶段自动补充 Tavily 候选资源 |
+| POST | /projects/{id}/plans/{path_id}/resources/bind | 手动把搜索结果绑定到指定阶段或节点 |
+
+**手动绑定请求体示例：**
+```json
+{
+  "stage_name": "核心掌握",
+  "title": "逻辑回归核心讲义",
+  "url": "https://example.com/logreg",
+  "snippet": "覆盖逻辑回归、梯度下降和分类原理。"
+}
+```
+
+说明：
+- 当前版本优先支持阶段级资源增强
+- 静态资源来自 Domain Pack，作为离线保底
+- 动态绑定结果写入 SQLite，不直接回写知识包
 
 ## 图谱审核
 
@@ -138,8 +212,10 @@ Base URL: `/api/v1`
 |------|------|------|
 | GET | /health | 服务健康状态 |
 | GET | /health/config | 获取当前运行时配置状态 |
-| PUT | /health/config | 保存 LLM / 搜索运行时配置（运行时生效，重启后失效） |
+| PUT | /health/config | 保存 LLM / 搜索运行时配置（运行时生效，并持久化到 SQLite） |
 | GET | /health/llm | 检查当前 LLM 配置连通性 |
+| GET | /health/search | 检查搜索依赖 readiness |
+| GET | /health/readiness | 返回双层演示预检状态与各依赖服务明细 |
 | POST | /health/llm-test | 返回已禁用状态，不再发起自定义外部请求 |
 
 **获取配置响应示例：**
@@ -182,14 +258,36 @@ Base URL: `/api/v1`
 }
 ```
 
+**`GET /health/readiness` 响应要点：**
+```json
+{
+  "status": "degraded",
+  "ready": false,
+  "core_ready": true,
+  "demo_ready": true,
+  "enhanced_ready": false,
+  "services": {
+    "sqlite": {"status": "ok", "ready": true},
+    "neo4j": {"status": "ok", "ready": true},
+    "graph_sync": {"status": "ok", "ready": true, "reason": "synced", "domain": "machine_learning"},
+    "llm": {"status": "skipped", "ready": false, "reason": "LLM_API_KEY not configured"},
+    "search": {"status": "skipped", "ready": false, "provider": "tavily", "reason": "搜索服务未配置"}
+  }
+}
+```
+
 说明：
-- 后端保存的是运行时配置，保存后仅对当前后端进程生效，服务重启后失效
+- 后端保存的是运行时配置，并持久化到 SQLite；服务重启后会自动恢复
 - 前端会将以下 4 个字段保存到浏览器本地 `localStorage`：`llm_base_url`、`llm_model`、`llm_api_key`、`search_api_key`
 - 应用加载时会自动将这 4 个本地保存字段静默回灌到 `PUT /health/config`，用于恢复当前后端进程的运行时配置
-- API key 仅保存在浏览器本地，不由后端持久化
+- API key 仅通过是否已配置状态对外暴露，不在响应中回显明文
 - 支持按需提交 `llm_base_url`、`llm_model`、`llm_api_key`、`search_api_key`
 - 未知字段会返回 `422`
 - 密钥字段不回显，仅通过 `llm_api_key_set`、`search_api_key_set` 暴露是否已配置
-- 清空本地保存只会移除浏览器中的快照，不会主动清空后端当前进程内已生效的运行时配置
+- 清空本地保存只会移除浏览器中的快照，不会主动清空后端当前已生效的运行时配置
 - `PUT /health/config` 仅支持覆盖已提供字段，未提交的字段保持原值，不提供清空单个字段的语义
 - `POST /health/llm-test` 当前固定返回 `skipped`，不再发起自定义外部连通性请求
+- `core_ready` 表示 SQLite + Neo4j + `services.graph_sync` 是否就绪
+- `demo_ready` 表示离线答辩主链是否可演示，当前与 `core_ready` 保持一致
+- `enhanced_ready` 表示 LLM 与搜索等在线增强能力是否就绪
+- 前端为兼容旧联调实例保留 `normalizeReadiness`，若后端仍返回旧结构，会自动补齐 `core_ready/demo_ready/enhanced_ready` 与 `services.graph_sync`
