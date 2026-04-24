@@ -6,7 +6,6 @@ export type GoalTypeSelection = 'auto' | GoalType
 export interface GoalResolutionPreviewRequestDto {
   goal_text: string
   requested_goal_type?: GoalType
-  domain?: 'machine_learning'
 }
 
 export interface GoalResolutionCandidate {
@@ -36,7 +35,6 @@ export interface GoalResolutionPreviewResponse {
 export interface CreateProjectDto {
   title: string
   goal_text: string
-  domain?: 'machine_learning'
   resolution_session_id: string
   selected_candidate_id: string
   goal_type?: GoalType
@@ -44,7 +42,6 @@ export interface CreateProjectDto {
 
 export interface UpdateProjectGoalResolutionDto {
   goal_text: string
-  domain?: 'machine_learning'
   resolution_session_id: string
   selected_candidate_id: string
   goal_type?: GoalType

@@ -11,6 +11,9 @@
         :rows="3"
         placeholder="描述你想学什么，例如：我想系统学习机器学习基础"
       />
+      <div class="form-hint">
+        当前原型面向机器学习基础单领域；若没有可确认候选，系统会显示结构化原因，包含 reason_code 与 reason_text，帮助您改写目标。
+      </div>
     </el-form-item>
 
     <el-form-item label="目标类型" prop="goal_type">
@@ -76,7 +79,7 @@
       show-icon
     >
       <template #default>
-        系统会优先推荐最匹配的候选，您也可以切换到其他候选再创建项目。
+        系统会优先推荐最匹配的候选；请先选择候选，再创建项目或重新确认目标。
       </template>
     </el-alert>
 
@@ -130,7 +133,6 @@ interface GoalFormState {
   title: string
   goal_text: string
   goal_type: GoalTypeSelection
-  domain: 'machine_learning'
 }
 
 const props = withDefaults(defineProps<{
@@ -163,7 +165,6 @@ const form = reactive<GoalFormState>({
   title: '',
   goal_text: '',
   goal_type: 'auto',
-  domain: 'machine_learning',
 })
 
 watch(
@@ -249,7 +250,6 @@ async function handlePreview() {
   try {
     const payload = {
       goal_text: normalizedGoalText.value,
-      domain: form.domain,
       ...(requestedGoalType.value ? { requested_goal_type: requestedGoalType.value } : {}),
     }
     const preview = props.mode === 'reconfirm' && props.projectId
@@ -275,7 +275,6 @@ async function handleCreate() {
     if (props.mode === 'reconfirm' && props.projectId) {
       const project = await projectApi.confirmGoalResolution(props.projectId, {
         goal_text: normalizedGoalText.value,
-        domain: form.domain,
         resolution_session_id: previewState.value.session_id,
         selected_candidate_id: selectedCandidateId.value,
       })
@@ -287,7 +286,6 @@ async function handleCreate() {
     const project = await projectStore.create({
       title: form.title.trim(),
       goal_text: normalizedGoalText.value,
-      domain: form.domain,
       resolution_session_id: previewState.value.session_id,
       selected_candidate_id: selectedCandidateId.value,
     })
@@ -299,8 +297,15 @@ async function handleCreate() {
 </script>
 
 <style scoped>
-.type-desc {
+.type-desc,
+.form-hint {
   margin-top: 8px;
+}
+
+.form-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .reconfirm-alert {

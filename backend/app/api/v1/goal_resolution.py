@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.schemas.common import ErrorResponse
 from app.schemas.goal_resolution import (
     GoalResolutionPreviewRequest,
     GoalResolutionPreviewResponse,
@@ -11,7 +12,11 @@ from app.services.goal_resolution_service import create_goal_resolution_preview
 router = APIRouter()
 
 
-@router.post("/goal-resolution/preview", response_model=GoalResolutionPreviewResponse)
+@router.post(
+    "/goal-resolution/preview",
+    response_model=GoalResolutionPreviewResponse,
+    responses={422: {"model": ErrorResponse}},
+)
 async def preview_goal_resolution_endpoint(
     req: GoalResolutionPreviewRequest,
     db: AsyncSession = Depends(get_db),

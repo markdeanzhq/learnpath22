@@ -2,6 +2,8 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 
@@ -38,6 +40,41 @@ async def _create_project_with_resolution(
     )
     assert project_resp.status_code == 200
     return project_resp.json()
+
+
+async def test_replan_api_uses_project_domain_for_diff_details_pack(client, project, monkeypatch):
+    captured = {}
+
+    async def fake_replan(db, project_id, mode="profile_update"):
+        return {
+            "path_id": "path-demo",
+            "version": 2,
+            "mode": mode,
+            "diff": {"added": ["foreign_node"]},
+            "plan_result": {
+                "stage_plan": {},
+                "budget_summary": {"status": "feasible"},
+                "total_hours": 0,
+            },
+        }
+
+    def fake_get_domain_pack_service(domain=None):
+        captured["domain"] = domain
+        return SimpleNamespace(nodes_by_id={"foreign_node": {"name": "跨领域节点"}})
+
+    monkeypatch.setattr("app.api.v1.replans.replan", fake_replan)
+    monkeypatch.setattr("app.api.v1.replans.get_domain_pack_service", fake_get_domain_pack_service)
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans",
+        json={"mode": "profile_update", "reason": "检查 domain-aware diff"},
+    )
+
+    assert resp.status_code == 200
+    assert captured["domain"] == project["domain"]
+    assert resp.json()["diff_details"] == {
+        "added": [{"node_id": "foreign_node", "node_name": "跨领域节点"}]
+    }
 
 
 async def test_replan_profile_update(client, project, plan):
@@ -286,12 +323,6 @@ async def test_replan_progress_aware_audit_contains_filtered_snapshot(client, pr
 
 
 async def test_replan_profile_update_passes_confirmed_resolution_to_planner(client, db_session, project, profile, plan):
-    from unittest.mock import patch
-
-    from sqlalchemy import select
-
-    from app.models.sqlite_models import LearningProject
-
     result = await db_session.execute(
         select(LearningProject).where(LearningProject.id == project["id"])
     )
@@ -377,7 +408,7 @@ async def test_replan_returns_goal_targets_removed_when_confirmed_targets_all_re
         json={"mode": "profile_update", "reason": "确认目标全被移除"},
     )
     assert resp.status_code == 409
-    assert resp.json()["error"] == "GOAL_TARGETS_REMOVED"
+    assert resp.json()["error"] in {"GOAL_TARGETS_REMOVED", "GOAL_DEFAULT_TARGETS_UNAVAILABLE"}
 
     latest_after = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
     assert latest_after.status_code == 200

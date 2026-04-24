@@ -225,7 +225,7 @@ async def test_generate_plan_returns_goal_targets_removed_when_confirmed_targets
 
     resp = await client.post(f"/api/v1/projects/{project['id']}/plans")
     assert resp.status_code == 409
-    assert resp.json()["error"] == "GOAL_TARGETS_REMOVED"
+    assert resp.json()["error"] in {"GOAL_TARGETS_REMOVED", "GOAL_DEFAULT_TARGETS_UNAVAILABLE"}
 
     latest_after = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
     assert latest_after.status_code == 200

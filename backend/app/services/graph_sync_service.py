@@ -8,6 +8,7 @@ from app.db.seed_graph import seed_graph
 from app.services.domain_pack_service import (
     DomainPackService,
     build_canonical_pack_hash,
+    get_domain_pack_registry,
     get_domain_pack_service,
 )
 from app.services.graph_service import get_graph_entity_metadata
@@ -312,8 +313,11 @@ class GraphSyncService:
             "version": rows[0].get("version") or "",
         }
 
-    async def get_sync_status(self, domain: str = "machine_learning") -> dict[str, Any]:
-        pack = get_domain_pack_service(domain, force_reload=False)
+    def _resolve_domain(self, domain: str | None = None) -> str:
+        return get_domain_pack_registry().resolve_domain(domain)
+
+    async def get_sync_status(self, domain: str | None = None) -> dict[str, Any]:
+        pack = get_domain_pack_service(self._resolve_domain(domain), force_reload=False)
         self._validate_pack(pack)
         version = str(pack.manifest.get("version", ""))
         if not version:
@@ -403,12 +407,12 @@ class GraphSyncService:
             **counts,
         }
 
-    async def sync_domain_pack(self, domain: str = "machine_learning") -> dict[str, Any]:
-        pack = get_domain_pack_service(domain, force_reload=False)
+    async def sync_domain_pack(self, domain: str | None = None) -> dict[str, Any]:
+        pack = get_domain_pack_service(self._resolve_domain(domain), force_reload=False)
         return await self._sync_pack(pack, force=False)
 
-    async def force_sync_domain_pack(self, domain: str = "machine_learning") -> dict[str, Any]:
-        pack = get_domain_pack_service(domain, force_reload=True)
+    async def force_sync_domain_pack(self, domain: str | None = None) -> dict[str, Any]:
+        pack = get_domain_pack_service(self._resolve_domain(domain), force_reload=True)
         return await self._sync_pack(pack, force=True)
 
     async def _sync_pack(self, pack: DomainPackService, force: bool) -> dict[str, Any]:

@@ -16,7 +16,7 @@ def topo_sort_with_profile_priority(
     config: dict[str, Any] | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     """画像感知的拓扑排序：每轮从零入度节点中选优先级最高的。"""
-    ready = [nid for nid, deg in indegree.items() if deg == 0]
+    ready = sorted(nid for nid, deg in indegree.items() if deg == 0)
     ordered: list[str] = []
     logs: dict[str, Any] = {}
     indegree = dict(indegree)  # 不改原始
@@ -36,7 +36,7 @@ def topo_sort_with_profile_priority(
             )
             scored_ready.append((score, nid, gap))
 
-        scored_ready.sort(reverse=True, key=lambda x: x[0])
+        scored_ready.sort(key=lambda item: (-item[0], item[1]))
         score, current, gap = scored_ready[0]
         ready.remove(current)
         ordered.append(current)
@@ -49,10 +49,11 @@ def topo_sort_with_profile_priority(
             "reasons": ["topo_ready", "profile_aware_priority"],
         }
 
-        for nxt in sub_adj.get(current, []):
+        for nxt in sorted(sub_adj.get(current, [])):
             indegree[nxt] -= 1
             if indegree[nxt] == 0:
                 ready.append(nxt)
+                ready.sort()
 
     if len(ordered) != len(indegree):
         raise ValueError("检测到环，无法完成拓扑排序")

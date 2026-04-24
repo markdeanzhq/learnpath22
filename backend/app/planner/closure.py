@@ -9,17 +9,21 @@ def get_prerequisite_closure(
     requires_rev_adj: dict[str, list[str]],
 ) -> list[str]:
     """从目标节点递归收集所有前置依赖，返回闭包节点 id 列表（不含目标自身）。"""
+    target_set = set(target_node_ids)
     visited: set[str] = set()
-    queue = deque(target_node_ids)
+    closure: list[str] = []
+    queue = deque(sorted(target_set))
 
     while queue:
         node = queue.popleft()
-        for prereq in requires_rev_adj.get(node, []):
-            if prereq not in visited:
-                visited.add(prereq)
-                queue.append(prereq)
+        for prereq in sorted(requires_rev_adj.get(node, [])):
+            if prereq in visited or prereq in target_set:
+                continue
+            visited.add(prereq)
+            closure.append(prereq)
+            queue.append(prereq)
 
-    return list(visited - set(target_node_ids))
+    return closure
 
 
 def extract_subgraph(

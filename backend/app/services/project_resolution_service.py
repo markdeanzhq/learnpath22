@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AppError, NotFoundError
 from app.models.sqlite_models import GoalResolutionSession, LearningProject
 from app.repositories.project_repository import create_project, get_project
-from app.services.goal_resolution_service import create_goal_resolution_preview
+from app.services.goal_resolution_service import (
+    _build_goal_text_hash,
+    build_project_graph_hash,
+    create_goal_resolution_preview,
+    resolve_compatible_domain,
+)
+from app.services.domain_pack_service import get_domain_pack_service
 
 
 def _naive_utc_now() -> datetime:
@@ -65,6 +71,34 @@ async def _get_valid_session(
     return session
 
 
+async def _validate_session_integrity(
+    db: AsyncSession,
+    *,
+    session: GoalResolutionSession,
+    goal_text: str,
+    domain: str,
+    pack_hash: str,
+    project_id: str | None = None,
+) -> None:
+    if session.status != "previewed":
+        raise AppError(code=409, message="STALE_RESOLUTION_SESSION")
+    if session.goal_text_hash != _build_goal_text_hash(goal_text):
+        raise AppError(code=409, message="STALE_RESOLUTION_SESSION")
+    if session.domain != domain:
+        raise AppError(code=409, message="STALE_RESOLUTION_SESSION")
+    if session.pack_hash != pack_hash:
+        raise AppError(code=409, message="STALE_RESOLUTION_SESSION")
+    if project_id is None:
+        if session.project_id is not None:
+            raise AppError(code=409, message="STALE_RESOLUTION_SESSION")
+        return
+    if session.project_id != project_id:
+        raise AppError(code=409, message="STALE_RESOLUTION_SESSION")
+    current_graph_hash = await build_project_graph_hash(db, project_id, pack_hash)
+    if session.graph_hash != current_graph_hash:
+        raise AppError(code=409, message="STALE_RESOLUTION_SESSION")
+
+
 def _get_selected_candidate(
     session: GoalResolutionSession,
     selected_candidate_id: str,
@@ -111,19 +145,28 @@ async def create_project_from_resolution_session(
     *,
     title: str,
     goal_text: str,
-    domain: str,
+    domain: str | None,
     resolution_session_id: str,
     selected_candidate_id: str,
 ) -> dict[str, Any]:
     session = await _get_valid_session(db, resolution_session_id=resolution_session_id)
     selected_candidate = _get_selected_candidate(session, selected_candidate_id)
+    resolved_domain = resolve_compatible_domain(domain)
+    pack = get_domain_pack_service(resolved_domain)
+    await _validate_session_integrity(
+        db,
+        session=session,
+        goal_text=goal_text,
+        domain=resolved_domain,
+        pack_hash=pack.contract.pack_hash,
+    )
 
     project = await create_project(
         db,
         title=title,
         goal_text=goal_text,
         goal_type=selected_candidate["goal_type"],
-        domain=domain,
+        domain=resolved_domain,
         commit=False,
         requested_goal_type=session.requested_goal_type,
         auto_detected_goal_type=session.auto_detected_goal_type,
@@ -152,7 +195,7 @@ async def preview_project_goal_resolution(
     project_id: str,
     goal_text: str,
     requested_goal_type: str | None,
-    domain: str,
+    domain: str | None,
 ) -> dict[str, Any]:
     project = await get_project(db, project_id)
     if project is None:
@@ -163,12 +206,9 @@ async def preview_project_goal_resolution(
         goal_text=goal_text,
         requested_goal_type=requested_goal_type,
         domain=domain,
+        expected_domain=project.domain,
+        project_id=project_id,
     )
-    session = await db.get(GoalResolutionSession, preview["session_id"])
-    assert session is not None
-    session.project_id = project_id
-    await db.commit()
-    await db.refresh(session)
     return preview
 
 
@@ -177,7 +217,7 @@ async def update_project_goal_resolution(
     *,
     project_id: str,
     goal_text: str,
-    domain: str,
+    domain: str | None,
     resolution_session_id: str,
     selected_candidate_id: str,
 ) -> dict[str, Any]:
@@ -185,12 +225,22 @@ async def update_project_goal_resolution(
     if project is None:
         raise NotFoundError("项目不存在")
 
+    resolved_domain = resolve_compatible_domain(domain, expected_domain=project.domain)
     session = await _get_valid_session(
         db,
         resolution_session_id=resolution_session_id,
         project_id=project_id,
     )
     selected_candidate = _get_selected_candidate(session, selected_candidate_id)
+    pack = get_domain_pack_service(resolved_domain)
+    await _validate_session_integrity(
+        db,
+        session=session,
+        goal_text=goal_text,
+        domain=resolved_domain,
+        pack_hash=pack.contract.pack_hash,
+        project_id=project_id,
+    )
     _apply_confirmed_resolution(
         project,
         session=session,

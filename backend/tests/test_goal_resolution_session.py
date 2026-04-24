@@ -64,10 +64,12 @@ async def test_required_columns_present():
         "session_id",
         "project_id",
         "goal_text_hash",
+        "domain",
         "requested_goal_type",
         "auto_detected_goal_type",
         "effective_goal_type",
         "pack_version",
+        "pack_hash",
         "graph_hash",
         "candidates_json",
         "recommended_candidate_id",
@@ -109,9 +111,11 @@ async def test_can_insert_minimal_session():
     session_obj = GoalResolutionSession(
         project_id=None,  # project_id is nullable (pre-project flow)
         goal_text_hash="abc123",
+        domain="machine_learning",
         requested_goal_type="domain",
         effective_goal_type="domain",
         pack_version="1.3.0",
+        pack_hash="pack-123",
         graph_hash="deadbeef",
         candidates_json='["linear_regression"]',
         status="pending",
@@ -132,10 +136,12 @@ async def test_nullable_fields_accept_none():
     session_obj = GoalResolutionSession(
         project_id=None,
         goal_text_hash="hash_nullable_test",
+        domain=None,
         requested_goal_type=None,
         auto_detected_goal_type=None,
         effective_goal_type="concept",
         pack_version="1.3.0",
+        pack_hash=None,
         graph_hash=None,
         candidates_json=None,
         recommended_candidate_id=None,
@@ -163,8 +169,10 @@ async def test_default_expires_at_is_24h_from_created_at():
     before = datetime.now(timezone.utc)
     session_obj = GoalResolutionSession(
         goal_text_hash="ttl_default_test",
+        domain="machine_learning",
         effective_goal_type="domain",
         pack_version="1.3.0",
+        pack_hash="pack-ttl",
         status="pending",
     )
     async with _Session() as db:
@@ -201,8 +209,10 @@ async def _insert_session(db: AsyncSession, *, expired: bool) -> str:
     delta = timedelta(hours=-1) if expired else timedelta(hours=24)
     session_obj = GoalResolutionSession(
         goal_text_hash=f"h_{'exp' if expired else 'active'}_{id(delta)}",
+        domain="machine_learning",
         effective_goal_type="domain",
         pack_version="1.3.0",
+        pack_hash="pack-cleanup",
         status="pending",
         expires_at=now + delta,
     )

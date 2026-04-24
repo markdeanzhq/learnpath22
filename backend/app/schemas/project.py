@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class CreateProjectRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     goal_text: str = Field(min_length=1)
-    domain: Literal["machine_learning"] = "machine_learning"
+    domain: Optional[str] = None
     resolution_session_id: str = Field(min_length=1)
     selected_candidate_id: str = Field(min_length=1)
     goal_type: Optional[str] = Field(default=None, pattern="^(domain|concept|problem)$")
@@ -18,7 +18,7 @@ class CreateProjectRequest(BaseModel):
 
 class UpdateProjectGoalResolutionRequest(BaseModel):
     goal_text: str = Field(min_length=1)
-    domain: Literal["machine_learning"] = "machine_learning"
+    domain: Optional[str] = None
     resolution_session_id: str = Field(min_length=1)
     selected_candidate_id: str = Field(min_length=1)
     goal_type: Optional[str] = Field(default=None, pattern="^(domain|concept|problem)$")

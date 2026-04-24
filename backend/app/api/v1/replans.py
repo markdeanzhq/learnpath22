@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.api.v1.plans import _dict_stages_to_list
 from app.core.exceptions import AppError, NotFoundError
+from app.repositories.project_repository import get_project
 from app.schemas.tracking import ReplanRequest
 from app.services.domain_pack_service import get_domain_pack_service
 from app.services.replan_service import replan
@@ -48,6 +49,10 @@ async def trigger_replan(
     db: AsyncSession = Depends(get_db),
 ):
     """触发路径重规划。支持 progress_aware 和 profile_update 两种模式。"""
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+
     try:
         result = await replan(db, project_id, mode=req.mode)
     except ValueError as e:
@@ -56,7 +61,7 @@ async def trigger_replan(
     plan_result = result["plan_result"]
     stages = _dict_stages_to_list(plan_result["stage_plan"])
     node_name_map = _build_node_name_map(plan_result["stage_plan"])
-    pack = get_domain_pack_service("machine_learning")
+    pack = get_domain_pack_service(project.domain)
     diff = result.get("diff")
     return {
         "id": result["path_id"],

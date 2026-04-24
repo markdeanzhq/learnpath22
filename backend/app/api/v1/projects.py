@@ -9,6 +9,7 @@ from app.repositories.project_repository import (
     get_project,
     list_projects,
 )
+from app.schemas.common import ErrorResponse
 from app.schemas.goal_resolution import GoalResolutionPreviewRequest, GoalResolutionPreviewResponse
 from app.schemas.project import (
     CreateProjectRequest,
@@ -43,6 +44,7 @@ async def create_project_endpoint(
 @router.post(
     "/projects/{project_id}/goal-resolution/preview",
     response_model=GoalResolutionPreviewResponse,
+    responses={422: {"model": ErrorResponse}},
 )
 async def preview_project_goal_resolution_endpoint(
     project_id: str,

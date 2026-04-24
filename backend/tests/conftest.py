@@ -90,8 +90,7 @@ async def goal_resolution_preview(client):
         "/api/v1/goal-resolution/preview",
         json={
             "goal_text": "我想系统学习机器学习基础",
-            "domain": "machine_learning",
-        },
+        }
     )
     assert preview_resp.status_code == 200
     return preview_resp.json()
@@ -105,10 +104,9 @@ async def confirmed_project(client, goal_resolution_preview):
         json={
             "title": "测试项目",
             "goal_text": "我想系统学习机器学习基础",
-            "domain": "machine_learning",
             "resolution_session_id": goal_resolution_preview["session_id"],
             "selected_candidate_id": goal_resolution_preview["recommended_candidate_id"],
-        },
+        }
     )
     assert resp.status_code == 200
     return resp.json()

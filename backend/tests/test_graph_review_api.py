@@ -79,7 +79,7 @@ def _sync_service(*, force_result=None, project_result=None, force_error=None, p
     )
 
 
-async def test_seed_graph_endpoint_returns_force_sync_result(client, monkeypatch):
+async def test_seed_graph_endpoint_uses_registry_default_domain(client, monkeypatch):
     service = _sync_service(
         force_result={
             "domain": "machine_learning",
@@ -93,6 +93,10 @@ async def test_seed_graph_endpoint_returns_force_sync_result(client, monkeypatch
         }
     )
     monkeypatch.setattr("app.api.v1.graph.get_graph_sync_service", lambda neo4j: service)
+    monkeypatch.setattr(
+        "app.api.v1.graph.get_domain_pack_registry",
+        lambda: SimpleNamespace(resolve_domain=lambda: "machine_learning"),
+    )
 
     resp = await client.post("/api/v1/graph/seed")
 
@@ -107,6 +111,32 @@ async def test_seed_graph_endpoint_returns_force_sync_result(client, monkeypatch
     }
     service.force_sync_domain_pack.assert_awaited_once_with("machine_learning")
     service.sync_domain_pack.assert_not_awaited()
+
+
+async def test_seed_graph_endpoint_does_not_hardcode_machine_learning(client, monkeypatch):
+    service = _sync_service(
+        force_result={
+            "domain": "demo_domain",
+            "version": "1.0.0",
+            "pack_hash": "hash-1",
+            "synced": True,
+            "forced": True,
+            "reason": "forced",
+            "nodes": 1,
+            "edges": 0,
+        }
+    )
+    monkeypatch.setattr("app.api.v1.graph.get_graph_sync_service", lambda neo4j: service)
+    monkeypatch.setattr(
+        "app.api.v1.graph.get_domain_pack_registry",
+        lambda: SimpleNamespace(resolve_domain=lambda: "demo_domain"),
+    )
+
+    resp = await client.post("/api/v1/graph/seed")
+
+    assert resp.status_code == 200
+    assert resp.json()["domain"] == "demo_domain"
+    service.force_sync_domain_pack.assert_awaited_once_with("demo_domain")
 
 
 async def test_seed_graph_endpoint_handles_pack_error(client, monkeypatch):
@@ -356,6 +386,24 @@ async def test_get_subgraph_injects_review_statuses_without_sync(client, project
     subgraph_query.assert_awaited_once_with(None, ["ml_c01", "ml_c05"])
 
 
+async def test_review_node_validates_against_project_domain(client, project, monkeypatch):
+    captured = {}
+
+    def fake_get_domain_pack_service(domain=None):
+        captured["domain"] = domain
+        return SimpleNamespace(nodes_by_id={}, requires_edges=[], related_edges=[])
+
+    monkeypatch.setattr("app.api.v1.graph.get_domain_pack_service", fake_get_domain_pack_service)
+
+    resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/nodes/not-a-real-node",
+        json={"status": "removed"},
+    )
+
+    assert resp.status_code == 404
+    assert captured["domain"] == project["domain"]
+
+
 async def test_review_node_requires_existing_node(client, project):
     resp = await client.patch(
         f"/api/v1/projects/{project['id']}/graph/nodes/not-a-real-node",
@@ -415,6 +463,24 @@ async def test_get_graph_scope_domain_applies_review_status_per_typed_edge_id(cl
     assert data["elements"][1]["data"]["id"] == "ml_c05->ml_c06::REQUIRES"
     assert data["elements"][1]["data"]["review_status"] == "removed"
     graph_query.assert_awaited_once_with(None, scope="domain")
+
+
+async def test_review_edge_validates_against_project_domain(client, project, monkeypatch):
+    captured = {}
+
+    def fake_get_domain_pack_service(domain=None):
+        captured["domain"] = domain
+        return SimpleNamespace(nodes_by_id={}, requires_edges=[], related_edges=[])
+
+    monkeypatch.setattr("app.api.v1.graph.get_domain_pack_service", fake_get_domain_pack_service)
+
+    resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/edges/not-a-real-edge",
+        json={"status": "removed"},
+    )
+
+    assert resp.status_code == 404
+    assert captured["domain"] == project["domain"]
 
 
 async def test_review_edge_requires_existing_typed_edge(client, project):

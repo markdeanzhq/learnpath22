@@ -1,11 +1,16 @@
 """目标解析服务测试"""
 import sys
+
+import pytest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.services.goal_service import (
+    UnsupportedGoalTypeError,
+    _get_default_goal_policy_entry,
     _jieba_match_nodes,
     _llm_match_nodes,
+    build_empty_candidate_reason,
     identify_goal_type,
     match_strong_goal_template,
     resolve_goal,
@@ -36,6 +41,7 @@ def test_resolve_domain_goal():
         goal_type_override=None,
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
     )
     assert result["goal_type"] == "domain"
     assert result["template_id"] == "domain_ml_full"
@@ -63,6 +69,7 @@ def test_resolve_problem_goal():
         goal_type_override=None,
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
     )
     assert result["goal_type"] == "problem"
     assert len(result["target_node_ids"]) > 0
@@ -75,6 +82,7 @@ def test_resolve_concept_goal():
         goal_type_override=None,
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
     )
     assert result["goal_type"] == "concept"
     assert len(result["target_node_ids"]) > 0
@@ -87,8 +95,91 @@ def test_resolve_with_type_override():
         goal_type_override="domain",
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
     )
     assert result["goal_type"] == "domain"
+
+
+def test_resolve_goal_candidates_rejects_unsupported_goal_type_override():
+    pack = get_domain_pack_service()
+    with pytest.raises(UnsupportedGoalTypeError):
+        resolve_goal_candidates(
+            goal_text="机器学习",
+            goal_type_override="concept",
+            templates=pack.goal_templates,
+            nodes_by_id=pack.nodes_by_id,
+            supported_goal_types={"domain", "problem"},
+            allow_llm=False,
+        )
+
+
+def test_build_empty_candidate_reason_prefers_negative_patterns_excluded_all():
+    reason_code, reason_text = build_empty_candidate_reason(
+        {
+            "requested_goal_type": None,
+            "effective_goal_type": "domain",
+            "template_match_count": 2,
+            "negative_excluded_count": 2,
+            "lexical_match_count": 0,
+            "llm_status": "llm_unavailable",
+        }
+    )
+    assert reason_code == "negative_patterns_excluded_all"
+    assert "排除" in reason_text
+
+
+def test_negative_patterns_exclude_template_candidates_from_pool():
+    pack = get_domain_pack_service(force_reload=True)
+    result = resolve_goal_candidates(
+        goal_text="我想系统学习机器学习基础，同时理解梯度下降",
+        goal_type_override=None,
+        templates=pack.goal_templates,
+        nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
+        allow_llm=False,
+    )
+
+    candidate_ids = [candidate["candidate_id"] for candidate in result["candidates"]]
+    assert "template:domain_ml_full" not in candidate_ids
+    assert "template:concept_gradient_descent" in candidate_ids
+    assert result["recommended_candidate_id"] == "template:concept_gradient_descent"
+
+
+def test_build_empty_candidate_reason_prefers_llm_unavailable_after_rule_miss():
+    reason_code, reason_text = build_empty_candidate_reason(
+        {
+            "requested_goal_type": "concept",
+            "effective_goal_type": "concept",
+            "template_match_count": 0,
+            "negative_excluded_count": 0,
+            "lexical_match_count": 0,
+            "llm_status": "llm_timeout",
+        }
+    )
+    assert reason_code == "llm_unavailable_after_rule_miss"
+    assert "LLM" in reason_text
+
+
+def test_get_default_goal_policy_entry_reads_manifest_mapping():
+    policy = _get_default_goal_policy_entry(
+        "domain",
+        {
+            "by_goal_type": {
+                "domain": {
+                    "target_node_ids": ["ml_c09"],
+                    "mode": "steady",
+                    "description": "默认目标",
+                    "resolve_source": "domain_default",
+                }
+            }
+        },
+    )
+    assert policy == {
+        "target_node_ids": ["ml_c09"],
+        "mode": "steady",
+        "description": "默认目标",
+        "resolve_source": "domain_default",
+    }
 
 
 # --- 新增：jieba 分词匹配测试 ---
@@ -156,6 +247,7 @@ def test_llm_invalid_json_degrades_to_rule_candidates_with_warning():
             goal_type_override=None,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -187,6 +279,7 @@ def test_llm_timeout_degrades_to_rule_candidates_with_warning():
             goal_type_override=None,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -218,6 +311,7 @@ def test_llm_auth_failure_degrades_to_rule_candidates_with_warning():
             goal_type_override=None,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -234,6 +328,7 @@ def test_resolve_source_field_present():
         goal_type_override=None,
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
     )
     assert "resolve_source" in result
 
@@ -251,6 +346,7 @@ def test_resolve_concept_uses_jieba_when_no_llm():
             goal_type_override="concept",
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
         )
     assert result["goal_type"] == "concept"
     assert len(result["target_node_ids"]) > 0
@@ -267,6 +363,7 @@ def test_resolve_prefers_jieba_over_llm_when_no_template_hit():
             goal_type_override="concept",
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
         )
     assert result["target_node_ids"] == ["ml_c01"]
     assert result["resolve_source"] == "jieba"
@@ -282,6 +379,7 @@ def test_resolve_template_hit_blocks_llm_override():
             goal_type_override=None,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
         )
     assert result["template_id"] == "domain_ml_full"
     assert result["resolve_source"] == "template"
@@ -295,6 +393,7 @@ def test_resolve_goal_candidates_returns_stable_schema():
         goal_type_override=None,
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
         allow_llm=False,
     )
 
@@ -320,10 +419,11 @@ def test_resolve_goal_candidates_returns_stable_schema():
 def test_specific_problem_candidate_beats_generic_domain_candidate():
     pack = get_domain_pack_service(force_reload=True)
     result = resolve_goal_candidates(
-        goal_text="我想系统学习机器学习基础，但更想搞懂逻辑回归为什么能做分类",
+        goal_text="机器学习基础里的逻辑回归分类",
         goal_type_override=None,
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
         allow_llm=False,
     )
 
@@ -334,20 +434,30 @@ def test_specific_problem_candidate_beats_generic_domain_candidate():
     assert result["recommended_candidate_id"] == "template:problem_logistic_classification"
 
 
-def test_ranking_is_deterministic_under_same_inputs():
+@pytest.mark.parametrize(
+    "goal_text",
+    [
+        "机器学习基础里的逻辑回归分类",
+        "理解梯度下降",
+        "我想系统学习机器学习基础",
+    ],
+)
+def test_ranking_is_deterministic_under_same_inputs(goal_text):
     pack = get_domain_pack_service(force_reload=True)
     first = resolve_goal_candidates(
-        goal_text="我想系统学习机器学习基础，但更想搞懂逻辑回归为什么能做分类",
+        goal_text=goal_text,
         goal_type_override=None,
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
         allow_llm=False,
     )
     second = resolve_goal_candidates(
-        goal_text="我想系统学习机器学习基础，但更想搞懂逻辑回归为什么能做分类",
+        goal_text=goal_text,
         goal_type_override=None,
-        templates=pack.goal_templates,
-        nodes_by_id=pack.nodes_by_id,
+        templates=list(reversed(pack.goal_templates)),
+        nodes_by_id=dict(reversed(list(pack.nodes_by_id.items()))),
+        supported_goal_types=tuple(reversed(pack.contract.supported_goal_types)),
         allow_llm=False,
     )
 
@@ -362,6 +472,7 @@ def test_generic_penalty_is_exposed_for_generic_domain_candidate():
         goal_type_override=None,
         templates=pack.goal_templates,
         nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
         allow_llm=False,
     )
 
@@ -379,12 +490,44 @@ def test_llm_empty_array_degrades_to_rule_candidates_with_warning():
             goal_type_override=None,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
     assert result["recommended_candidate_id"]
     assert all(candidate["resolve_source"] != "llm" for candidate in result["candidates"])
     assert any("llm_empty_result" in candidate["warnings"] for candidate in result["candidates"])
+
+
+def test_resolve_goal_candidates_returns_reason_fields_when_empty():
+    pack = get_domain_pack_service(force_reload=True)
+    with patch("app.services.goal_service._collect_template_candidates", return_value=([], {"template_match_count": 0, "negative_excluded_count": 0})), patch(
+        "app.services.goal_service._collect_lexical_candidates",
+        return_value=([], 0),
+    ), patch(
+        "app.services.goal_service._collect_llm_candidates",
+        return_value=([], ["llm_unavailable"], "llm_unavailable"),
+    ):
+        result = resolve_goal_candidates(
+            goal_text="完全无匹配目标",
+            goal_type_override="concept",
+            templates=pack.goal_templates,
+            nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
+            allow_llm=True,
+        )
+
+    assert result["candidates"] == []
+    assert result["reason_code"] == "llm_unavailable_after_rule_miss"
+    assert isinstance(result["reason_text"], str) and result["reason_text"]
+    assert result["empty_evidence"] == {
+        "requested_goal_type": "concept",
+        "effective_goal_type": "concept",
+        "template_match_count": 0,
+        "negative_excluded_count": 0,
+        "lexical_match_count": 0,
+        "llm_status": "llm_unavailable",
+    }
 
 
 def test_llm_structured_candidates_are_retained_as_separate_ranked_candidates():
@@ -398,6 +541,7 @@ def test_llm_structured_candidates_are_retained_as_separate_ranked_candidates():
             goal_type_override="concept",
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -422,6 +566,7 @@ def test_llm_unknown_nodes_degrade_to_rule_candidates_with_warning():
             goal_type_override=None,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -446,6 +591,7 @@ def test_llm_structured_invalid_groups_are_dropped_with_warnings():
             goal_type_override="problem",
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -474,6 +620,7 @@ def test_llm_duplicate_heavy_candidate_is_deduped_before_size_limit():
             goal_type_override="concept",
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -488,23 +635,80 @@ def test_llm_duplicate_heavy_candidate_is_deduped_before_size_limit():
 
 def test_resolve_goal_preserves_llm_warning_when_candidates_empty():
     pack = get_domain_pack_service(force_reload=True)
-    with patch("app.services.goal_service._collect_template_candidates", return_value=[]), patch(
-        "app.services.goal_service._collect_lexical_candidates", return_value=[]
+    with patch(
+        "app.services.goal_service._collect_template_candidates",
+        return_value=([], {"template_match_count": 0, "negative_excluded_count": 0}),
+    ), patch(
+        "app.services.goal_service._collect_lexical_candidates",
+        return_value=([], 0),
     ), patch(
         "app.services.goal_service._llm_match_nodes",
         return_value=(None, "llm_timeout"),
     ):
         result = resolve_goal(
             goal_text="完全无匹配目标",
-            goal_type_override="concept",
+            goal_type_override="domain",
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
+            default_goal_policy=pack.contract.default_goal_policy,
         )
 
-    assert result["resolve_source"] == "fallback"
-    assert result["target_node_ids"] == ["ml_c09", "ml_d08", "ml_e03"]
+    assert result["resolve_source"] == "domain_default"
+    assert result["target_node_ids"] == ["ml_c09", "ml_d08", "ml_e03", "ml_e07", "ml_e08"]
+    assert result["description"] == "系统学习机器学习基础 — 完整三阶段路径"
     assert result["warnings"] == ["empty_candidates", "llm_timeout"]
+
+
+
+def test_resolve_goal_raises_when_default_policy_fallback_disabled():
+    pack = get_domain_pack_service(force_reload=True)
+    with patch(
+        "app.services.goal_service._collect_template_candidates",
+        return_value=([], {"template_match_count": 0, "negative_excluded_count": 0}),
+    ), patch(
+        "app.services.goal_service._collect_lexical_candidates",
+        return_value=([], 0),
+    ), patch(
+        "app.services.goal_service._llm_match_nodes",
+        return_value=(None, "llm_timeout"),
+    ):
+        with pytest.raises(UnsupportedGoalTypeError, match="fallback is disabled"):
+            resolve_goal(
+                goal_text="完全无匹配目标",
+                goal_type_override="concept",
+                templates=pack.goal_templates,
+                nodes_by_id=pack.nodes_by_id,
+                supported_goal_types=pack.contract.supported_goal_types,
+                allow_llm=True,
+                allow_default_policy_fallback=False,
+                default_goal_policy=pack.contract.default_goal_policy,
+            )
+
+
+
+def test_build_empty_candidate_reason_skips_llm_when_disabled():
+    class _FailFactory:
+        def __call__(self, *_args, **_kwargs):
+            raise AssertionError("LLM reason generation should be disabled")
+
+    reason_code, reason_text = build_empty_candidate_reason(
+        {
+            "requested_goal_type": "concept",
+            "effective_goal_type": "concept",
+            "template_match_count": 0,
+            "negative_excluded_count": 0,
+            "lexical_match_count": 0,
+            "llm_status": "llm_timeout",
+        },
+        allow_llm=False,
+        llm_client_factory=_FailFactory(),
+    )
+
+    assert reason_code == "llm_unavailable_after_rule_miss"
+    assert reason_text == "当前目标未命中规则候选，且 LLM 解析暂时不可用，请稍后重试或改写目标描述。"
+
 
 
 def test_llm_duplicate_nodes_are_deduplicated_and_retained_via_source_breakdown():
@@ -515,6 +719,7 @@ def test_llm_duplicate_nodes_are_deduplicated_and_retained_via_source_breakdown(
             goal_type_override="problem",
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -539,6 +744,7 @@ def test_llm_candidates_over_five_nodes_are_dropped_with_warning():
             goal_type_override=None,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 
@@ -554,6 +760,7 @@ def test_llm_invalid_structured_shape_degrades_with_warning():
             goal_type_override=None,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types,
             allow_llm=True,
         )
 

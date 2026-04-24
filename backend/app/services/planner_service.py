@@ -12,7 +12,7 @@ from app.planner.scoring import compute_goal_relevance, select_profile_reinforce
 from app.planner.staging import build_stage_plan
 from app.planner.topology import topo_sort_with_profile_priority
 from app.services.domain_pack_service import DomainPackService
-from app.services.goal_service import resolve_goal
+from app.services.goal_service import UnsupportedGoalTypeError, resolve_goal
 
 
 def build_filtered_graph(
@@ -67,6 +67,8 @@ def plan_with_profile(
             goal_type_override=goal_type,
             templates=pack.goal_templates,
             nodes_by_id=pack.nodes_by_id,
+            supported_goal_types=pack.contract.supported_goal_types if pack.contract is not None else (),
+            default_goal_policy=pack.contract.default_goal_policy if pack.contract is not None else None,
         )
     else:
         goal_result = deepcopy(confirmed_goal_result)
@@ -89,11 +91,11 @@ def plan_with_profile(
         nid for nid in confirmed_target_node_ids
         if nid not in removed_nodes
     ]
-    # legacy 场景保留默认 fallback；confirmed 场景必须显式暴露空 effective targets
+    # legacy 场景的默认目标只能来自 pack-owned policy；confirmed 场景必须显式暴露空 effective targets
     if not target_node_ids and confirmed_goal_result is None:
-        target_node_ids = ["ml_c09", "ml_d08", "ml_e03"]
-        target_node_ids = [nid for nid in target_node_ids if nid not in removed_nodes]
-        confirmed_target_node_ids = list(target_node_ids)
+        raise UnsupportedGoalTypeError(
+            f"No effective target nodes available for goal_type={goal_result.get('goal_type')} after applying pack default policy"
+        )
 
     goal_result["confirmed_target_node_ids"] = confirmed_target_node_ids
     goal_result["effective_target_node_ids"] = list(target_node_ids)
@@ -126,7 +128,7 @@ def plan_with_profile(
     )
     reinforced_closure_ids = get_prerequisite_closure(reinforced_ids, filtered_rev_adj)
 
-    final_ids = list(set(
+    final_ids = sorted(dict.fromkeys(
         closure_ids + target_node_ids + reinforced_ids + reinforced_closure_ids
     ))
 

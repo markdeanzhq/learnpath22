@@ -19,6 +19,7 @@ from app.repositories.graph_review_repository import get_removed_node_ids, get_r
 from app.schemas.explanation import ExplanationResponse
 from app.services.domain_pack_service import get_domain_pack_service
 from app.services.explanation_service import build_explanation, polish_explanation
+from app.services.goal_service import UnsupportedGoalTypeError
 from app.services.planner_service import plan_with_profile
 
 router = APIRouter()
@@ -113,15 +114,18 @@ async def generate_plan(
     removed_edges = await get_removed_edge_ids(db, project_id)
 
     confirmed_goal_result = _build_confirmed_goal_result(project)
-    plan_result = plan_with_profile(
-        goal_text=project.goal_text,
-        goal_type=project.goal_type,
-        profile=profile,
-        pack=pack,
-        removed_node_ids=removed_nodes,
-        removed_edge_ids=removed_edges,
-        confirmed_goal_result=deepcopy(confirmed_goal_result) if confirmed_goal_result else None,
-    )
+    try:
+        plan_result = plan_with_profile(
+            goal_text=project.goal_text,
+            goal_type=project.goal_type,
+            profile=profile,
+            pack=pack,
+            removed_node_ids=removed_nodes,
+            removed_edge_ids=removed_edges,
+            confirmed_goal_result=deepcopy(confirmed_goal_result) if confirmed_goal_result else None,
+        )
+    except UnsupportedGoalTypeError as exc:
+        raise AppError(code=409, message="GOAL_DEFAULT_TARGETS_UNAVAILABLE", details={"reason": str(exc)}) from exc
 
     if confirmed_goal_result and not plan_result["goal_result"]["target_node_ids"]:
         raise AppError(code=409, message="GOAL_TARGETS_REMOVED")

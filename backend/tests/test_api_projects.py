@@ -1,6 +1,10 @@
 """Projects API 集成测试"""
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import app.services.goal_resolution_service as goal_resolution_service
 
 from sqlalchemy import select
 
@@ -20,7 +24,6 @@ from app.models.sqlite_models import (
 async def _create_preview_session(client, *, goal_text: str = "我想系统学习机器学习基础", requested_goal_type: str | None = None):
     payload = {
         "goal_text": goal_text,
-        "domain": "machine_learning",
     }
     if requested_goal_type is not None:
         payload["requested_goal_type"] = requested_goal_type
@@ -38,7 +41,6 @@ async def test_create_project_from_resolution_session(client, db_session):
         json={
             "title": "ML入门",
             "goal_text": "我想系统学习机器学习基础",
-            "domain": "machine_learning",
             "resolution_session_id": preview["session_id"],
             "selected_candidate_id": preview["recommended_candidate_id"],
         },
@@ -67,7 +69,6 @@ async def test_create_project_rejects_invalid_resolution_candidate(client):
         json={
             "title": "ML入门",
             "goal_text": "我想系统学习机器学习基础",
-            "domain": "machine_learning",
             "resolution_session_id": preview["session_id"],
             "selected_candidate_id": "candidate-does-not-exist",
         },
@@ -89,7 +90,44 @@ async def test_create_project_rejects_stale_resolution_session(client, db_sessio
         json={
             "title": "ML入门",
             "goal_text": "我想系统学习机器学习基础",
-            "domain": "machine_learning",
+            "resolution_session_id": preview["session_id"],
+            "selected_candidate_id": preview["recommended_candidate_id"],
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.json() == {"error": "STALE_RESOLUTION_SESSION", "code": 409}
+
+
+async def test_create_project_rejects_goal_text_hash_drift(client, db_session):
+    preview = await _create_preview_session(client)
+
+    resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "ML入门",
+            "goal_text": "我想系统学习机器学习基础，但换了文本",
+            "resolution_session_id": preview["session_id"],
+            "selected_candidate_id": preview["recommended_candidate_id"],
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.json() == {"error": "STALE_RESOLUTION_SESSION", "code": 409}
+
+
+async def test_create_project_rejects_pack_hash_drift(client, db_session):
+    preview = await _create_preview_session(client)
+    session = await db_session.get(GoalResolutionSession, preview["session_id"])
+    assert session is not None
+    session.pack_hash = "stale-pack-hash"
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "ML入门",
+            "goal_text": "我想系统学习机器学习基础",
             "resolution_session_id": preview["session_id"],
             "selected_candidate_id": preview["recommended_candidate_id"],
         },
@@ -116,11 +154,72 @@ async def test_create_project_invalid_type(client):
 
 
 async def test_create_project_invalid_domain(client):
+    preview = await _create_preview_session(client)
+
     resp = await client.post(
         "/api/v1/projects",
-        json={"title": "x", "goal_text": "x", "goal_type": "domain", "domain": "other_domain"},
+        json={
+            "title": "x",
+            "goal_text": "我想系统学习机器学习基础",
+            "goal_type": "domain",
+            "domain": "other_domain",
+            "resolution_session_id": preview["session_id"],
+            "selected_candidate_id": preview["recommended_candidate_id"],
+        },
     )
     assert resp.status_code == 422
+    assert resp.json() == {"error": "INVALID_DOMAIN", "code": 422}
+
+
+async def test_create_project_accepts_explicit_default_domain_for_compatibility(client, db_session):
+    preview = await _create_preview_session(client)
+
+    resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "ML入门",
+            "goal_text": "我想系统学习机器学习基础",
+            "domain": "machine_learning",
+            "resolution_session_id": preview["session_id"],
+            "selected_candidate_id": preview["recommended_candidate_id"],
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["title"] == "ML入门"
+
+    session = await db_session.get(GoalResolutionSession, preview["session_id"])
+    assert session is not None
+    assert session.project_id == data["id"]
+
+
+async def test_create_project_rejects_non_default_enabled_domain_for_compatibility(client):
+    preview = await _create_preview_session(client)
+    original_registry = goal_resolution_service.get_domain_pack_registry
+
+    def fake_registry():
+        registry = original_registry()
+        return SimpleNamespace(
+            default_domain=registry.default_domain,
+            enabled_domains=frozenset({registry.default_domain, "alt_domain"}),
+            resolve_domain=lambda domain=None: registry.default_domain if domain is None else domain,
+        )
+
+    with patch("app.services.goal_resolution_service.get_domain_pack_registry", side_effect=fake_registry):
+        resp = await client.post(
+            "/api/v1/projects",
+            json={
+                "title": "ML入门",
+                "goal_text": "我想系统学习机器学习基础",
+                "domain": "alt_domain",
+                "resolution_session_id": preview["session_id"],
+                "selected_candidate_id": preview["recommended_candidate_id"],
+            },
+        )
+
+    assert resp.status_code == 422
+    assert resp.json() == {"error": "INVALID_DOMAIN", "code": 422}
 
 
 async def test_get_project(client, project):
@@ -206,7 +305,6 @@ async def test_project_goal_resolution_preview_returns_project_scoped_session(cl
         json={
             "goal_text": "理解梯度下降",
             "requested_goal_type": "concept",
-            "domain": "machine_learning",
         },
     )
 
@@ -219,6 +317,9 @@ async def test_project_goal_resolution_preview_returns_project_scoped_session(cl
     assert session is not None
     assert session.project_id == project["id"]
     assert session.status == "previewed"
+    assert session.domain == project["domain"]
+    assert session.pack_hash
+    assert session.graph_hash
 
 
 async def test_project_goal_resolution_preview_returns_404_for_missing_project(client):
@@ -227,11 +328,48 @@ async def test_project_goal_resolution_preview_returns_404_for_missing_project(c
         json={
             "goal_text": "理解梯度下降",
             "requested_goal_type": "concept",
-            "domain": "machine_learning",
         },
     )
 
     assert resp.status_code == 404
+
+
+async def test_project_goal_resolution_preview_accepts_explicit_project_domain_for_compatibility(client, project):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/goal-resolution/preview",
+        json={
+            "goal_text": "理解梯度下降",
+            "requested_goal_type": "concept",
+            "domain": "machine_learning",
+        },
+    )
+
+    assert resp.status_code == 200
+
+
+async def test_project_goal_resolution_preview_rejects_non_default_enabled_domain_for_compatibility(client, project):
+    original_registry = goal_resolution_service.get_domain_pack_registry
+
+    def fake_registry():
+        registry = original_registry()
+        return SimpleNamespace(
+            default_domain=registry.default_domain,
+            enabled_domains=frozenset({registry.default_domain, "alt_domain"}),
+            resolve_domain=lambda domain=None: registry.default_domain if domain is None else domain,
+        )
+
+    with patch("app.services.goal_resolution_service.get_domain_pack_registry", side_effect=fake_registry):
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/goal-resolution/preview",
+            json={
+                "goal_text": "理解梯度下降",
+                "requested_goal_type": "concept",
+                "domain": "alt_domain",
+            },
+        )
+
+    assert resp.status_code == 422
+    assert resp.json() == {"error": "INVALID_DOMAIN", "code": 422}
 
 
 async def test_project_goal_resolution_confirm_updates_confirmed_resolution(client):
@@ -241,7 +379,6 @@ async def test_project_goal_resolution_confirm_updates_confirmed_resolution(clie
         json={
             "title": "概念学习",
             "goal_text": "理解梯度下降",
-            "domain": "machine_learning",
             "resolution_session_id": project_preview["session_id"],
             "selected_candidate_id": project_preview["recommended_candidate_id"],
         },
@@ -254,7 +391,6 @@ async def test_project_goal_resolution_confirm_updates_confirmed_resolution(clie
         json={
             "goal_text": "我想系统学习机器学习基础",
             "requested_goal_type": "domain",
-            "domain": "machine_learning",
         },
     )
     assert reconfirm_preview.status_code == 200
@@ -264,7 +400,6 @@ async def test_project_goal_resolution_confirm_updates_confirmed_resolution(clie
         f"/api/v1/projects/{created_project['id']}/goal-resolution",
         json={
             "goal_text": "我想系统学习机器学习基础",
-            "domain": "machine_learning",
             "resolution_session_id": preview_data["session_id"],
             "selected_candidate_id": preview_data["recommended_candidate_id"],
         },
@@ -275,3 +410,94 @@ async def test_project_goal_resolution_confirm_updates_confirmed_resolution(clie
     assert data["goal_type"] == "domain"
     assert data["goal_resolution"]["selected_candidate_id"] == preview_data["recommended_candidate_id"]
     assert data["goal_resolution"]["confirmed_target_node_ids"] == preview_data["candidates"][0]["target_node_ids"]
+
+
+async def test_project_goal_resolution_confirm_rejects_non_default_enabled_domain_for_compatibility(client):
+    project_preview = await _create_preview_session(client, goal_text="理解梯度下降", requested_goal_type="concept")
+    create_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "概念学习",
+            "goal_text": "理解梯度下降",
+            "resolution_session_id": project_preview["session_id"],
+            "selected_candidate_id": project_preview["recommended_candidate_id"],
+        },
+    )
+    assert create_resp.status_code == 200
+    created_project = create_resp.json()
+
+    reconfirm_preview = await client.post(
+        f"/api/v1/projects/{created_project['id']}/goal-resolution/preview",
+        json={
+            "goal_text": "我想系统学习机器学习基础",
+            "requested_goal_type": "domain",
+        },
+    )
+    assert reconfirm_preview.status_code == 200
+    preview_data = reconfirm_preview.json()
+
+    original_registry = goal_resolution_service.get_domain_pack_registry
+
+    def fake_registry():
+        registry = original_registry()
+        return SimpleNamespace(
+            default_domain=registry.default_domain,
+            enabled_domains=frozenset({registry.default_domain, "alt_domain"}),
+            resolve_domain=lambda domain=None: registry.default_domain if domain is None else domain,
+        )
+
+    with patch("app.services.goal_resolution_service.get_domain_pack_registry", side_effect=fake_registry):
+        confirm_resp = await client.put(
+            f"/api/v1/projects/{created_project['id']}/goal-resolution",
+            json={
+                "goal_text": "我想系统学习机器学习基础",
+                "domain": "alt_domain",
+                "resolution_session_id": preview_data["session_id"],
+                "selected_candidate_id": preview_data["recommended_candidate_id"],
+            },
+        )
+
+    assert confirm_resp.status_code == 422
+    assert confirm_resp.json() == {"error": "INVALID_DOMAIN", "code": 422}
+
+
+async def test_project_goal_resolution_confirm_rejects_graph_hash_drift(client, db_session):
+    project_preview = await _create_preview_session(client, goal_text="理解梯度下降", requested_goal_type="concept")
+    create_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "概念学习",
+            "goal_text": "理解梯度下降",
+            "resolution_session_id": project_preview["session_id"],
+            "selected_candidate_id": project_preview["recommended_candidate_id"],
+        },
+    )
+    assert create_resp.status_code == 200
+    created_project = create_resp.json()
+
+    reconfirm_preview = await client.post(
+        f"/api/v1/projects/{created_project['id']}/goal-resolution/preview",
+        json={
+            "goal_text": "我想系统学习机器学习基础",
+            "requested_goal_type": "domain",
+        },
+    )
+    assert reconfirm_preview.status_code == 200
+    preview_data = reconfirm_preview.json()
+
+    session = await db_session.get(GoalResolutionSession, preview_data["session_id"])
+    assert session is not None
+    session.graph_hash = "stale-graph-hash"
+    await db_session.commit()
+
+    confirm_resp = await client.put(
+        f"/api/v1/projects/{created_project['id']}/goal-resolution",
+        json={
+            "goal_text": "我想系统学习机器学习基础",
+            "resolution_session_id": preview_data["session_id"],
+            "selected_candidate_id": preview_data["recommended_candidate_id"],
+        },
+    )
+
+    assert confirm_resp.status_code == 409
+    assert confirm_resp.json() == {"error": "STALE_RESOLUTION_SESSION", "code": 409}

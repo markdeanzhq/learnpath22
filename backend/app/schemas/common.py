@@ -14,3 +14,5 @@ class ApiResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     code: int
+    reason_code: str | None = None
+    reason_text: str | None = None

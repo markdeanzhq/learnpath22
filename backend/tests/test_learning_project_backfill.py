@@ -23,7 +23,7 @@ _engine = create_async_engine(
 _Session = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 
 
-def _make_mock_pack(*, version: str = "1.3.0") -> MagicMock:
+def _make_mock_pack(*, version: str = "1.3.0", default_goal_policy: dict | None = None) -> MagicMock:
     pack = MagicMock()
     pack.manifest = {"version": version}
     pack.nodes_by_id = {
@@ -42,6 +42,19 @@ def _make_mock_pack(*, version: str = "1.3.0") -> MagicMock:
             "description": "理解逻辑回归的分类原理",
         }
     ]
+    pack.contract = MagicMock(
+        supported_goal_types=("domain", "concept", "problem"),
+        default_goal_policy=default_goal_policy or {
+            "by_goal_type": {
+                "domain": {
+                    "target_node_ids": ["ml_e07"],
+                    "mode": "steady",
+                    "description": "机器学习概览",
+                    "resolve_source": "domain_default",
+                }
+            }
+        },
+    )
     return pack
 
 
@@ -166,10 +179,10 @@ async def test_fallback_result_causes_backfill_failure():
                 await db.commit()
 
 
-async def test_domain_default_result_causes_backfill_failure():
-    await _insert_project(goal_text="bad domain default case", goal_type="domain")
+async def test_domain_default_result_is_allowed_for_backfill():
+    project_id = await _insert_project(goal_text="bad domain default case", goal_type="domain")
     mock_pack = _make_mock_pack()
-    bad_result = {
+    domain_default_result = {
         "goal_text": "bad domain default case",
         "goal_type": "domain",
         "target_node_ids": ["ml_e07"],
@@ -180,12 +193,20 @@ async def test_domain_default_result_causes_backfill_failure():
     }
 
     with patch("app.db.init_db.get_domain_pack_service", return_value=mock_pack), patch(
-        "app.db.init_db.resolve_goal", return_value=bad_result
+        "app.db.init_db.resolve_goal", return_value=domain_default_result
     ):
-        with pytest.raises(ValueError, match="domain_default"):
-            async with _Session() as db:
-                await backfill_all_legacy_projects(db)
-                await db.commit()
+        async with _Session() as db:
+            count = await backfill_all_legacy_projects(db)
+            await db.commit()
+
+    assert count == 1
+
+    async with _Session() as db:
+        project = await db.get(LearningProject, project_id)
+
+    assert project is not None
+    assert project.confirmed_resolve_source == "domain_default"
+    assert project.confirmed_target_node_ids_json == json.dumps(["ml_e07"], ensure_ascii=False, sort_keys=True)
 
 
 async def test_backfill_disables_llm_calls():
@@ -199,7 +220,52 @@ async def test_backfill_disables_llm_calls():
         "app.services.goal_service._llm_match_nodes",
         side_effect=AssertionError("LLM should not be called during backfill"),
     ):
-        with pytest.raises(ValueError, match="fallback"):
+        with pytest.raises(ValueError, match="No default goal policy configured"):
+            async with _Session() as db:
+                await backfill_all_legacy_projects(db)
+                await db.commit()
+
+
+async def test_backfill_fails_when_pack_default_policy_missing_for_goal_type():
+    await _insert_project(goal_text="完全无匹配目标", goal_type="problem")
+    mock_pack = _make_mock_pack(default_goal_policy={"by_goal_type": {}})
+    mock_pack.goal_templates = []
+
+    with patch("app.db.init_db.get_domain_pack_service", return_value=mock_pack), patch(
+        "app.services.goal_service._jieba_match_nodes", return_value=[]
+    ), patch(
+        "app.services.goal_service._llm_match_nodes",
+        side_effect=AssertionError("LLM should not be called during backfill"),
+    ):
+        with pytest.raises(ValueError, match="No default goal policy configured"):
+            async with _Session() as db:
+                await backfill_all_legacy_projects(db)
+                await db.commit()
+
+
+async def test_backfill_fails_when_default_policy_references_unknown_nodes():
+    await _insert_project(goal_text="完全无匹配目标", goal_type="domain")
+    mock_pack = _make_mock_pack(
+        default_goal_policy={
+            "by_goal_type": {
+                "domain": {
+                    "target_node_ids": ["missing_node"],
+                    "mode": "steady",
+                    "description": "坏策略",
+                    "resolve_source": "domain_default",
+                }
+            }
+        }
+    )
+    mock_pack.goal_templates = []
+
+    with patch("app.db.init_db.get_domain_pack_service", return_value=mock_pack), patch(
+        "app.services.goal_service._jieba_match_nodes", return_value=[]
+    ), patch(
+        "app.services.goal_service._llm_match_nodes",
+        side_effect=AssertionError("LLM should not be called during backfill"),
+    ):
+        with pytest.raises(ValueError, match="references unavailable target nodes"):
             async with _Session() as db:
                 await backfill_all_legacy_projects(db)
                 await db.commit()
@@ -216,19 +282,17 @@ async def test_backfill_transactional_no_partial_commit_on_invalid_project():
         goal_text="invalid project text",
         goal_type="domain",
     )
-    mock_pack = _make_mock_pack()
+    valid_pack = _make_mock_pack()
+    invalid_pack = _make_mock_pack(default_goal_policy={"by_goal_type": {}})
+
+    def _get_pack_side_effect(domain=None):
+        if domain == "machine_learning":
+            return invalid_pack
+        return valid_pack
 
     def _resolve_side_effect(goal_text, goal_type_override, templates, nodes_by_id, **kwargs):
         if goal_text == "invalid project text":
-            return {
-                "goal_text": goal_text,
-                "goal_type": "domain",
-                "target_node_ids": ["ml_e07"],
-                "mode": "steady",
-                "description": goal_text,
-                "template_id": None,
-                "resolve_source": "domain_default",
-            }
+            raise ValueError("No default goal policy configured for goal type: domain")
         return {
             "goal_text": goal_text,
             "goal_type": "problem",
@@ -239,7 +303,7 @@ async def test_backfill_transactional_no_partial_commit_on_invalid_project():
             "resolve_source": "template",
         }
 
-    with patch("app.db.init_db.get_domain_pack_service", return_value=mock_pack), patch(
+    with patch("app.db.init_db.get_domain_pack_service", side_effect=_get_pack_side_effect), patch(
         "app.db.init_db.resolve_goal", side_effect=_resolve_side_effect
     ):
         with pytest.raises(ValueError):

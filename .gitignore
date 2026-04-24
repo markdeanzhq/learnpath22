@@ -1,13 +1,50 @@
+# Local tool state
 .ace-tool/
-.venv/
-node_modules/
 .claude/
 .serena/
-.pytest_cache/
 .worktrees/
+
+# Python / test cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+
+# Node / frontend build output
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Runtime data and local secrets
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite3-journal
+.learnpath.db.runtime-secrets.key
+
+# Logs
+test_logs/
+logs/
+*.log
+
+# Local project notes / workflow state
 chatmessage/
 document/
 openspec/
-test_logs/
-.env
 CLAUDE.md

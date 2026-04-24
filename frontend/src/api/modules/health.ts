@@ -109,7 +109,6 @@ function normalizeReadiness(payload: ReadinessResponsePayload): ReadinessRespons
   const graphSync = ensureServiceStatus(payload.services.graph_sync, {
     status: sqlite.ready && neo4j.ready ? 'unknown' : 'blocked',
     ready: sqlite.ready && neo4j.ready,
-    domain: 'machine_learning',
     reason: sqlite.ready && neo4j.ready
       ? '联调接口未单独返回图谱同步状态，当前按论文主链依赖兼容估算'
       : '联调接口未返回图谱同步状态，且论文主链基础依赖未全部就绪',

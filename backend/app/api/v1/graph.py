@@ -15,7 +15,7 @@ from app.repositories.graph_review_repository import (
 )
 from app.repositories.plan_repository import get_latest_plan_node_ids
 from app.repositories.project_repository import get_project
-from app.services.domain_pack_service import get_domain_pack_service
+from app.services.domain_pack_service import get_domain_pack_registry, get_domain_pack_service
 from app.services.graph_service import (
     GRAPH_SCOPE_DOMAIN,
     GRAPH_SCOPE_PROJECT,
@@ -29,14 +29,21 @@ from app.services.graph_sync_service import get_graph_sync_service
 router = APIRouter()
 
 
-def _validate_node_exists(node_id: str) -> None:
-    pack = get_domain_pack_service()
+def _get_default_domain() -> str:
+    try:
+        return get_domain_pack_registry().resolve_domain()
+    except ValueError as exc:
+        raise AppError(code=422, message="INVALID_DOMAIN") from exc
+
+
+def _validate_node_exists(node_id: str, domain: str | None = None) -> None:
+    pack = get_domain_pack_service(domain)
     if node_id not in pack.nodes_by_id:
         raise AppError(code=404, message="节点不存在")
 
 
-def _validate_edge_exists(edge_id: str) -> None:
-    pack = get_domain_pack_service()
+def _validate_edge_exists(edge_id: str, domain: str | None = None) -> None:
+    pack = get_domain_pack_service(domain)
     valid_edges = {
         build_edge_review_id(edge["source"], edge["target"], "REQUIRES")
         for edge in pack.requires_edges
@@ -118,7 +125,7 @@ async def seed_graph_endpoint(
     neo4j: Neo4jDriver = Depends(get_neo4j),
 ):
     """将 Domain Pack 数据同步到 Neo4j（幂等操作）。"""
-    result = await _force_sync_graph(neo4j, "machine_learning")
+    result = await _force_sync_graph(neo4j, _get_default_domain())
     return {
         "nodes": result["nodes"],
         "edges": result["edges"],
@@ -210,7 +217,7 @@ async def review_node(
     if not project:
         raise NotFoundError("项目不存在")
 
-    _validate_node_exists(node_id)
+    _validate_node_exists(node_id, project.domain)
     row = await upsert_review_status(db, project_id, "node", node_id, req.status)
     return {"element_type": "node", "element_id": node_id, "status": row.status}
 
@@ -227,6 +234,6 @@ async def review_edge(
     if not project:
         raise NotFoundError("项目不存在")
 
-    _validate_edge_exists(edge_id)
+    _validate_edge_exists(edge_id, project.domain)
     row = await upsert_review_status(db, project_id, "edge", edge_id, req.status)
     return {"element_type": "edge", "element_id": edge_id, "status": row.status}

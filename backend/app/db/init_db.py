@@ -25,6 +25,12 @@ _RESOLUTION_COLUMNS = [
     ("resolution_confirmed_at", "DATETIME"),
 ]
 
+_SESSION_COLUMNS = [
+    ("domain", "VARCHAR(50)"),
+    ("pack_hash", "VARCHAR(64)"),
+    ("graph_hash", "VARCHAR(64)"),
+]
+
 
 async def upgrade_learning_projects_schema(conn: AsyncConnection) -> None:
     """Add confirmed-resolution columns to learning_projects if they don't exist yet.
@@ -45,6 +51,18 @@ async def upgrade_learning_projects_schema(conn: AsyncConnection) -> None:
             pass
 
 
+async def upgrade_goal_resolution_sessions_schema(conn: AsyncConnection) -> None:
+    for col_name, col_type in _SESSION_COLUMNS:
+        try:
+            await conn.execute(
+                text(
+                    f"ALTER TABLE goal_resolution_sessions ADD COLUMN {col_name} {col_type} DEFAULT NULL"
+                )
+            )
+        except OperationalError:
+            pass
+
+
 async def cleanup_expired_sessions(db: AsyncSession) -> int:
     """Delete GoalResolutionSession rows whose expires_at is in the past.
 
@@ -62,19 +80,22 @@ def _naive_utc_now() -> datetime:
 
 
 def build_legacy_confirmed_resolution_data(project: LearningProject) -> dict[str, object]:
-    pack = get_domain_pack_service(project.domain or "machine_learning")
+    pack = get_domain_pack_service(project.domain)
     goal_result = resolve_goal(
         project.goal_text,
         project.goal_type,
         pack.goal_templates,
         pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types if pack.contract is not None else (),
         allow_llm=False,
+        allow_default_policy_fallback=True,
+        default_goal_policy=pack.contract.default_goal_policy if pack.contract is not None else None,
     )
 
     resolve_source = goal_result["resolve_source"]
     target_node_ids = list(goal_result.get("target_node_ids") or [])
 
-    if resolve_source in {"fallback", "domain_default"}:
+    if resolve_source == "fallback":
         raise ValueError(
             f"Illegal legacy backfill resolve_source for project {project.id}: {resolve_source}"
         )
@@ -140,6 +161,7 @@ async def init_sqlite():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await upgrade_learning_projects_schema(conn)
+        await upgrade_goal_resolution_sessions_schema(conn)
 
     async with async_session() as db:
         await cleanup_expired_sessions(db)

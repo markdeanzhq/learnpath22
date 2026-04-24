@@ -21,6 +21,7 @@ from app.repositories.project_repository import get_project
 from app.repositories.tracking_repository import get_latest_event_per_node
 from app.repositories.graph_review_repository import get_removed_node_ids, get_removed_edge_ids
 from app.services.domain_pack_service import get_domain_pack_service
+from app.services.goal_service import UnsupportedGoalTypeError
 from app.services.planner_service import build_filtered_graph, plan_with_profile
 
 
@@ -134,27 +135,33 @@ async def replan(
     confirmed_goal_result = _build_confirmed_goal_result(project)
 
     if mode == "progress_aware":
-        result = await _replan_progress_aware(
-            db,
-            project,
-            latest_profile,
-            pack,
-            removed_nodes,
-            removed_edges,
-            confirmed_goal_result=confirmed_goal_result,
-        )
+        try:
+            result = await _replan_progress_aware(
+                db,
+                project,
+                latest_profile,
+                pack,
+                removed_nodes,
+                removed_edges,
+                confirmed_goal_result=confirmed_goal_result,
+            )
+        except UnsupportedGoalTypeError as exc:
+            raise AppError(code=409, message="GOAL_DEFAULT_TARGETS_UNAVAILABLE", details={"reason": str(exc)}) from exc
     else:
         if not latest_profile:
             raise ValueError("请先提交画像")
-        result = await _replan_profile_update(
-            db,
-            project,
-            latest_profile,
-            pack,
-            removed_nodes,
-            removed_edges,
-            confirmed_goal_result=confirmed_goal_result,
-        )
+        try:
+            result = await _replan_profile_update(
+                db,
+                project,
+                latest_profile,
+                pack,
+                removed_nodes,
+                removed_edges,
+                confirmed_goal_result=confirmed_goal_result,
+            )
+        except UnsupportedGoalTypeError as exc:
+            raise AppError(code=409, message="GOAL_DEFAULT_TARGETS_UNAVAILABLE", details={"reason": str(exc)}) from exc
 
     if confirmed_goal_result and not result["plan_result"]["goal_result"]["target_node_ids"]:
         raise AppError(code=409, message="GOAL_TARGETS_REMOVED")

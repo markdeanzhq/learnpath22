@@ -8,6 +8,7 @@ from app.planner.scoring import calc_gap, calc_reinforce_score
 from app.planner.staging import assign_stage, build_stage_plan
 from app.planner.budget import calc_budget_summary
 from app.planner.topology import topo_sort_with_profile_priority
+import app.services.planner_service as planner_service_module
 from app.services.domain_pack_service import get_domain_pack_service
 from app.services.planner_service import plan_with_profile
 
@@ -262,6 +263,80 @@ def test_plan_with_confirmed_goal_result_does_not_fallback_when_all_targets_remo
     assert result["goal_result"]["target_node_ids"] == []
 
 
+def test_plan_with_profile_uses_pack_default_policy_for_legacy_empty_result():
+    pack = _get_pack()
+
+    def _fake_resolve_goal(**kwargs):
+        return {
+            "goal_text": kwargs["goal_text"],
+            "goal_type": "domain",
+            "target_node_ids": ["ml_e07"],
+            "confirmed_target_node_ids": ["ml_e07"],
+            "effective_target_node_ids": ["ml_e07"],
+            "mode": "steady",
+            "description": "默认策略命中",
+            "template_id": None,
+            "resolve_source": "domain_default",
+            "candidate_id": "legacy-default",
+            "recommended_candidate_id": None,
+            "auto_detected_goal_type": "domain",
+            "effective_goal_type": "domain",
+            "goal_type_source": "auto_detected",
+            "source_breakdown": {},
+            "score_breakdown": {},
+            "warnings": ["empty_candidates"],
+        }
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(planner_service_module, "resolve_goal", _fake_resolve_goal)
+        result = plan_with_profile(
+            goal_text="完全无匹配目标",
+            goal_type="domain",
+            profile=PROFILE_BEGINNER,
+            pack=pack,
+        )
+
+    assert result["goal_result"]["resolve_source"] == "domain_default"
+    assert result["goal_result"]["target_node_ids"] == ["ml_e07"]
+    assert result["goal_result"]["effective_target_node_ids"] == ["ml_e07"]
+
+
+def test_plan_with_profile_raises_when_legacy_default_targets_removed():
+    pack = _get_pack()
+
+    def _fake_resolve_goal(**kwargs):
+        return {
+            "goal_text": kwargs["goal_text"],
+            "goal_type": "domain",
+            "target_node_ids": ["ml_e07"],
+            "confirmed_target_node_ids": ["ml_e07"],
+            "effective_target_node_ids": ["ml_e07"],
+            "mode": "steady",
+            "description": "默认策略命中",
+            "template_id": None,
+            "resolve_source": "domain_default",
+            "candidate_id": "legacy-default",
+            "recommended_candidate_id": None,
+            "auto_detected_goal_type": "domain",
+            "effective_goal_type": "domain",
+            "goal_type_source": "auto_detected",
+            "source_breakdown": {},
+            "score_breakdown": {},
+            "warnings": ["empty_candidates"],
+        }
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(planner_service_module, "resolve_goal", _fake_resolve_goal)
+        with pytest.raises(planner_service_module.UnsupportedGoalTypeError, match="No effective target nodes available"):
+            plan_with_profile(
+                goal_text="完全无匹配目标",
+                goal_type="domain",
+                profile=PROFILE_BEGINNER,
+                pack=pack,
+                removed_node_ids={"ml_e07"},
+            )
+
+
 def test_plan_problem_goal():
     """场景B: 问题型目标"""
     pack = _get_pack()
@@ -398,3 +473,109 @@ def test_stage_and_resource_entities_do_not_change_goal_resolution(goal_text, go
     assert candidate["goal_result"] == baseline["goal_result"]
     assert candidate["ordered_ids"] == baseline["ordered_ids"]
     assert candidate["stage_plan"] == baseline["stage_plan"]
+
+
+def test_topology_tie_breaks_ready_nodes_by_node_id():
+    nodes_by_id = {
+        "ml_b": {
+            "importance_final": 3,
+            "difficulty_final": 3,
+            "estimated_hours": 2,
+            "theory_weight": 0.5,
+            "practice_weight": 0.5,
+            "req_math": 1,
+            "req_coding": 1,
+            "req_ml": 1,
+        },
+        "ml_a": {
+            "importance_final": 3,
+            "difficulty_final": 3,
+            "estimated_hours": 2,
+            "theory_weight": 0.5,
+            "practice_weight": 0.5,
+            "req_math": 1,
+            "req_coding": 1,
+            "req_ml": 1,
+        },
+        "ml_c": {
+            "importance_final": 3,
+            "difficulty_final": 3,
+            "estimated_hours": 2,
+            "theory_weight": 0.5,
+            "practice_weight": 0.5,
+            "req_math": 1,
+            "req_coding": 1,
+            "req_ml": 1,
+        },
+    }
+    ordered_ids, _ = topo_sort_with_profile_priority(
+        sub_adj={"ml_b": ["ml_c"], "ml_a": ["ml_c"]},
+        indegree={"ml_b": 0, "ml_a": 0, "ml_c": 2},
+        nodes_by_id=nodes_by_id,
+        profile=PROFILE_BEGINNER,
+        goal_relevance_map={"ml_b": 0.5, "ml_a": 0.5, "ml_c": 1.0},
+        mode="steady",
+    )
+
+    assert ordered_ids == ["ml_a", "ml_b", "ml_c"]
+
+
+@pytest.mark.parametrize(
+    ("goal_text", "goal_type"),
+    [
+        ("我想系统学习机器学习基础", "domain"),
+        ("我想搞懂逻辑回归为什么能做分类", "problem"),
+        ("理解梯度下降", "concept"),
+    ],
+)
+def test_plan_order_is_stable_across_repeated_runs(goal_text, goal_type):
+    pack = _get_pack()
+    first = plan_with_profile(
+        goal_text=goal_text,
+        goal_type=goal_type,
+        profile=PROFILE_BEGINNER,
+        pack=pack,
+    )
+    second = plan_with_profile(
+        goal_text=goal_text,
+        goal_type=goal_type,
+        profile=PROFILE_BEGINNER,
+        pack=pack,
+    )
+
+    assert first["ordered_ids"] == second["ordered_ids"]
+    assert first["stage_plan"] == second["stage_plan"]
+    assert first["audit"]["ordering_logs"] == second["audit"]["ordering_logs"]
+
+
+def test_plan_order_is_stable_when_pack_inputs_are_reordered():
+    pack = _get_pack()
+    baseline = plan_with_profile(
+        goal_text="我想系统学习机器学习基础",
+        goal_type="domain",
+        profile=PROFILE_BEGINNER,
+        pack=pack,
+    )
+
+    mutated_pack = deepcopy(pack)
+    mutated_pack.requires_adj = {
+        src: list(reversed(tgts))
+        for src, tgts in reversed(list(mutated_pack.requires_adj.items()))
+    }
+    mutated_pack.requires_rev_adj = {
+        tgt: list(reversed(srcs))
+        for tgt, srcs in reversed(list(mutated_pack.requires_rev_adj.items()))
+    }
+    mutated_pack.nodes_by_id = dict(reversed(list(mutated_pack.nodes_by_id.items())))
+
+    candidate = plan_with_profile(
+        goal_text="我想系统学习机器学习基础",
+        goal_type="domain",
+        profile=PROFILE_BEGINNER,
+        pack=mutated_pack,
+    )
+
+    assert candidate["ordered_ids"] == baseline["ordered_ids"]
+    assert candidate["reinforced_ids"] == baseline["reinforced_ids"]
+    assert candidate["stage_plan"] == baseline["stage_plan"]
+    assert candidate["audit"]["ordering_logs"] == baseline["audit"]["ordering_logs"]

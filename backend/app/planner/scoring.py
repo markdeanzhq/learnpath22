@@ -203,19 +203,20 @@ def select_profile_reinforcements(
     logs: dict[str, Any] = {}
 
     existing = set(closure_ids) | set(target_node_ids)
-    candidates = [
-        n
-        for n in nodes_by_id.values()
-        if n.get("is_foundation", False) and n["id"] not in existing
-    ]
+    candidate_ids = sorted(
+        node_id
+        for node_id, node in nodes_by_id.items()
+        if node.get("is_foundation", False) and node_id not in existing
+    )
 
     scored: list[tuple[float, str, dict[str, float]]] = []
-    for node in candidates:
+    for node_id in candidate_ids:
+        node = nodes_by_id[node_id]
         ok, gap, reinforce_score = should_reinforce(node, profile, config)
         if ok:
-            scored.append((reinforce_score, node["id"], gap))
+            scored.append((reinforce_score, node_id, gap))
 
-    scored.sort(reverse=True)
+    scored.sort(key=lambda item: (-item[0], item[1]))
 
     for reinforce_score, node_id, gap in scored[:max_count]:
         selected.append(node_id)

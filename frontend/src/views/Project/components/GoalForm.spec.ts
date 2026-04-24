@@ -211,10 +211,17 @@ describe('GoalForm', () => {
 
     expect(previewMock).toHaveBeenCalledWith({
       goal_text: '我想系统学习机器学习基础',
-      domain: 'machine_learning',
     })
     expect(wrapper.text()).toContain('自动识别')
     expect(wrapper.text()).toContain('推荐学习完整机器学习主干。')
+  })
+
+  it('explains single-domain scope and structured empty-candidate errors', () => {
+    const wrapper = mountGoalForm()
+
+    expect(wrapper.text()).toContain('当前原型面向机器学习基础单领域')
+    expect(wrapper.text()).toContain('reason_code')
+    expect(wrapper.text()).toContain('reason_text')
   })
 
   it('creates project from the selected preview candidate', async () => {
@@ -244,7 +251,6 @@ describe('GoalForm', () => {
     expect(createMock).toHaveBeenCalledWith({
       title: '机器学习基础学习计划',
       goal_text: '我想系统学习机器学习基础',
-      domain: 'machine_learning',
       resolution_session_id: 'session-001',
       selected_candidate_id: 'cand-001',
     })
@@ -282,7 +288,6 @@ describe('GoalForm', () => {
     expect(previewMock).toHaveBeenLastCalledWith({
       goal_text: '我想系统学习机器学习基础',
       requested_goal_type: 'concept',
-      domain: 'machine_learning',
     })
   })
 
@@ -308,7 +313,6 @@ describe('GoalForm', () => {
     expect(previewForProjectMock).toHaveBeenCalledWith('project-001', {
       goal_text: '我想系统学习机器学习基础',
       requested_goal_type: 'domain',
-      domain: 'machine_learning',
     })
   })
 
@@ -341,7 +345,6 @@ describe('GoalForm', () => {
 
     expect(confirmGoalResolutionMock).toHaveBeenCalledWith('project-001', {
       goal_text: '我想系统学习机器学习基础',
-      domain: 'machine_learning',
       resolution_session_id: 'session-001',
       selected_candidate_id: 'cand-001',
     })

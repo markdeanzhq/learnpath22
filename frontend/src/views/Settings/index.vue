@@ -282,7 +282,8 @@ function serviceStatusText(key: string, service: ReadinessServiceStatus) {
 function serviceDetail(key: string, service: ReadinessServiceStatus) {
   if (key === 'graph_sync') {
     if (service.in_sync) {
-      return `${service.domain || 'machine_learning'} 已同步，可支撑论文主链演示`
+      const domainLabel = service.domain || '当前默认领域'
+      return `${domainLabel} 已同步，可支撑论文主链演示`
     }
     return service.reason || '需先完成 Domain Pack 到 Neo4j 的同步'
   }

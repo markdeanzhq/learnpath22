@@ -97,6 +97,49 @@ def _pack(*, domain="machine_learning", version="1.0.0", field_errors=None):
 
 
 @pytest.mark.asyncio
+async def test_graph_sync_service_uses_registry_default_domain_when_domain_omitted(monkeypatch):
+    service = GraphSyncService(driver=AsyncMock())
+    pack = _pack(domain="demo_domain")
+    get_domain_pack_service = Mock(return_value=pack)
+    monkeypatch.setattr(
+        "app.services.graph_sync_service.get_domain_pack_registry",
+        lambda: SimpleNamespace(resolve_domain=lambda domain=None: domain or "demo_domain"),
+    )
+    monkeypatch.setattr(
+        "app.services.graph_sync_service.get_domain_pack_service",
+        get_domain_pack_service,
+    )
+    monkeypatch.setattr(service, "_get_sync_state", AsyncMock(return_value=None))
+
+    result = await service.get_sync_status()
+
+    assert result["domain"] == "demo_domain"
+    get_domain_pack_service.assert_called_once_with("demo_domain", force_reload=False)
+
+
+@pytest.mark.asyncio
+async def test_graph_sync_force_sync_uses_registry_default_domain_when_domain_omitted(monkeypatch):
+    service = GraphSyncService(driver=AsyncMock())
+    pack = _pack(domain="demo_domain")
+    get_domain_pack_service = Mock(return_value=pack)
+    monkeypatch.setattr(
+        "app.services.graph_sync_service.get_domain_pack_registry",
+        lambda: SimpleNamespace(resolve_domain=lambda domain=None: domain or "demo_domain"),
+    )
+    monkeypatch.setattr(
+        "app.services.graph_sync_service.get_domain_pack_service",
+        get_domain_pack_service,
+    )
+    monkeypatch.setattr(service, "_get_sync_state", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.services.graph_sync_service.seed_graph", AsyncMock(return_value={"nodes": 5, "edges": 8}))
+
+    result = await service.force_sync_domain_pack()
+
+    assert result["domain"] == "demo_domain"
+    get_domain_pack_service.assert_called_once_with("demo_domain", force_reload=True)
+
+
+@pytest.mark.asyncio
 async def test_get_sync_status_reports_ok_when_pack_and_graph_are_synced(monkeypatch):
     service = GraphSyncService(driver=AsyncMock())
     pack = _pack()

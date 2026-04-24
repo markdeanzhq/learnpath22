@@ -17,6 +17,7 @@ from app.api.deps import get_neo4j
 from app.core.exceptions import AppError
 from app.db.neo4j import Neo4jDriver
 from app.db.sqlite import get_db, persist_runtime_settings
+from app.services.domain_pack_service import get_domain_pack_registry
 from app.services.graph_sync_service import get_graph_sync_service
 from app.services.search_service import search
 
@@ -106,7 +107,7 @@ async def readiness_check(
         "ready": False,
         "in_sync": False,
         "reason": "neo4j_unavailable",
-        "domain": "machine_learning",
+        "domain": _get_default_domain(),
     }
     llm_status = await _check_llm()
     search_status = await _check_search()
@@ -156,15 +157,20 @@ async def _check_llm() -> dict:
     }
 
 
+def _get_default_domain() -> str:
+    return get_domain_pack_registry().resolve_domain()
+
+
 async def _check_graph_sync(neo4j: Neo4jDriver) -> dict:
+    domain = _get_default_domain()
     try:
-        return await get_graph_sync_service(neo4j).get_sync_status("machine_learning")
+        return await get_graph_sync_service(neo4j).get_sync_status(domain)
     except (RuntimeError, ValueError) as e:
         return {
             "status": "error",
             "ready": False,
             "in_sync": False,
-            "domain": "machine_learning",
+            "domain": domain,
             "reason": str(e),
         }
 

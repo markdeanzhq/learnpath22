@@ -40,15 +40,17 @@
 - `stages.json` / `resources.json`：静态阶段映射与学习资源
 - `goal_templates.json` / `calibration_overrides.json` / `stage_rules.json`：目标映射、评分校准与阶段规则
 
-当前版本在产品口径与接口层均收敛为 `machine_learning` 单领域；`KnowledgeNode` 是规划主链事实源，`Stage` 与 `Resource` 主要承担展示与说明职责。
+当前版本在产品口径与接口层均收敛为 `machine_learning` 单领域；轻量 registry/contract 只用于把默认领域、支持的目标类型、默认策略和 pack hash 收口为统一框架边界，不表示多领域产品入口已经开放。`KnowledgeNode` 是规划主链事实源，`Stage` 与 `Resource` 主要承担展示与说明职责。
 
 ### 3.2 目标解析与画像采集
 
 位置：`backend/app/services/goal_service.py`、`backend/app/services/profile_collector_service.py`
 
 已实现能力：
-- 学习目标支持 `domain`、`concept`、`problem` 三类输入
-- 目标解析采用“LLM 优先 + 规则兜底”策略
+- 学习目标支持 `domain`、`concept`、`problem` 三类输入，三类公开目标类型由当前 Domain Pack manifest 声明并在运行时校验
+- 项目创建采用 `preview -> select candidate -> create` 流程；项目目标重新确认采用 `project preview -> select candidate -> reconfirm` 流程
+- preview 零候选严格返回 `422 EMPTY_CANDIDATES`，并携带稳定 `reason_code` 与面向用户的 `reason_text`
+- 目标解析采用规则候选、词面召回与可选 LLM 补充的候选融合策略；候选排序使用确定性 tie-break，preview 不回退默认目标策略
 - 画像采集支持两条链路：
   - LLM 在线生成结构化澄清问题
   - 静态五题问卷兜底
@@ -89,8 +91,8 @@
 位置：`backend/app/api/v1/graph.py`、`frontend/src/views/Knowledge/`
 
 已实现能力：
-- Domain 级图谱查看
-- Project 级图谱查看
+- Domain 级图谱查看（当前为默认机器学习领域视图）
+- Project 级图谱查看（使用项目自身 `domain`）
 - 路径相关子图查询
 - 扩展实体（Stage / Resource）只读视图
 - 节点/边审核状态维护
@@ -179,8 +181,8 @@ Neo4j 用于图谱展示与审核视图，存储对象包含 `KnowledgeNode`、`
 
 | 页面 | 路由 | 当前实现功能 |
 |------|------|-------------|
-| 项目创建 | `/project` | 新建项目、目标录入、画像问卷采集入口 |
-| 知识图谱 | `/knowledge` | 图谱可视化、domain/project 切换、节点/边审核、按路由 `nodeId` 聚焦节点 |
+| 项目创建 | `/project` | 目标录入、候选预览、选择候选后创建项目、画像问卷采集入口；空候选错误展示 `reason_text` 与 `reason_code` |
+| 知识图谱 | `/knowledge` | 图谱可视化、默认领域/project 切换、节点/边审核、按路由 `nodeId` 聚焦节点 |
 | 学习路径 | `/path` | 阶段化路径展示、解释面板、按阶段自动补充推荐资源、路径页内搜索、搜索结果绑定到阶段、从任务卡片跳转到 Knowledge 定位节点 |
 | 资料搜索 | `/search` | 独立搜索页、配置缺失提示、结果列表 |
 | 学习进度 | `/dashboard` | 进度统计、事件提交、状态概览、从进度列表跳转到 Knowledge 定位节点 |

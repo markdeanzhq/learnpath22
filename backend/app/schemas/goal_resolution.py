@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class GoalResolutionPreviewRequest(BaseModel):
     goal_text: str = Field(min_length=1)
     requested_goal_type: Optional[str] = None
-    domain: Literal["machine_learning"] = "machine_learning"
+    domain: Optional[str] = None
 
 
 class GoalResolutionCandidateResponse(BaseModel):

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import socket
@@ -287,6 +288,73 @@ async def test_health_search_reports_skipped_when_unconfigured(client):
         "ready": False,
         "provider": "tavily",
         "reason": "搜索服务未配置",
+    }
+
+
+async def test_health_readiness_uses_registry_default_domain_for_graph_sync(client, monkeypatch):
+    sync_service = SimpleNamespace(
+        get_sync_status=AsyncMock(
+            return_value={
+                "status": "ok",
+                "ready": True,
+                "in_sync": True,
+                "reason": "synced",
+                "domain": "demo_domain",
+                "version": "1.0.0",
+                "pack_hash": "pack-hash",
+                "main_graph_synced": True,
+                "entity_graph_synced": True,
+                "nodes": 1,
+                "edges": 0,
+            }
+        )
+    )
+    monkeypatch.setattr(
+        "app.api.v1.health.get_domain_pack_registry",
+        lambda: SimpleNamespace(resolve_domain=lambda: "demo_domain"),
+    )
+    monkeypatch.setattr("app.api.v1.health.get_graph_sync_service", lambda neo4j: sync_service)
+
+    with (
+        patch("app.api.v1.health.llm_health_check", AsyncMock(return_value={"status": "skipped"})),
+        patch("app.api.v1.health._check_neo4j", AsyncMock(return_value={"status": "ok", "ready": True})),
+        patch("app.api.v1.health._check_search", AsyncMock(return_value={"status": "skipped", "ready": False})),
+    ):
+        resp = await client.get("/api/v1/health/readiness")
+
+    assert resp.status_code == 200
+    assert resp.json()["services"]["graph_sync"]["domain"] == "demo_domain"
+    sync_service.get_sync_status.assert_awaited_once_with("demo_domain")
+
+
+async def test_health_readiness_reports_blocked_graph_sync_with_registry_default_domain(client):
+    with (
+        patch(
+            "app.api.v1.health.get_domain_pack_registry",
+            return_value=SimpleNamespace(resolve_domain=lambda: "demo_domain"),
+        ),
+        patch(
+            "app.api.v1.health.llm_health_check",
+            AsyncMock(return_value={"status": "skipped", "reason": "LLM_API_KEY not configured"}),
+        ),
+        patch(
+            "app.api.v1.health._check_neo4j",
+            AsyncMock(return_value={"status": "error", "ready": False, "reason": "offline"}),
+        ),
+        patch(
+            "app.api.v1.health._check_search",
+            AsyncMock(return_value={"status": "skipped", "ready": False}),
+        ),
+    ):
+        resp = await client.get("/api/v1/health/readiness")
+
+    assert resp.status_code == 200
+    assert resp.json()["services"]["graph_sync"] == {
+        "status": "blocked",
+        "ready": False,
+        "in_sync": False,
+        "reason": "neo4j_unavailable",
+        "domain": "demo_domain",
     }
 
 

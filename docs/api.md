@@ -13,19 +13,104 @@ Base URL: `/api/v1`
 | GET | /projects | 列出所有项目 |
 | DELETE | /projects/{id} | 永久删除项目及其关联数据 |
 
+### 项目创建真实流程
+
+当前项目创建不是直接提交 `goal_type/domain` 后立即落库，而是采用三步确认流程：
+
+```text
+preview -> select candidate -> create
+```
+
+1. 调用 `POST /goal-resolution/preview`，提交学习目标文本与可选目标类型。
+2. 后端返回候选目标列表、推荐候选与 `session_id`。
+3. 前端展示候选，用户选择 `selected_candidate_id` 后调用 `POST /projects` 创建项目。
+
+**目标预览请求体:**
+```json
+{
+  "goal_text": "我想系统学习机器学习基础",
+  "requested_goal_type": "domain"
+}
+```
+
+说明：
+- `requested_goal_type` 可选；省略时由后端自动识别
+- 当前公开目标类型稳定为 `domain`、`concept`、`problem`
+- `domain` 是兼容字段，公共创建流程不依赖前端传入 `domain`
+- 当前版本为机器学习基础单领域原型，不开放多领域选择入口
+
+**目标预览成功响应:**
+```json
+{
+  "session_id": "<resolution_session_id>",
+  "expires_at": "2026-04-24T12:00:00",
+  "auto_detected_goal_type": "domain",
+  "effective_goal_type": "domain",
+  "recommended_candidate_id": "template:domain_ml_full",
+  "candidates": [
+    {
+      "candidate_id": "template:domain_ml_full",
+      "goal_type": "domain",
+      "target_node_ids": ["ml_e07"],
+      "mode": "steady",
+      "description": "系统学习机器学习基础",
+      "template_id": "domain_ml_full",
+      "resolve_source": "template",
+      "source_breakdown": {"template": 1.0, "lexical": 0.0, "llm": 0.0},
+      "score": 0.86,
+      "score_breakdown": {"final_score": 0.86},
+      "explanation": "template 候选",
+      "warnings": []
+    }
+  ]
+}
+```
+
+**目标预览零候选响应:**
+```json
+{
+  "error": "EMPTY_CANDIDATES",
+  "code": 422,
+  "reason_code": "negative_patterns_excluded_all",
+  "reason_text": "当前目标文本命中了候选模板，但这些模板都被排除词命中，请改写目标描述后重试。"
+}
+```
+
+说明：
+- 零候选严格返回 `422 EMPTY_CANDIDATES`
+- `reason_code` 为稳定机器可读枚举
+- `reason_text` 为面向用户的单句说明，前端会优先展示它并带出 `reason_code`
+- preview 不会回退到默认目标策略
+
 **创建项目请求体:**
 ```json
 {
   "title": "机器学习入门",
   "goal_text": "我想系统学习机器学习基础",
-  "goal_type": "domain",
-  "domain": "machine_learning"
+  "resolution_session_id": "<resolution_session_id>",
+  "selected_candidate_id": "template:domain_ml_full"
 }
 ```
 
 说明：
-- 当前版本为单领域原型，`domain` 仅支持 `machine_learning`
-- 传入其他领域值会在请求校验阶段返回 `422`
+- 创建时必须复用 preview 返回的 `resolution_session_id` 与候选 ID
+- 后端会校验目标文本 hash、domain、pack hash 与候选归属，避免使用过期或漂移的预览会话
+- `goal_type` 与 `domain` 仅保留兼容语义，不是公共创建流程的事实源
+
+### 项目目标重新确认流程
+
+当已确认目标节点被图谱审核全部移除，或需要重新确认项目目标时，使用项目级流程：
+
+```text
+project preview -> select candidate -> reconfirm
+```
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /projects/{id}/goal-resolution/preview | 为已有项目创建目标候选预览 |
+| PUT | /projects/{id}/goal-resolution | 使用选择的候选更新项目目标 |
+
+项目级 reconfirm 会额外校验 `project_id` 与当前项目图谱 `graph_hash`，避免图谱审核状态变化后复用旧候选。
 
 **删除项目响应示例:**
 ```json

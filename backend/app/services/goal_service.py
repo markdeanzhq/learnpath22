@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import jieba
@@ -11,13 +12,62 @@ from app.core.config import get_llm_config
 
 logger = logging.getLogger(__name__)
 
-_FALLBACK_TARGETS = ["ml_c09", "ml_d08", "ml_e03"]
-_GOAL_TYPES = {"domain", "concept", "problem"}
 _GENERIC_TERMS = ("系统学习", "基础", "入门", "全面", "完整")
 _SOURCE_KEYS = ("template", "lexical", "llm")
 _RESOLVE_SOURCE_PRIORITY = ("template", "jieba", "llm")
 _MAX_LLM_CANDIDATES = 3
 _MAX_LLM_NODES_PER_CANDIDATE = 5
+_EMPTY_REASON_MAX_LENGTH = 120
+_EMPTY_REASON_TIMEOUT_SECONDS = 8
+_EMPTY_REASON_FALLBACK_TEXTS = {
+    "negative_patterns_excluded_all": "当前目标文本命中了候选模板，但这些模板都被排除词命中，请改写目标描述后重试。",
+    "no_rule_match": "当前目标未匹配到可确认的学习目标候选，请尝试改写目标描述或切换目标类型。",
+    "llm_unavailable_after_rule_miss": "当前目标未命中规则候选，且 LLM 解析暂时不可用，请稍后重试或改写目标描述。",
+    "llm_returned_no_legal_candidates": "规则层未找到稳定候选，且 LLM 没有返回可确认的合法候选，请改写目标描述后重试。",
+    "no_supported_candidates": "当前目标未能匹配到可确认的学习目标候选，请尝试改写目标描述或切换目标类型。",
+}
+_LLM_UNAVAILABLE_WARNINGS = {"llm_unavailable", "llm_timeout", "llm_auth_failed"}
+
+
+class UnsupportedGoalTypeError(ValueError):
+    pass
+
+
+def _normalize_supported_goal_types(
+    supported_goal_types: set[str] | tuple[str, ...] | list[str],
+) -> set[str]:
+    normalized = {
+        goal_type
+        for goal_type in supported_goal_types
+        if isinstance(goal_type, str) and goal_type
+    }
+    if not normalized:
+        raise UnsupportedGoalTypeError("No supported goal types configured")
+    return normalized
+
+
+def _ensure_supported_goal_type(goal_type: str, supported_goal_types: set[str]) -> None:
+    if goal_type not in supported_goal_types:
+        raise UnsupportedGoalTypeError(f"Unsupported goal type: {goal_type}")
+
+
+def build_empty_candidate_reason(
+    evidence: dict[str, Any],
+    *,
+    allow_llm: bool = True,
+    llm_client_factory=None,
+) -> tuple[str, str]:
+    reason_code = _classify_empty_candidate_reason(evidence)
+    fallback_text = _EMPTY_REASON_FALLBACK_TEXTS[reason_code]
+    if not allow_llm:
+        return reason_code, fallback_text
+    reason_text = _generate_empty_candidate_reason_text(
+        reason_code,
+        evidence,
+        fallback_text,
+        llm_client_factory=llm_client_factory,
+    )
+    return reason_code, reason_text or fallback_text
 
 
 def identify_goal_type(goal_text: str) -> str:
@@ -257,6 +307,91 @@ def _source_breakdown(*, template: float = 0.0, lexical: float = 0.0, llm: float
     }
 
 
+def _empty_evidence_payload(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "requested_goal_type": evidence.get("requested_goal_type"),
+        "effective_goal_type": evidence.get("effective_goal_type"),
+        "template_match_count": int(evidence.get("template_match_count", 0)),
+        "negative_excluded_count": int(evidence.get("negative_excluded_count", 0)),
+        "lexical_match_count": int(evidence.get("lexical_match_count", 0)),
+        "llm_status": evidence.get("llm_status", "not_invoked"),
+    }
+
+
+
+def _classify_empty_candidate_reason(evidence: dict[str, Any]) -> str:
+    template_match_count = int(evidence.get("template_match_count", 0))
+    negative_excluded_count = int(evidence.get("negative_excluded_count", 0))
+    llm_status = str(evidence.get("llm_status", "not_invoked"))
+
+    if template_match_count > 0 and negative_excluded_count >= template_match_count:
+        return "negative_patterns_excluded_all"
+    if llm_status in _LLM_UNAVAILABLE_WARNINGS:
+        return "llm_unavailable_after_rule_miss"
+    if llm_status in {"llm_empty_result", "llm_invalid_response", "llm_invalid_nodes", "llm_candidate_too_large"}:
+        return "llm_returned_no_legal_candidates"
+    if template_match_count == 0 and int(evidence.get("lexical_match_count", 0)) == 0:
+        return "no_rule_match"
+    return "no_supported_candidates"
+
+
+
+def _generate_empty_candidate_reason_text(
+    reason_code: str,
+    evidence: dict[str, Any],
+    fallback_text: str,
+    llm_client_factory=None,
+) -> str:
+    llm_cfg = get_llm_config()
+    if not llm_cfg.get("llm_api_key"):
+        return fallback_text
+
+    try:
+        if llm_client_factory is None:
+            from openai import OpenAI
+
+            client = OpenAI(
+                api_key=llm_cfg["llm_api_key"],
+                base_url=llm_cfg.get("llm_base_url", "https://api.openai.com/v1"),
+                timeout=_EMPTY_REASON_TIMEOUT_SECONDS,
+            )
+        else:
+            client = llm_client_factory(llm_cfg)
+
+        payload = json.dumps(
+            {
+                "reason_code": reason_code,
+                "evidence": _empty_evidence_payload(evidence),
+                "fallback_text": fallback_text,
+            },
+            ensure_ascii=False,
+        )
+        response = client.chat.completions.create(
+            model=llm_cfg.get("llm_model", "gpt-3.5-turbo"),
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是学习目标解析失败说明器。"
+                        "只基于输入中的 reason_code、结构化证据和 fallback_text，"
+                        "输出一句中文解释，不超过120个中文字符，"
+                        "不得引入任何未提供的新节点、新领域、新规则。"
+                    ),
+                },
+                {"role": "user", "content": payload},
+            ],
+            temperature=0,
+            max_tokens=120,
+        )
+        content = response.choices[0].message.content.strip()
+        if not content or len(content) > _EMPTY_REASON_MAX_LENGTH:
+            return fallback_text
+        return content
+    except Exception as exc:
+        logger.warning("LLM 空候选原因生成失败，回退规则文案: %s", exc)
+        return fallback_text
+
+
 
 def _candidate_signature(candidate: dict[str, Any]) -> tuple[str, tuple[str, ...], str]:
     return (
@@ -344,9 +479,11 @@ def _collect_template_candidates(
     templates: list[dict[str, Any]],
     nodes_by_id: dict[str, dict[str, Any]],
     allowed_goal_types: set[str],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     text = _normalize_text(goal_text)
     candidates: list[dict[str, Any]] = []
+    template_match_count = 0
+    negative_excluded_count = 0
 
     for template in templates:
         if template.get("goal_type") not in allowed_goal_types:
@@ -357,6 +494,15 @@ def _collect_template_candidates(
             if isinstance(pattern, str) and pattern.lower() in text
         ]
         if not matched_patterns:
+            continue
+
+        template_match_count += 1
+        negative_patterns = [
+            pattern for pattern in template.get("negative_patterns", [])
+            if isinstance(pattern, str) and pattern.lower() in text
+        ]
+        if negative_patterns:
+            negative_excluded_count += 1
             continue
 
         target_node_ids = _unique_valid_node_ids(
@@ -382,7 +528,10 @@ def _collect_template_candidates(
             )
         )
 
-    return candidates
+    return candidates, {
+        "template_match_count": template_match_count,
+        "negative_excluded_count": negative_excluded_count,
+    }
 
 
 
@@ -390,10 +539,10 @@ def _collect_lexical_candidates(
     goal_text: str,
     effective_goal_type: str,
     nodes_by_id: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
     target_node_ids = _jieba_match_nodes(goal_text, nodes_by_id)
     if not target_node_ids:
-        return []
+        return [], 0
 
     candidate_id = f"lexical:{effective_goal_type}:{'+'.join(target_node_ids)}"
     return [
@@ -408,7 +557,7 @@ def _collect_lexical_candidates(
             source_breakdown=_source_breakdown(lexical=1.0),
             explanation="基于节点名、别名、关键词和描述的词面召回",
         )
-    ]
+    ], len(target_node_ids)
 
 
 
@@ -425,9 +574,9 @@ def _collect_llm_candidates(
     nodes_by_id: dict[str, dict[str, Any]],
     *,
     allow_llm: bool,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], str]:
     if not allow_llm:
-        return [], []
+        return [], [], "not_invoked"
 
     raw_llm_candidates, llm_warning = _unwrap_llm_match_result(
         _llm_match_nodes(
@@ -437,14 +586,16 @@ def _collect_llm_candidates(
         )
     )
     if raw_llm_candidates is None:
-        return [], [llm_warning or "llm_unavailable"]
+        warning = llm_warning or "llm_unavailable"
+        return [], [warning], warning
 
     valid_candidate_groups, warnings = _validate_llm_candidate_groups(
         raw_llm_candidates,
         nodes_by_id,
     )
     if not valid_candidate_groups:
-        return [], warnings or ["llm_empty_result"]
+        normalized_warnings = warnings or ["llm_empty_result"]
+        return [], normalized_warnings, normalized_warnings[0]
 
     candidates = []
     for target_node_ids in valid_candidate_groups:
@@ -463,7 +614,7 @@ def _collect_llm_candidates(
             )
         )
 
-    return candidates, warnings
+    return candidates, warnings, "ok"
 
 
 
@@ -638,37 +789,58 @@ def _select_legacy_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any]
 
 
 
+def _get_default_goal_policy_entry(
+    goal_type: str,
+    default_goal_policy: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(default_goal_policy, Mapping):
+        return None
+    by_goal_type = default_goal_policy.get("by_goal_type")
+    if not isinstance(by_goal_type, Mapping):
+        return None
+    policy = by_goal_type.get(goal_type)
+    return dict(policy) if isinstance(policy, Mapping) else None
+
+
+
 def _legacy_empty_result(
     goal_text: str,
     goal_type: str,
     nodes_by_id: dict[str, dict[str, Any]],
+    *,
+    default_goal_policy: Mapping[str, Any] | None = None,
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
-    if goal_type == "domain":
-        target_node_ids = ["ml_c09", "ml_d08", "ml_e03", "ml_e07"]
-        mode = "steady"
-        resolve_source = "domain_default"
-    else:
-        target_node_ids = _FALLBACK_TARGETS[:]
-        mode = "efficient"
-        resolve_source = "fallback"
+    policy = _get_default_goal_policy_entry(goal_type, default_goal_policy)
+    if policy is None:
+        raise UnsupportedGoalTypeError(f"No default goal policy configured for goal type: {goal_type}")
 
-    target_node_ids = [nid for nid in target_node_ids if nid in nodes_by_id]
+    requested_target_node_ids = list(policy.get("target_node_ids") or [])
+    missing_target_node_ids = [
+        node_id for node_id in requested_target_node_ids
+        if node_id not in nodes_by_id
+    ]
+    if missing_target_node_ids:
+        raise UnsupportedGoalTypeError(
+            f"Default goal policy references unavailable target nodes for goal type: {goal_type}: {missing_target_node_ids}"
+        )
+
+    target_node_ids = [node_id for node_id in requested_target_node_ids if node_id in nodes_by_id]
     if not target_node_ids:
-        target_node_ids = [nid for nid in _FALLBACK_TARGETS if nid in nodes_by_id]
-        resolve_source = "fallback"
+        raise UnsupportedGoalTypeError(f"Default goal policy has no valid target nodes for goal type: {goal_type}")
 
+    resolve_source = str(policy.get("resolve_source") or "domain_default")
     merged_warnings = sorted({"empty_candidates", *(warnings or [])})
 
     return {
         "goal_text": goal_text,
         "goal_type": goal_type,
         "target_node_ids": target_node_ids,
-        "mode": mode,
-        "description": goal_text,
+        "mode": str(policy.get("mode") or "steady"),
+        "description": str(policy.get("description") or goal_text),
         "template_id": None,
         "resolve_source": resolve_source,
-        "source_breakdown": _source_breakdown(**{resolve_source if resolve_source in _SOURCE_KEYS else "template": 1.0}),
+        "source_breakdown": _source_breakdown(),
         "score_breakdown": {
             "template_score": 0.0,
             "lexical_score": 0.0,
@@ -719,22 +891,32 @@ def resolve_goal_candidates(
     templates: list[dict[str, Any]],
     nodes_by_id: dict[str, dict[str, Any]],
     *,
+    supported_goal_types: set[str] | tuple[str, ...] | list[str],
     allow_llm: bool = True,
 ) -> dict[str, Any]:
     auto_detected_goal_type, effective_goal_type, goal_type_source = _resolve_goal_type_context(
         goal_text,
         goal_type_override,
     )
-    allowed_goal_types = {effective_goal_type} if goal_type_override else _GOAL_TYPES
+    runtime_supported_goal_types = _normalize_supported_goal_types(supported_goal_types)
+    _ensure_supported_goal_type(effective_goal_type, runtime_supported_goal_types)
+    allowed_goal_types = {effective_goal_type} if goal_type_override else runtime_supported_goal_types
 
     raw_candidates: list[dict[str, Any]] = []
-    raw_candidates.extend(
-        _collect_template_candidates(goal_text, templates, nodes_by_id, allowed_goal_types)
+    template_candidates, template_stats = _collect_template_candidates(
+        goal_text,
+        templates,
+        nodes_by_id,
+        allowed_goal_types,
     )
-    raw_candidates.extend(
-        _collect_lexical_candidates(goal_text, effective_goal_type, nodes_by_id)
+    raw_candidates.extend(template_candidates)
+    lexical_candidates, lexical_match_count = _collect_lexical_candidates(
+        goal_text,
+        effective_goal_type,
+        nodes_by_id,
     )
-    llm_candidates, llm_warnings = _collect_llm_candidates(
+    raw_candidates.extend(lexical_candidates)
+    llm_candidates, llm_warnings, llm_status = _collect_llm_candidates(
         goal_text,
         effective_goal_type,
         nodes_by_id,
@@ -750,10 +932,25 @@ def resolve_goal_candidates(
     scored_candidates = [
         _score_candidate(goal_text, candidate, templates, nodes_by_id)
         for candidate in deduped_candidates
-        if candidate["goal_type"] in _GOAL_TYPES and candidate["target_node_ids"]
+        if candidate["goal_type"] in runtime_supported_goal_types and candidate["target_node_ids"]
     ]
     ranked_candidates = sorted(scored_candidates, key=_candidate_sort_key)
     public_candidates = [_public_candidate(candidate) for candidate in ranked_candidates]
+    empty_evidence = {
+        "requested_goal_type": goal_type_override,
+        "effective_goal_type": effective_goal_type,
+        "template_match_count": template_stats["template_match_count"],
+        "negative_excluded_count": template_stats["negative_excluded_count"],
+        "lexical_match_count": lexical_match_count,
+        "llm_status": llm_status,
+    }
+    reason_code = None
+    reason_text = None
+    if not public_candidates:
+        reason_code, reason_text = build_empty_candidate_reason(
+            empty_evidence,
+            allow_llm=allow_llm,
+        )
 
     return {
         "auto_detected_goal_type": auto_detected_goal_type,
@@ -762,6 +959,9 @@ def resolve_goal_candidates(
         "recommended_candidate_id": public_candidates[0]["candidate_id"] if public_candidates else None,
         "candidates": public_candidates,
         "warnings": sorted(set(llm_warnings)),
+        "empty_evidence": empty_evidence,
+        "reason_code": reason_code,
+        "reason_text": reason_text,
     }
 
 
@@ -772,22 +972,29 @@ def resolve_goal(
     templates: list[dict[str, Any]],
     nodes_by_id: dict[str, dict[str, Any]],
     *,
+    supported_goal_types: set[str] | tuple[str, ...] | list[str],
     allow_llm: bool = True,
+    allow_default_policy_fallback: bool = True,
+    default_goal_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     candidate_result = resolve_goal_candidates(
         goal_text=goal_text,
         goal_type_override=goal_type_override,
         templates=templates,
         nodes_by_id=nodes_by_id,
+        supported_goal_types=supported_goal_types,
         allow_llm=allow_llm,
     )
 
     if not candidate_result["candidates"]:
+        if not allow_default_policy_fallback:
+            raise UnsupportedGoalTypeError("Default goal policy fallback is disabled")
         goal_type = goal_type_override or candidate_result["auto_detected_goal_type"]
         return _legacy_empty_result(
             goal_text,
             goal_type,
             nodes_by_id,
+            default_goal_policy=default_goal_policy,
             warnings=candidate_result.get("warnings", []),
         )
 
