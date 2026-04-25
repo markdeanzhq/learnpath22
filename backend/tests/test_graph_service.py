@@ -1,10 +1,14 @@
 """Graph service read-only entity metadata tests."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.graph_service import get_graph_entity_metadata
+from app.services.graph_service import (
+    build_path_graph_elements_from_snapshot,
+    get_graph_entity_metadata,
+)
 
 
 @pytest.mark.asyncio
@@ -120,3 +124,140 @@ async def test_get_graph_entity_metadata_aggregates_stage_and_resource_relations
         "is_empty": False,
     }
     assert driver.execute_query.await_count == 6
+
+
+def test_build_path_graph_elements_from_snapshot_preserves_overlay_metadata():
+    snapshot = SimpleNamespace(
+        nodes_by_id={
+            "ml_a01": {
+                "id": "ml_a01",
+                "name": "线性代数基础",
+                "group": "concept",
+                "category": "foundation",
+                "difficulty_final": 1,
+                "importance_final": 5,
+                "estimated_hours": 3,
+            },
+            "ml_a02": {
+                "id": "ml_a02",
+                "name": "Python 基础",
+                "group": "concept",
+                "category": "foundation",
+                "difficulty_final": 1,
+                "importance_final": 4,
+                "estimated_hours": 4,
+            },
+            "po:demo:n:1": {
+                "id": "po:demo:n:1",
+                "name": "补充 Overlay 节点",
+                "group": "concept",
+                "category": "foundation",
+                "difficulty_final": 2,
+                "importance_final": 5,
+                "estimated_hours": 2,
+                "origin": "overlay",
+            },
+        },
+        requires_edges=[
+            {"source": "ml_a01", "target": "ml_a02"},
+            {
+                "source": "ml_a01",
+                "target": "po:demo:n:1",
+                "type": "REQUIRES",
+                "origin": "overlay",
+                "overlay_id": "po:demo:e:1",
+            },
+        ],
+        related_edges=[],
+        overlay_lineage={
+            "nodes": {
+                "po:demo:n:1": {
+                    "validation_status": "valid",
+                    "review_status": "confirmed",
+                    "planning_enabled": True,
+                    "promotion_status": "not_promoted",
+                    "source_ids": ["source-1"],
+                    "provenance": {"summary": "overlay summary"},
+                    "validation_errors": [],
+                    "confidence": 0.93,
+                }
+            },
+            "edges": {
+                "po:demo:e:1": {
+                    "edge_id": "po:demo:e:1",
+                    "validation_status": "valid",
+                    "review_status": "confirmed",
+                    "planning_enabled": True,
+                    "promotion_status": "not_promoted",
+                    "source_ids": ["source-1"],
+                    "provenance": {"evidence": "source-1"},
+                    "validation_errors": [],
+                    "confidence": 0.81,
+                }
+            },
+        },
+    )
+
+    result = build_path_graph_elements_from_snapshot(
+        snapshot,
+        node_ids=["po:demo:n:1", "ml_a02", "missing-node", "ml_a01"],
+        path_id="path-123",
+    )
+
+    assert result["scope"] == "path"
+    assert result["path_id"] == "path-123"
+    assert result["node_ids"] == ["missing-node", "ml_a01", "ml_a02", "po:demo:n:1"]
+    assert result["missing_node_ids"] == ["missing-node"]
+    assert result["is_empty"] is False
+
+    overlay_node = next(
+        element for element in result["elements"] if element["group"] == "nodes" and element["data"]["id"] == "po:demo:n:1"
+    )
+    overlay_edge = next(
+        element for element in result["elements"] if element["group"] == "edges" and element["data"]["id"] == "po:demo:e:1"
+    )
+
+    assert overlay_node["data"]["origin"] == "overlay"
+    assert overlay_node["data"]["validation_status"] == "valid"
+    assert overlay_node["data"]["review_status"] == "confirmed"
+    assert overlay_node["data"]["planning_enabled"] is True
+    assert overlay_node["data"]["promotion_status"] == "not_promoted"
+    assert overlay_node["data"]["source_ids"] == ["source-1"]
+    assert overlay_node["data"]["provenance"] == {"summary": "overlay summary"}
+    assert overlay_edge["data"]["origin"] == "overlay"
+    assert overlay_edge["data"]["source"] == "ml_a01"
+    assert overlay_edge["data"]["target"] == "po:demo:n:1"
+    assert overlay_edge["data"]["type"] == "REQUIRES"
+    assert overlay_edge["data"]["provenance"] == {"evidence": "source-1"}
+
+
+def test_build_path_graph_elements_from_snapshot_returns_empty_missing_only_subgraph():
+    snapshot = SimpleNamespace(
+        nodes_by_id={
+            "ml_a01": {
+                "id": "ml_a01",
+                "name": "线性代数基础",
+                "group": "concept",
+                "category": "foundation",
+            }
+        },
+        requires_edges=[],
+        related_edges=[],
+        overlay_lineage={"nodes": {}, "edges": {}},
+    )
+
+    result = build_path_graph_elements_from_snapshot(
+        snapshot,
+        node_ids=["missing-a", "missing-b"],
+        path_id="path-404",
+    )
+
+    assert result == {
+        "scope": "path",
+        "path_id": "path-404",
+        "elements": [],
+        "node_ids": ["missing-a", "missing-b"],
+        "missing_node_ids": ["missing-a", "missing-b"],
+        "is_empty": True,
+        "empty_reason": "path_nodes_missing",
+    }

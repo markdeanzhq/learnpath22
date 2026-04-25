@@ -1,47 +1,194 @@
 """图谱查询服务：返回 Cytoscape.js 兼容格式"""
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.exceptions import AppError
 from app.db.neo4j import Neo4jDriver
+from app.services.domain_pack_service import DomainPackService
+
+if TYPE_CHECKING:
+    from app.services.project_graph_snapshot_service import ProjectGraphSnapshot
 
 GRAPH_SCOPE_DOMAIN = "domain"
 GRAPH_SCOPE_PROJECT = "project"
+GRAPH_SCOPE_PATH = "path"
+VALID_GRAPH_SCOPES = {GRAPH_SCOPE_DOMAIN, GRAPH_SCOPE_PROJECT, GRAPH_SCOPE_PATH}
 
 
 def build_edge_review_id(source: str, target: str, rel_type: str) -> str:
     return f"{source}->{target}::{rel_type}"
 
 
-def _build_node_element(node: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "group": "nodes",
-        "data": {
-            "id": node.get("id"),
-            "label": node.get("name"),
-            "category": node.get("category"),
-            "group_id": node.get("group_id") or node.get("group"),
-            "difficulty": node.get("difficulty") or node.get("difficulty_final"),
-            "importance": node.get("importance") or node.get("importance_final"),
-            "estimated_hours": node.get("estimated_hours"),
-            "is_main_path": node.get("is_main_path", False),
-        },
+def _build_node_element(node: dict[str, Any], *, scope: str, origin: str = "baseline") -> dict[str, Any]:
+    data = {
+        "id": node.get("id"),
+        "label": node.get("name"),
+        "category": node.get("category"),
+        "group_id": node.get("group_id") or node.get("group"),
+        "difficulty": node.get("difficulty") or node.get("difficulty_final"),
+        "importance": node.get("importance") or node.get("importance_final"),
+        "estimated_hours": node.get("estimated_hours"),
+        "is_main_path": node.get("is_main_path", False),
+        "origin": origin,
+        "scope": scope,
     }
+    if origin == "overlay":
+        data.update({key: node.get(key) for key in _OVERLAY_LIFECYCLE_FIELDS})
+        data.update(
+            {
+                "promotion_status": node.get("promotion_status"),
+                "source_ids": node.get("source_ids", []),
+                "provenance": node.get("provenance", {}),
+                "validation_errors": node.get("validation_errors", []),
+                "confidence": node.get("confidence"),
+            }
+        )
+    return {"group": "nodes", "data": data}
 
 
-def _build_edge_element(edge: dict[str, Any]) -> dict[str, Any]:
-    edge_id = build_edge_review_id(edge["source"], edge["target"], edge["rel_type"])
-    return {
-        "group": "edges",
-        "data": {
-            "id": edge_id,
-            "source": edge["source"],
-            "target": edge["target"],
-            "type": edge["rel_type"],
-            "reason": edge.get("reason", ""),
-        },
+def _build_edge_element(edge: dict[str, Any], *, scope: str, origin: str = "baseline") -> dict[str, Any]:
+    rel_type = edge.get("rel_type") or edge.get("type")
+    edge_id = edge.get("id") or build_edge_review_id(edge["source"], edge["target"], rel_type)
+    data = {
+        "id": edge_id,
+        "source": edge["source"],
+        "target": edge["target"],
+        "type": rel_type,
+        "reason": edge.get("reason", ""),
+        "origin": origin,
+        "scope": scope,
     }
+    if origin == "overlay":
+        data.update({key: edge.get(key) for key in _OVERLAY_LIFECYCLE_FIELDS})
+        data.update(
+            {
+                "promotion_status": edge.get("promotion_status"),
+                "source_ids": edge.get("source_ids", []),
+                "provenance": edge.get("provenance", {}),
+                "validation_errors": edge.get("validation_errors", []),
+                "confidence": edge.get("confidence"),
+            }
+        )
+    return {"group": "edges", "data": data}
+
+
+_OVERLAY_LIFECYCLE_FIELDS = ("validation_status", "review_status", "planning_enabled")
+
+
+def _load_json(value: str | None, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    try:
+        import json
+
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return fallback
+
+
+def _overlay_node_to_element(node: Any, *, scope: str) -> dict[str, Any]:
+    provenance = _load_json(node.provenance_json, {})
+    return _build_node_element(
+        {
+            "id": node.node_id,
+            "name": node.name or node.node_id,
+            "group": node.group,
+            "category": node.category,
+            "difficulty_final": node.difficulty_final,
+            "importance_final": node.importance_final,
+            "estimated_hours": node.estimated_hours,
+            "validation_status": node.validation_status,
+            "review_status": node.review_status,
+            "planning_enabled": node.planning_enabled,
+            "promotion_status": node.promotion_status,
+            "source_ids": _load_json(node.source_ids_json, []),
+            "provenance": provenance,
+            "validation_errors": _load_json(node.validation_errors_json, []),
+            "confidence": node.confidence,
+        },
+        scope=scope,
+        origin="overlay",
+    )
+
+
+def _overlay_edge_to_element(edge: Any, *, scope: str) -> dict[str, Any]:
+    return _build_edge_element(
+        {
+            "id": edge.edge_id,
+            "source": edge.source_node_id,
+            "target": edge.target_node_id,
+            "type": edge.relation_type,
+            "validation_status": edge.validation_status,
+            "review_status": edge.review_status,
+            "planning_enabled": edge.planning_enabled,
+            "promotion_status": edge.promotion_status,
+            "source_ids": _load_json(edge.source_ids_json, []),
+            "provenance": _load_json(edge.provenance_json, {}),
+            "validation_errors": _load_json(edge.validation_errors_json, []),
+            "confidence": edge.confidence,
+        },
+        scope=scope,
+        origin="overlay",
+    )
+
+
+def _snapshot_overlay_node_to_element(
+    node: dict[str, Any],
+    *,
+    scope: str,
+    lineage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    lineage_data = lineage if isinstance(lineage, dict) else {}
+    payload = dict(node)
+    payload.update(
+        {
+            "validation_status": lineage_data.get("validation_status"),
+            "review_status": lineage_data.get("review_status"),
+            "planning_enabled": lineage_data.get("planning_enabled"),
+            "promotion_status": lineage_data.get("promotion_status"),
+            "source_ids": lineage_data.get("source_ids", []),
+            "provenance": lineage_data.get("provenance", {}),
+            "validation_errors": lineage_data.get("validation_errors", []),
+            "confidence": lineage_data.get("confidence"),
+        }
+    )
+    return _build_node_element(payload, scope=scope, origin="overlay")
+
+
+def _snapshot_overlay_edge_to_element(
+    edge: dict[str, Any],
+    *,
+    relation_type: str,
+    scope: str,
+    lineage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    lineage_data = lineage if isinstance(lineage, dict) else {}
+    payload = dict(edge)
+    payload.update(
+        {
+            "id": payload.get("overlay_id")
+            or payload.get("id")
+            or lineage_data.get("edge_id")
+            or build_edge_review_id(
+                payload["source"],
+                payload["target"],
+                payload.get("type") or relation_type,
+            ),
+            "type": payload.get("type") or relation_type,
+            "validation_status": lineage_data.get("validation_status"),
+            "review_status": lineage_data.get("review_status"),
+            "planning_enabled": lineage_data.get("planning_enabled"),
+            "promotion_status": lineage_data.get("promotion_status"),
+            "source_ids": lineage_data.get("source_ids", []),
+            "provenance": lineage_data.get("provenance", {}),
+            "validation_errors": lineage_data.get("validation_errors", []),
+            "confidence": lineage_data.get("confidence"),
+            "reason": payload.get("reason") or lineage_data.get("legality_rationale", ""),
+            "legality_rationale": lineage_data.get("legality_rationale"),
+        }
+    )
+    return _build_edge_element(payload, scope=scope, origin="overlay")
 
 
 async def get_graph_elements(
@@ -49,22 +196,132 @@ async def get_graph_elements(
     scope: str = GRAPH_SCOPE_DOMAIN,
     node_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """按 scope 返回图谱数据（Cytoscape.js elements 格式）。"""
-    if scope not in {GRAPH_SCOPE_DOMAIN, GRAPH_SCOPE_PROJECT}:
-        raise AppError(code=422, message="scope 仅支持 domain 或 project")
+    """按 scope 返回 baseline 图谱数据（Cytoscape.js elements 格式）。"""
+    if scope not in {GRAPH_SCOPE_DOMAIN, GRAPH_SCOPE_PATH}:
+        raise AppError(code=422, message="INVALID_GRAPH_SCOPE")
 
-    if scope == GRAPH_SCOPE_PROJECT:
-        if not node_ids:
-            return {
-                "scope": scope,
-                "elements": [],
-                "is_empty": True,
-                "empty_reason": "project_latest_plan_missing",
-                "message": "项目尚未生成学习路径，暂时无法返回项目相关子图",
-            }
-        return await _get_subgraph_elements(driver, node_ids, scope=scope)
+    if scope == GRAPH_SCOPE_PATH:
+        return await _get_subgraph_elements(driver, node_ids or [], scope=scope)
 
     return await _get_full_graph_elements(driver, scope=scope)
+
+
+def build_project_graph_elements(
+    pack: DomainPackService,
+    *,
+    overlay_nodes: list[Any] | None = None,
+    overlay_edges: list[Any] | None = None,
+    removed_node_ids: set[str] | None = None,
+    removed_edge_ids: set[str] | None = None,
+    scope: str = GRAPH_SCOPE_PROJECT,
+) -> dict[str, Any]:
+    removed_nodes = removed_node_ids or set()
+    removed_edges = removed_edge_ids or set()
+    nodes_by_id = {
+        node_id: node
+        for node_id, node in pack.nodes_by_id.items()
+        if node_id not in removed_nodes
+    }
+    overlay_node_ids = {node.node_id for node in overlay_nodes or []}
+    visible_node_ids = set(nodes_by_id) | overlay_node_ids
+
+    elements = [
+        _build_node_element(node, scope=scope)
+        for _, node in sorted(nodes_by_id.items())
+    ]
+    elements.extend(_overlay_node_to_element(node, scope=scope) for node in overlay_nodes or [])
+
+    baseline_edges = []
+    for relation_type, edges in (("REQUIRES", pack.requires_edges), ("RELATED_TO", pack.related_edges)):
+        for edge in edges:
+            edge_id = build_edge_review_id(edge["source"], edge["target"], relation_type)
+            if edge_id in removed_edges:
+                continue
+            if edge["source"] not in visible_node_ids or edge["target"] not in visible_node_ids:
+                continue
+            baseline_edges.append({**edge, "rel_type": relation_type})
+
+    elements.extend(
+        _build_edge_element(edge, scope=scope)
+        for edge in sorted(baseline_edges, key=lambda item: (item["source"], item["target"], item["rel_type"]))
+    )
+    elements.extend(_overlay_edge_to_element(edge, scope=scope) for edge in overlay_edges or [])
+
+    return {"scope": scope, "elements": elements, "is_empty": len(elements) == 0}
+
+
+def build_path_graph_elements_from_snapshot(
+    snapshot: "ProjectGraphSnapshot",
+    *,
+    node_ids: list[str],
+    path_id: str | None,
+) -> dict[str, Any]:
+    requested_node_ids = sorted(set(node_ids))
+    visible_node_ids = [
+        node_id for node_id in requested_node_ids if node_id in snapshot.nodes_by_id
+    ]
+    visible_node_id_set = set(visible_node_ids)
+    missing_node_ids = sorted(set(requested_node_ids) - visible_node_id_set)
+    overlay_nodes = (snapshot.overlay_lineage or {}).get("nodes") or {}
+    overlay_edges = (snapshot.overlay_lineage or {}).get("edges") or {}
+
+    elements: list[dict[str, Any]] = []
+    for node_id in visible_node_ids:
+        node = snapshot.nodes_by_id[node_id]
+        if node.get("origin") == "overlay":
+            elements.append(
+                _snapshot_overlay_node_to_element(
+                    node,
+                    scope=GRAPH_SCOPE_PATH,
+                    lineage=overlay_nodes.get(node_id),
+                )
+            )
+            continue
+        elements.append(_build_node_element(node, scope=GRAPH_SCOPE_PATH))
+
+    for relation_type, edges in (
+        ("REQUIRES", snapshot.requires_edges),
+        ("RELATED_TO", snapshot.related_edges),
+    ):
+        for edge in edges:
+            if (
+                edge["source"] not in visible_node_id_set
+                or edge["target"] not in visible_node_id_set
+            ):
+                continue
+            if edge.get("origin") == "overlay":
+                elements.append(
+                    _snapshot_overlay_edge_to_element(
+                        edge,
+                        relation_type=relation_type,
+                        scope=GRAPH_SCOPE_PATH,
+                        lineage=overlay_edges.get(edge.get("overlay_id", "")),
+                    )
+                )
+                continue
+            elements.append(
+                _build_edge_element(
+                    {
+                        **edge,
+                        "rel_type": edge.get("rel_type")
+                        or edge.get("type")
+                        or relation_type,
+                    },
+                    scope=GRAPH_SCOPE_PATH,
+                )
+            )
+
+    graph_data: dict[str, Any] = {
+        "scope": GRAPH_SCOPE_PATH,
+        "path_id": path_id,
+        "elements": elements,
+        "node_ids": requested_node_ids,
+        "missing_node_ids": missing_node_ids,
+        "is_empty": len(elements) == 0,
+    }
+    if graph_data["is_empty"] and missing_node_ids and requested_node_ids:
+        graph_data["empty_reason"] = "path_nodes_missing"
+    return graph_data
 
 
 async def _get_full_graph_elements(
@@ -85,8 +342,8 @@ async def _get_full_graph_elements(
         raise AppError(code=500, message=f"图谱查询失败: {exc}") from exc
 
     elements = [
-        *[_build_node_element(record.get("n", {})) for record in nodes_data],
-        *[_build_edge_element(record) for record in edges_data],
+        *[_build_node_element(record.get("n", {}), scope=scope) for record in nodes_data],
+        *[_build_edge_element(record, scope=scope) for record in edges_data],
     ]
     return {"scope": scope, "elements": elements, "is_empty": len(elements) == 0}
 
@@ -113,8 +370,8 @@ async def _get_subgraph_elements(
         raise AppError(code=500, message=f"项目子图查询失败: {exc}") from exc
 
     elements = [
-        *[_build_node_element(record.get("n", {})) for record in nodes_data],
-        *[_build_edge_element(record) for record in edges_data],
+        *[_build_node_element(record.get("n", {}), scope=scope) for record in nodes_data],
+        *[_build_edge_element(record, scope=scope) for record in edges_data],
     ]
     return {
         "scope": scope,
@@ -131,7 +388,7 @@ async def get_full_graph(driver: Neo4jDriver) -> dict[str, Any]:
 async def get_path_subgraph(
     driver: Neo4jDriver, node_ids: list[str]
 ) -> dict[str, Any]:
-    return await get_graph_elements(driver, scope=GRAPH_SCOPE_PROJECT, node_ids=node_ids)
+    return await get_graph_elements(driver, scope=GRAPH_SCOPE_PATH, node_ids=node_ids)
 
 
 async def get_graph_entity_metadata(

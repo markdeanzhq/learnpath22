@@ -28,6 +28,7 @@
         @fit-view="graphRef?.fitView()"
         @search="onSearch"
         @show-entities="onShowEntities"
+        @create-overlay="openOverlayDrawer"
         @toggle-fullscreen="toggleFullscreen"
         @toggle-review="reviewMode = $event"
       />
@@ -62,6 +63,14 @@
             </div>
           </div>
         </div>
+        <el-alert
+          v-if="projectionStatus && projectionStatus.status !== 'empty'"
+          class="graph-alert"
+          :type="projectionAlertType"
+          :closable="false"
+          show-icon
+          :title="`Overlay projection: ${projectionStatus.status}${projectionStatus.reason ? ' / ' + projectionStatus.reason : ''}`"
+        />
         <el-alert
           v-if="graphState === 'ready' && lastRefreshError"
           class="graph-alert"
@@ -111,27 +120,231 @@
       </div>
     </el-card>
 
-    <NodeDetail :node="selectedNode" @review-edge="onReviewEdge" />
+    <NodeDetail
+      :node="selectedNode"
+      @review-edge="onReviewEdge"
+      @set-overlay-planning="onSetOverlayPlanning"
+    />
     <EntityMetadataDrawer
       v-model="entityDrawerVisible"
       :loading="entityLoading"
       :metadata="entityMetadata"
     />
+
+    <el-drawer v-model="overlayDrawerVisible" title="创建扩展草稿" :size="520" direction="rtl">
+      <div class="overlay-drawer" v-loading="overlaySubmitting">
+        <el-alert
+          class="overlay-alert"
+          type="info"
+          :closable="false"
+          show-icon
+          title="扩展草稿会先进入项目级 overlay，确认审核与规划开关后才会参与路径规划。"
+        />
+
+        <el-form label-position="top">
+          <el-form-item label="来源类型">
+            <el-radio-group v-model="overlayForm.sourceType">
+              <el-radio-button value="pasted_text">粘贴文本</el-radio-button>
+              <el-radio-button value="search_url">搜索 URL</el-radio-button>
+              <el-radio-button value="saved_search">已保存搜索</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+
+          <template v-if="overlayForm.sourceType === 'pasted_text'">
+            <el-form-item label="资料文本">
+              <el-input
+                v-model="overlayForm.rawText"
+                type="textarea"
+                :rows="8"
+                maxlength="12000"
+                show-word-limit
+                placeholder="粘贴希望抽取为项目图谱扩展的资料内容"
+              />
+            </el-form-item>
+            <el-form-item label="摘要（可选）">
+              <el-input v-model="overlayForm.summary" placeholder="用于回看来源的简短摘要" />
+            </el-form-item>
+          </template>
+
+          <template v-else-if="overlayForm.sourceType === 'search_url'">
+            <el-form-item label="URL">
+              <el-input v-model="overlayForm.url" placeholder="https://example.com/article" />
+            </el-form-item>
+            <el-form-item label="标题">
+              <el-input v-model="overlayForm.title" placeholder="搜索结果标题" />
+            </el-form-item>
+            <el-form-item label="摘要片段">
+              <el-input v-model="overlayForm.snippet" type="textarea" :rows="4" />
+            </el-form-item>
+          </template>
+
+          <template v-else>
+            <el-form-item label="已保存搜索结果">
+              <el-select
+                v-model="overlayForm.selectedResultIds"
+                multiple
+                filterable
+                placeholder="选择已保存搜索结果"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="item in persistedSearchResults"
+                  :key="item.result_id"
+                  :label="item.title"
+                  :value="item.result_id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-alert
+              v-if="overlayBridgeMessage"
+              class="overlay-alert"
+              type="success"
+              :closable="false"
+              show-icon
+              :title="overlayBridgeMessage"
+            />
+          </template>
+
+          <el-form-item label="抽取模式">
+            <el-radio-group v-model="overlayForm.mode">
+              <el-radio-button value="default">默认抽取</el-radio-button>
+              <el-radio-button value="custom_extension">自定义扩展</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+        </el-form>
+
+        <el-alert
+          v-if="overlayError"
+          class="overlay-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="overlayError"
+        />
+
+        <section v-if="lastOverlaySession" class="overlay-result">
+          <div class="section-header">
+            <div>
+              <h3>抽取结果</h3>
+              <p>{{ lastOverlaySession.session.session_id }}</p>
+            </div>
+            <el-tag :type="getOverlaySessionTagType(lastOverlaySession.session.session_status)">
+              {{ lastOverlaySession.session.session_status }}
+            </el-tag>
+          </div>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="节点候选">{{ lastOverlaySession.nodes.length }}</el-descriptions-item>
+            <el-descriptions-item label="关系候选">{{ lastOverlaySession.edges.length }}</el-descriptions-item>
+            <el-descriptions-item label="资源候选">{{ lastOverlaySession.resources.length }}</el-descriptions-item>
+            <el-descriptions-item label="来源数">{{ lastOverlaySession.sources.length }}</el-descriptions-item>
+          </el-descriptions>
+
+          <section v-if="lastOverlaySession.resources.length" class="overlay-subsection">
+            <h4>资源候选</h4>
+            <article v-for="resource in lastOverlaySession.resources" :key="resource.resource_id" class="resource-candidate">
+              <div class="resource-title">{{ resource.title }}</div>
+              <p>{{ resource.summary || '暂无摘要' }}</p>
+              <el-tag size="small" type="info">{{ resource.resource_type || 'resource' }}</el-tag>
+              <el-tag size="small" type="success">绑定 {{ resource.binding_summary?.count || 0 }}</el-tag>
+            </article>
+          </section>
+
+          <section v-if="lastOverlaySession.resources.length" class="overlay-subsection">
+            <h4>资源绑定</h4>
+            <el-form label-position="top">
+              <el-form-item label="资源">
+                <el-select v-model="resourceBinding.resourceId" placeholder="选择资源候选" style="width: 100%">
+                  <el-option
+                    v-for="resource in lastOverlaySession.resources"
+                    :key="resource.resource_id"
+                    :label="resource.title"
+                    :value="resource.resource_id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="绑定目标类型">
+                <el-radio-group v-model="resourceBinding.targetType">
+                  <el-radio-button value="project_node">项目节点</el-radio-button>
+                  <el-radio-button value="path_stage">稳定阶段</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item label="目标 ID">
+                <el-input v-model="resourceBinding.targetId" placeholder="如 ml_c01 或 stage_foundation" />
+              </el-form-item>
+              <el-button size="small" type="primary" plain @click="bindOverlayResource">绑定资源</el-button>
+            </el-form>
+          </section>
+
+          <section class="overlay-subsection">
+            <h4>Promotion</h4>
+            <el-button size="small" :loading="promotionLoading" @click="previewPromotion">Promotion preview（不写入）</el-button>
+            <el-descriptions v-if="promotionPreview" class="promotion-summary" :column="1" border size="small">
+              <el-descriptions-item label="状态">{{ promotionPreview.status }}</el-descriptions-item>
+              <el-descriptions-item label="候选数">{{ promotionPreview.candidate_count }}</el-descriptions-item>
+              <el-descriptions-item label="baseline hash">{{ promotionPreview.baseline_pack_hash }}</el-descriptions-item>
+              <el-descriptions-item label="resulting hash">{{ promotionPreview.resulting_pack_hash }}</el-descriptions-item>
+              <el-descriptions-item label="资源明细">{{ promotionPreview.resources?.length || 0 }}</el-descriptions-item>
+              <el-descriptions-item label="no-write">preview 只校验，不写 pack、Neo4j 或候选状态。</el-descriptions-item>
+            </el-descriptions>
+            <el-alert
+              v-if="promotionPreview?.errors?.length"
+              class="overlay-alert"
+              type="warning"
+              :closable="false"
+              show-icon
+              :title="promotionPreview.errors.join('; ')"
+            />
+            <el-input
+              v-model="promotionSecret"
+              class="promotion-secret"
+              type="password"
+              show-password
+              placeholder="输入 admin secret 后 commit"
+            />
+            <el-button size="small" type="danger" :loading="promotionLoading" @click="commitPromotion">Commit promotion</el-button>
+            <el-alert
+              v-if="promotionResult"
+              class="overlay-alert"
+              :type="promotionResult.status === 'promoted' || promotionResult.reason === 'promoted' ? 'success' : 'info'"
+              :closable="false"
+              show-icon
+              :title="promotionStatusMessage"
+            />
+          </section>
+        </section>
+
+        <div class="drawer-actions">
+          <el-button @click="overlayDrawerVisible = false">关闭</el-button>
+          <el-button type="primary" :loading="overlaySubmitting" @click="submitOverlayDraft">
+            创建草稿
+          </el-button>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 import {
+  buildGraphQuery,
   graphApi,
+  normalizeGraphPathId,
+  normalizeGraphScope,
   type GraphData,
   type GraphEdgeData,
   type GraphElement,
   type GraphEntityMetadata,
   type GraphNodeData,
+  type GraphScope,
+  type OverlayProjectionStatusResponse,
+  type OverlayElementGroup,
+  type OverlayExtractionSessionResponse,
+  type OverlayReviewStatus,
+  type OverlaySourceRequest,
   type ReviewStatus,
 } from '@/api/modules/graph'
 import GraphCanvas from '@/components/Graph/GraphCanvas.vue'
@@ -139,10 +352,13 @@ import EntityMetadataDrawer from '@/components/Graph/EntityMetadataDrawer.vue'
 import NodeDetail from '@/components/Graph/NodeDetail.vue'
 import GraphToolbar from '@/components/Graph/GraphToolbar.vue'
 import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph/graphMeta'
+import { searchApi, type PersistedSearchResult } from '@/api/modules/search'
+import { resourceApi } from '@/api/modules/resource'
 
 type GraphState = 'loading' | 'ready' | 'empty' | 'error'
-type GraphScope = 'project' | 'domain'
 type GraphLayout = 'cose' | 'breadthfirst'
+type OverlaySourceType = 'pasted_text' | 'search_url' | 'saved_search'
+type OverlayExtractionMode = 'default' | 'custom_extension'
 
 type SelectedAdjacentEdge = GraphEdgeData & {
   direction: 'incoming' | 'outgoing'
@@ -157,23 +373,43 @@ type SelectedNodeContext = GraphNodeData & {
 }
 
 const PROJECT_LATEST_PLAN_MISSING = 'project_latest_plan_missing'
+const SEARCH_NOT_READY = 'SEARCH_NOT_READY'
 
-function normalizeRouteScope(value: unknown): GraphScope {
-  const nextValue = Array.isArray(value) ? value[0] : value
-  return nextValue === 'domain' ? 'domain' : 'project'
+function createOverlayForm() {
+  return {
+    sourceType: 'pasted_text' as OverlaySourceType,
+    selectedResultIds: [] as string[],
+    rawText: '',
+    url: '',
+    title: '',
+    snippet: '',
+    summary: '',
+    mode: 'default' as OverlayExtractionMode,
+  }
+}
+
+function firstQueryValue(value: unknown): unknown {
+  return Array.isArray(value) ? value[0] : value
+}
+
+
+function normalizeRouteSessionId(value: unknown): string | null {
+  const nextValue = firstQueryValue(value)
+  return typeof nextValue === 'string' && nextValue.trim() ? nextValue.trim() : null
 }
 
 function normalizeRouteNodeId(value: unknown): string | null {
-  const nextValue = Array.isArray(value) ? value[0] : value
-  return typeof nextValue === 'string' && nextValue.trim() ? nextValue : null
+  const nextValue = firstQueryValue(value)
+  return typeof nextValue === 'string' && nextValue.trim() ? nextValue.trim() : null
 }
 
 const route = useRoute()
+const router = useRouter()
 const projectStore = useProjectStore()
 const projectId = computed(() => projectStore.currentProject?.id)
 const elements = ref<GraphElement[]>([])
 const layout = ref<GraphLayout>('cose')
-const scope = ref<GraphScope>(normalizeRouteScope(route.query.scope))
+const scope = ref<GraphScope>(normalizeGraphScope(route.query.scope))
 const graphState = ref<GraphState>('loading')
 const loading = ref(false)
 const syncing = ref(false)
@@ -187,15 +423,41 @@ const reviewMode = ref(false)
 const entityDrawerVisible = ref(false)
 const entityLoading = ref(false)
 const entityMetadata = ref<GraphEntityMetadata | null>(null)
+const projectionStatus = ref<OverlayProjectionStatusResponse | null>(null)
+const overlayDrawerVisible = ref(false)
+const overlaySubmitting = ref(false)
+const overlayError = ref('')
+const overlayBridgeMessage = ref('')
+const overlayForm = ref(createOverlayForm())
+const persistedSearchResults = ref<PersistedSearchResult[]>([])
+const lastOverlaySession = ref<OverlayExtractionSessionResponse | null>(null)
+const promotionPreview = ref<any | null>(null)
+const promotionResult = ref<any | null>(null)
+const promotionSecret = ref('')
+const promotionLoading = ref(false)
+const resourceBinding = ref({ resourceId: '', targetType: 'project_node', targetId: '' })
 const categoryLegend = GRAPH_CATEGORY_LEGEND
 const relationLegend = GRAPH_RELATION_LEGEND
-const requestedScope = computed<GraphScope>(() => normalizeRouteScope(route.query.scope))
+const requestedScope = computed<GraphScope>(() => normalizeGraphScope(route.query.scope))
+const requestedPathId = computed<string | undefined>(() => normalizeGraphPathId(requestedScope.value, route.query.path_id))
 const requestedNodeId = computed<string | null>(() => normalizeRouteNodeId(route.query.nodeId))
+const requestedSessionId = computed<string | null>(() => normalizeRouteSessionId(route.query.sessionId))
 const emptyDescription = computed(() =>
   emptyReason.value === PROJECT_LATEST_PLAN_MISSING
-    ? '当前项目尚未生成学习路径，暂时无法展示项目子图'
+    ? '当前项目尚未生成学习路径，暂时无法展示路径子图；项目图谱仍可显示 baseline 与 overlay 草稿。'
     : '当前范围暂无图谱数据，可刷新或先同步 Domain Pack 到 Neo4j',
 )
+const promotionStatusMessage = computed(() => {
+  if (!promotionResult.value) return ''
+  if (promotionResult.value.reason === 'promoted') return 'promotion commit 成功，候选已归档隐藏。'
+  return promotionResult.value.reason || promotionResult.value.status || 'promotion 状态已更新'
+})
+const projectionAlertType = computed(() => projectionStatus.value?.status === 'ok' ? 'success' : 'warning')
+const graphQuery = computed(() => buildGraphQuery({
+  scope: scope.value,
+  path_id: requestedPathId.value,
+  nodeId: requestedNodeId.value || undefined,
+}))
 
 function isNodeElement(element: GraphElement): element is Extract<GraphElement, { group: 'nodes' }> {
   return element.group === 'nodes'
@@ -245,6 +507,66 @@ function resetGraphState() {
   lastRefreshError.value = ''
   emptyReason.value = undefined
   graphState.value = 'loading'
+  projectionStatus.value = null
+}
+
+function resetOverlayState() {
+  overlayDrawerVisible.value = false
+  overlaySubmitting.value = false
+  overlayError.value = ''
+  overlayBridgeMessage.value = ''
+  overlayForm.value = createOverlayForm()
+  lastOverlaySession.value = null
+  promotionPreview.value = null
+  promotionResult.value = null
+  promotionSecret.value = ''
+  resourceBinding.value = { resourceId: '', targetType: 'project_node', targetId: '' }
+}
+
+function graphRouteQuery(nextScope: GraphScope, nodeId?: string | null, sessionId?: string | null) {
+  return {
+    ...buildGraphQuery({
+      scope: nextScope,
+      path_id: nextScope === 'path' ? requestedPathId.value : undefined,
+      nodeId: nodeId || undefined,
+    }),
+    ...(sessionId ? { sessionId } : {}),
+  }
+}
+
+async function replaceGraphRoute(nextScope: GraphScope, nodeId?: string | null, sessionId: string | null = requestedSessionId.value) {
+  await router.replace({
+    name: 'Knowledge',
+    query: Object.fromEntries(
+      Object.entries(graphRouteQuery(nextScope, nodeId, sessionId)).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    ),
+  })
+}
+
+async function loadPersistedSearchResults() {
+  if (!projectId.value) {
+    persistedSearchResults.value = []
+    return
+  }
+  persistedSearchResults.value = await searchApi.listPersistedResults(projectId.value)
+}
+
+async function loadProjectionStatus() {
+  if (!projectId.value) {
+    projectionStatus.value = null
+    return
+  }
+  try {
+    projectionStatus.value = await graphApi.getOverlayProjectionStatus(projectId.value)
+  } catch {
+    projectionStatus.value = {
+      project_id: projectId.value,
+      status: 'error',
+      ready: false,
+      in_sync: false,
+      reason: 'projection_status_unavailable',
+    }
+  }
 }
 
 function applyGraphData(data: GraphData) {
@@ -255,6 +577,23 @@ function applyGraphData(data: GraphData) {
   lastRefreshError.value = ''
   emptyReason.value = data.empty_reason
   graphState.value = nextElements.length > 0 ? 'ready' : 'empty'
+}
+
+async function loadRequestedOverlaySession() {
+  if (!projectId.value || !requestedSessionId.value) {
+    return
+  }
+
+  try {
+    lastOverlaySession.value = await graphApi.getOverlayExtractionSession(
+      projectId.value,
+      requestedSessionId.value,
+    )
+    overlayDrawerVisible.value = true
+  } catch (error: any) {
+    resetOverlayState()
+    overlayError.value = error?.response?.data?.error || '扩展抽取会话加载失败'
+  }
 }
 
 async function focusRequestedNode() {
@@ -268,6 +607,38 @@ async function focusRequestedNode() {
   if (focused) {
     selectedNodeId.value = nodeId
   }
+}
+
+function getElementGroup(data: GraphNodeData | GraphEdgeData): OverlayElementGroup {
+  return 'source' in data && 'target' in data ? 'edges' : 'nodes'
+}
+
+function normalizeOverlayReviewStatus(status: string): OverlayReviewStatus {
+  return status === 'rejected' ? 'rejected' : status as OverlayReviewStatus
+}
+
+function patchElementLifecycle(
+  elementId: string,
+  lifecycle: {
+    review_status?: string
+    planning_enabled?: boolean
+    validation_status?: string
+    promotion_status?: string
+  },
+) {
+  elements.value = elements.value.map((element) => {
+    if (element.data.id !== elementId) {
+      return element
+    }
+
+    return {
+      ...element,
+      data: {
+        ...element.data,
+        ...lifecycle,
+      },
+    } as GraphElement
+  })
 }
 
 function updateNodeReviewStatus(nodeId: string, status: ReviewStatus) {
@@ -318,9 +689,7 @@ async function loadGraph() {
   errorMessage.value = ''
 
   try {
-    const data = await graphApi.getGraph(projectId.value, {
-      scope: scope.value,
-    })
+    const data = await graphApi.getGraph(projectId.value, graphQuery.value)
     applyGraphData(data)
   } catch (e: any) {
     const message = e?.response?.data?.error || e?.message || '知识图谱加载失败，请稍后重试'
@@ -347,34 +716,51 @@ watch(
   async (nextProjectId, previousProjectId) => {
     if (!nextProjectId) {
       resetGraphState()
+      resetOverlayState()
       return
     }
 
     if (nextProjectId !== previousProjectId) {
       resetGraphState()
+      resetOverlayState()
     }
 
     scope.value = requestedScope.value
     await loadGraph()
+    await loadProjectionStatus()
+    await loadPersistedSearchResults()
+    await loadRequestedOverlaySession()
     await focusRequestedNode()
   },
   { immediate: true },
 )
 
-watch(requestedScope, async (nextScope) => {
-  if (scope.value === nextScope || !projectId.value) {
+watch([requestedScope, requestedPathId], async ([nextScope, nextPathId], [previousScope, previousPathId]) => {
+  if (!projectId.value || (scope.value === nextScope && nextScope === previousScope && nextPathId === previousPathId)) {
     return
   }
 
   scope.value = nextScope
   selectedNodeId.value = null
+  resetOverlayState()
   await loadGraph()
+  await loadProjectionStatus()
   await focusRequestedNode()
 })
 
-watch([requestedNodeId, graphState], async () => {
+watch([requestedPathId, requestedNodeId, graphState], async () => {
   await focusRequestedNode()
 })
+
+async function syncRequestedOverlaySession(nextSessionId: string | null) {
+  if (!nextSessionId) {
+    resetOverlayState()
+    return
+  }
+  await loadRequestedOverlaySession()
+}
+
+watch(requestedSessionId, syncRequestedOverlaySession)
 
 function onLayoutChange(newLayout: string) {
   layout.value = newLayout as GraphLayout
@@ -382,6 +768,7 @@ function onLayoutChange(newLayout: string) {
 
 function onNodeClick(data: GraphNodeData) {
   selectedNodeId.value = data.id
+  void replaceGraphRoute(scope.value, data.id)
 }
 
 function onSearch(keyword: string) {
@@ -392,12 +779,16 @@ async function onScopeChange(nextScope: GraphScope) {
   if (scope.value === nextScope) return
   scope.value = nextScope
   selectedNodeId.value = null
+  resetOverlayState()
+  await replaceGraphRoute(nextScope)
   await loadGraph()
+  await loadProjectionStatus()
   await focusRequestedNode()
 }
 
 async function onRefresh() {
   await loadGraph()
+  await loadProjectionStatus()
 }
 
 async function onSync() {
@@ -412,6 +803,7 @@ async function onSync() {
     await graphApi.syncGraph(projectId.value)
     ElMessage.success('知识图谱同步成功')
     await loadGraph()
+    await loadProjectionStatus()
   } catch (e: any) {
     const message = e?.response?.data?.error || e?.message || '知识图谱同步失败，请稍后重试'
     errorMessage.value = message
@@ -437,12 +829,25 @@ async function onSync() {
 
 async function onReviewNode(nodeId: string, status: string) {
   if (!projectId.value) return
-  const nextStatus = status as ReviewStatus
+  const node = nodes.value.find((item) => item.id === nodeId)
   try {
-    await graphApi.reviewNode(projectId.value, nodeId, nextStatus)
-    selectedNodeId.value = nodeId
-    updateNodeReviewStatus(nodeId, nextStatus)
-    graphRef.value?.setNodeReviewStatus(nodeId, nextStatus)
+    if (node?.origin === 'overlay') {
+      const result = await graphApi.reviewOverlayElement(
+        projectId.value,
+        'nodes',
+        nodeId,
+        normalizeOverlayReviewStatus(status),
+      )
+      selectedNodeId.value = nodeId
+      patchElementLifecycle(nodeId, result)
+      graphRef.value?.setNodeReviewStatus(nodeId, result.review_status)
+    } else {
+      const nextStatus = status as ReviewStatus
+      await graphApi.reviewNode(projectId.value, nodeId, nextStatus)
+      selectedNodeId.value = nodeId
+      updateNodeReviewStatus(nodeId, nextStatus)
+      graphRef.value?.setNodeReviewStatus(nodeId, nextStatus)
+    }
     ElMessage.success('节点审核状态已更新')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '节点审核失败')
@@ -451,15 +856,208 @@ async function onReviewNode(nodeId: string, status: string) {
 
 async function onReviewEdge(edgeId: string, status: string) {
   if (!projectId.value) return
-  const nextStatus = status as ReviewStatus
+  const edge = edges.value.find((item) => item.id === edgeId)
   try {
-    await graphApi.reviewEdge(projectId.value, edgeId, nextStatus)
-    updateEdgeReviewStatus(edgeId, nextStatus)
-    graphRef.value?.setEdgeReviewStatus(edgeId, nextStatus)
+    if (edge?.origin === 'overlay') {
+      const result = await graphApi.reviewOverlayElement(
+        projectId.value,
+        'edges',
+        edgeId,
+        normalizeOverlayReviewStatus(status),
+      )
+      patchElementLifecycle(edgeId, result)
+      graphRef.value?.setEdgeReviewStatus(edgeId, result.review_status)
+    } else {
+      const nextStatus = status as ReviewStatus
+      await graphApi.reviewEdge(projectId.value, edgeId, nextStatus)
+      updateEdgeReviewStatus(edgeId, nextStatus)
+      graphRef.value?.setEdgeReviewStatus(edgeId, nextStatus)
+    }
     ElMessage.success('边审核状态已更新')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '边审核失败')
   }
+}
+
+async function onSetOverlayPlanning(data: GraphNodeData | GraphEdgeData, enabled: boolean) {
+  if (!projectId.value || data.origin !== 'overlay') return
+  try {
+    const result = await graphApi.setOverlayPlanning(
+      projectId.value,
+      getElementGroup(data),
+      data.id,
+      enabled,
+    )
+    patchElementLifecycle(data.id, result)
+    ElMessage.success(enabled ? '已允许参与规划' : '已从规划中排除')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || '规划开关更新失败')
+  }
+}
+
+async function openOverlayDrawer() {
+  overlayDrawerVisible.value = true
+  overlayError.value = ''
+  overlayBridgeMessage.value = ''
+  await loadPersistedSearchResults()
+}
+
+function buildOverlaySourcePayload(): OverlaySourceRequest | null {
+  const form = overlayForm.value
+  if (form.sourceType === 'pasted_text') {
+    const rawText = form.rawText.trim()
+    if (!rawText) {
+      overlayError.value = '请先粘贴资料文本'
+      return null
+    }
+    return {
+      source_type: 'pasted_text',
+      raw_text: rawText,
+      raw_text_excerpt: rawText.slice(0, 500),
+      summary: form.summary.trim() || null,
+    }
+  }
+
+  if (form.sourceType === 'search_url') {
+    const url = form.url.trim()
+    if (!url) {
+      overlayError.value = '请填写搜索结果 URL'
+      return null
+    }
+
+    return {
+      source_type: 'search_url',
+      url,
+      title: form.title.trim() || url,
+      snippet: form.snippet.trim() || null,
+      summary: form.summary.trim() || null,
+      provider: 'manual',
+    }
+  }
+
+  return null
+}
+
+async function resolveOverlaySourceIds() {
+  const form = overlayForm.value
+  if (form.sourceType === 'saved_search') {
+    if (!projectId.value || !form.selectedResultIds.length) {
+      overlayError.value = '请选择已保存搜索结果'
+      return null
+    }
+    const bridged = await searchApi.bridgeOverlaySources(projectId.value, form.selectedResultIds)
+    overlayBridgeMessage.value = `已解析 ${bridged.source_ids.length} 个 overlay source，${bridged.results.filter((item) => item.reused).length} 个复用。`
+    return bridged.source_ids
+  }
+
+  const sourcePayload = buildOverlaySourcePayload()
+  if (!sourcePayload || !projectId.value) return null
+  const source = await graphApi.createOverlaySource(projectId.value, sourcePayload)
+  return [source.source_id]
+}
+
+function getOverlayErrorMessage(error: any) {
+  const code = error?.response?.data?.error
+  if (code === SEARCH_NOT_READY) {
+    return '搜索服务尚未就绪，自定义扩展暂不可用；baseline 图谱浏览不受影响。'
+  }
+  return code || error?.message || '扩展草稿创建失败'
+}
+
+async function bindOverlayResource() {
+  if (!projectId.value || !resourceBinding.value.resourceId || !resourceBinding.value.targetId.trim()) {
+    overlayError.value = '请选择资源并填写稳定目标 ID'
+    return
+  }
+  try {
+    await resourceApi.bindProjectResource(projectId.value, {
+      resource_id: resourceBinding.value.resourceId,
+      target_type: resourceBinding.value.targetType as 'project_node' | 'path_stage',
+      target_id: resourceBinding.value.targetId.trim(),
+      binding_source: 'overlay',
+    })
+    if (lastOverlaySession.value) {
+      lastOverlaySession.value = await graphApi.getOverlayExtractionSession(projectId.value, lastOverlaySession.value.session.session_id)
+    }
+    await loadProjectionStatus()
+    ElMessage.success('资源绑定已保存')
+  } catch (error: any) {
+    overlayError.value = error?.response?.data?.error || '资源绑定失败'
+  }
+}
+
+async function previewPromotion() {
+  if (!projectId.value) return
+  promotionLoading.value = true
+  promotionResult.value = null
+  try {
+    promotionPreview.value = await graphApi.previewOverlayPromotion(projectId.value)
+  } catch (error: any) {
+    overlayError.value = error?.response?.data?.error || 'promotion preview 失败'
+  } finally {
+    promotionLoading.value = false
+  }
+}
+
+async function commitPromotion() {
+  if (!projectId.value) return
+  if (!promotionSecret.value.trim()) {
+    overlayError.value = '请输入 admin secret'
+    return
+  }
+  promotionLoading.value = true
+  try {
+    promotionResult.value = await graphApi.commitOverlayPromotion(projectId.value, {
+      admin_secret: promotionSecret.value,
+      requested_by: 'frontend',
+    })
+    promotionSecret.value = ''
+    await loadGraph()
+    await loadProjectionStatus()
+    if (lastOverlaySession.value) {
+      lastOverlaySession.value = await graphApi.getOverlayExtractionSession(projectId.value, lastOverlaySession.value.session.session_id)
+    }
+  } catch (error: any) {
+    const code = error?.response?.data?.error
+    overlayError.value = code || 'promotion commit 失败'
+    promotionResult.value = error?.response?.data?.details?.preview || error?.response?.data?.details || null
+  } finally {
+    promotionLoading.value = false
+  }
+}
+
+async function submitOverlayDraft() {
+  if (!projectId.value) return
+
+  overlaySubmitting.value = true
+  overlayError.value = ''
+  overlayBridgeMessage.value = ''
+
+  try {
+    const sourceIds = await resolveOverlaySourceIds()
+    if (!sourceIds) return
+    lastOverlaySession.value = await graphApi.createOverlayExtractionSession(projectId.value, {
+      source_ids: sourceIds,
+      mode: overlayForm.value.mode,
+    })
+    overlayForm.value = createOverlayForm()
+    ElMessage.success('扩展草稿已创建，请在项目图谱中审核候选节点和关系')
+    scope.value = 'project'
+    await replaceGraphRoute('project', null, lastOverlaySession.value.session.session_id)
+    await loadGraph()
+    await loadProjectionStatus()
+  } catch (error: any) {
+    overlayError.value = getOverlayErrorMessage(error)
+  } finally {
+    overlaySubmitting.value = false
+  }
+}
+
+function getOverlaySessionTagType(status?: string) {
+  if (status === 'failed') return 'danger'
+  if (status === 'reviewed' || status === 'promoted') return 'success'
+  if (status === 'validated') return 'warning'
+  return 'info'
 }
 
 async function onShowEntities() {
@@ -584,6 +1182,66 @@ function toggleFullscreen() {
 
 .graph-alert {
   margin: 12px 12px 0;
+}
+
+.overlay-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.overlay-alert {
+  margin-bottom: 4px;
+}
+
+.overlay-result {
+  padding: 14px;
+  border: 1px solid #ebeef5;
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.overlay-result h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #303133;
+}
+
+.overlay-result p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #909399;
+  word-break: break-all;
+}
+.overlay-subsection {
+  margin-top: 14px;
+}
+.overlay-subsection h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #303133;
+}
+.resource-candidate {
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  background: #fff;
+}
+.resource-title {
+  font-weight: 600;
+  color: #303133;
+}
+.promotion-summary,
+.promotion-secret {
+  margin-top: 10px;
+}
+
+.drawer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 8px;
 }
 
 .graph-state-wrap,

@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -15,14 +16,26 @@ from app.repositories.plan_repository import (
 )
 from app.repositories.profile_repository import get_latest_profile
 from app.repositories.project_repository import get_project
-from app.repositories.graph_review_repository import get_removed_node_ids, get_removed_edge_ids
 from app.schemas.explanation import ExplanationResponse
+from app.schemas.project import validate_path_mode
 from app.services.domain_pack_service import get_domain_pack_service
 from app.services.explanation_service import build_explanation, polish_explanation
 from app.services.goal_service import UnsupportedGoalTypeError
 from app.services.planner_service import plan_with_profile
+from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 
 router = APIRouter()
+
+
+class GeneratePlanRequest(BaseModel):
+    path_mode: str | None = None
+
+
+def _validate_path_mode_or_raise(path_mode: str | None) -> str:
+    try:
+        return validate_path_mode(path_mode)
+    except ValueError as exc:
+        raise AppError(code=422, message="INVALID_PATH_MODE") from exc
 
 
 def _dict_stages_to_list(stage_dict: dict) -> list[dict]:
@@ -90,6 +103,7 @@ def _build_confirmed_goal_result(project) -> dict[str, Any] | None:
 @router.post("/projects/{project_id}/plans")
 async def generate_plan(
     project_id: str,
+    req: GeneratePlanRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     project = await get_project(db, project_id)
@@ -107,11 +121,18 @@ async def generate_plan(
         "theory_weight": profile_row.theory_weight,
         "weekly_hours": profile_row.weekly_hours,
         "deadline_weeks": profile_row.deadline_weeks,
+        "path_mode_preference": profile_row.path_mode_preference,
+        "persona_label": profile_row.persona_label,
+        "persona_summary": profile_row.persona_summary,
+        "persona_evidence": profile_row.persona_evidence,
     }
+    requested_path_mode = req.path_mode if req and req.path_mode is not None else None
+    path_mode = _validate_path_mode_or_raise(
+        requested_path_mode or getattr(project, "path_mode", None)
+    )
+    project.path_mode = path_mode
 
-    pack = get_domain_pack_service(project.domain)
-    removed_nodes = await get_removed_node_ids(db, project_id)
-    removed_edges = await get_removed_edge_ids(db, project_id)
+    snapshot = await build_project_graph_snapshot(db, project_id, domain=project.domain)
 
     confirmed_goal_result = _build_confirmed_goal_result(project)
     try:
@@ -119,11 +140,16 @@ async def generate_plan(
             goal_text=project.goal_text,
             goal_type=project.goal_type,
             profile=profile,
-            pack=pack,
-            removed_node_ids=removed_nodes,
-            removed_edge_ids=removed_edges,
+            pack=snapshot,
+            removed_node_ids=snapshot.removed_node_ids,
+            removed_edge_ids=snapshot.removed_edge_ids,
             confirmed_goal_result=deepcopy(confirmed_goal_result) if confirmed_goal_result else None,
+            path_mode=path_mode,
         )
+    except ValueError as exc:
+        if str(exc) == "INVALID_PATH_MODE":
+            raise AppError(code=422, message="INVALID_PATH_MODE") from exc
+        raise
     except UnsupportedGoalTypeError as exc:
         raise AppError(code=409, message="GOAL_DEFAULT_TARGETS_UNAVAILABLE", details={"reason": str(exc)}) from exc
 
@@ -139,6 +165,7 @@ async def generate_plan(
         "version": path.version,
         "stages": _dict_stages_to_list(plan_result["stage_plan"]),
         "budget_status": plan_result["budget_summary"]["status"],
+        "path_mode": plan_result.get("path_mode", path_mode),
         "total_hours": plan_result["total_hours"],
         "node_count": plan_result["node_count"],
         "reinforced_ids": plan_result["reinforced_ids"],
@@ -170,6 +197,7 @@ async def get_latest_plan_endpoint(
         "version": path.version,
         "stages": stages,
         "budget_status": path.budget_status,
+        "path_mode": (audit or {}).get("path_mode", "standard"),
         "total_hours": path.total_hours,
         "audit": audit,
     }
@@ -195,10 +223,15 @@ async def get_explanation(
         raise NotFoundError("暂无审计数据")
 
     pack = get_domain_pack_service(project.domain)
+    nodes_by_id = dict(pack.nodes_by_id)
+    for node_id, lineage in (audit.get("overlay_lineage") or {}).get("nodes", {}).items():
+        node_snapshot = lineage.get("node_snapshot") if isinstance(lineage, dict) else None
+        if isinstance(node_snapshot, dict):
+            nodes_by_id[node_id] = node_snapshot
     response = build_explanation(
         audit,
-        pack.nodes_by_id,
-        pack.requires_rev_adj,
+        nodes_by_id,
+        audit.get("filtered_requires_rev_adj") or pack.requires_rev_adj,
         pack.scoring_config,
     )
     if polish:

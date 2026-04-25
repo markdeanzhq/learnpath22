@@ -82,6 +82,125 @@ def test_build_explanation_empty_audit():
     assert result.budget_explanation is None
 
 
+def test_build_explanation_mentions_persona_summary_when_available():
+    pack = get_domain_pack_service()
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        ordering_logs={
+            "ml_c09": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0},
+                "reasons": [],
+            }
+        },
+        budget_summary={
+            "total_hours": 8,
+            "weekly_hours": 10,
+            "estimated_weeks": 0.8,
+            "status": "feasible",
+            "suggestion": "",
+        },
+        profile_snapshot={
+            **_DEFAULT_PROFILE,
+            "persona_summary": "均衡推进型学习者：每周约 10 小时。",
+        },
+    )
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+
+    assert result.budget_explanation is not None
+    assert "学习者画像：均衡推进型学习者" in result.budget_explanation.suggestion
+
+
+def test_build_explanation_ignores_missing_persona_summary_for_legacy_audit():
+    pack = get_domain_pack_service()
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        ordering_logs={
+            "ml_c09": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0},
+                "reasons": [],
+            }
+        },
+        budget_summary={
+            "total_hours": 8,
+            "weekly_hours": 10,
+            "estimated_weeks": 0.8,
+            "status": "feasible",
+            "suggestion": "",
+        },
+        profile_snapshot=_DEFAULT_PROFILE,
+    )
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+
+    assert result.budget_explanation is not None
+    assert "学习者画像" not in result.budget_explanation.suggestion
+
+
+def test_build_explanation_mentions_compressed_exclusions():
+    pack = get_domain_pack_service()
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        ordering_logs={
+            "ml_c09": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0},
+                "reasons": [],
+            }
+        },
+        budget_summary={
+            "total_hours": 8,
+            "weekly_hours": 10,
+            "estimated_weeks": 0.8,
+            "status": "feasible",
+            "suggestion": "",
+        },
+    )
+    audit["path_mode"] = "compressed"
+    audit["excluded_nodes"] = [
+        {"node_id": "ml_a01", "exclusion_reason": "compressed_optional_reinforcement"}
+    ]
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+
+    assert result.budget_explanation is not None
+    assert "压缩模式已裁剪" in result.budget_explanation.suggestion
+
+
+def test_build_explanation_mentions_over_budget_required_closure():
+    pack = get_domain_pack_service()
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        ordering_logs={
+            "ml_c09": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0},
+                "reasons": [],
+            }
+        },
+        budget_summary={
+            "total_hours": 80,
+            "weekly_hours": 1,
+            "estimated_weeks": 80,
+            "status": "over_budget_required_closure",
+            "suggestion": "目标及硬前置依赖已超出预算，不能裁剪硬依赖链",
+        },
+    )
+    audit["path_mode"] = "compressed"
+    audit["budget_status"] = "over_budget_required_closure"
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+
+    assert result.budget_explanation is not None
+    assert "硬前置闭包已超过预算" in result.budget_explanation.suggestion
+
+
 def test_build_explanation_with_reinforcement():
     pack = get_domain_pack_service()
     audit = _make_audit(

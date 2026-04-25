@@ -54,14 +54,43 @@
         <el-table v-if="searchResults.length" :data="searchResults" size="small" stripe>
           <el-table-column label="标题" min-width="240">
             <template #default="{ row }">
-              <a :href="row.url" target="_blank" rel="noopener" class="search-link">{{ row.title }}</a>
+              <a v-if="safeExternalUrl(row.url)" :href="safeExternalUrl(row.url)" target="_blank" rel="noopener" class="search-link">{{ row.title }}</a>
+              <span v-else>{{ row.title }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="snippet" label="摘要" min-width="360" show-overflow-tooltip />
           <el-table-column label="相关度" width="100">
             <template #default="{ row }">{{ (row.score * 100).toFixed(0) }}%</template>
           </el-table-column>
+          <el-table-column label="Overlay" width="150">
+            <template #default="{ row, $index }">
+              <el-button link type="primary" :loading="overlayAddingUrl === row.url" @click="addResultToOverlay(row, $index)">
+                加入 overlay
+              </el-button>
+            </template>
+          </el-table-column>
         </el-table>
+
+        <section v-if="persistedResults.length" class="saved-section">
+          <div class="section-title">已保存结果</div>
+          <el-table :data="persistedResults" size="small" stripe>
+            <el-table-column label="标题" min-width="240">
+              <template #default="{ row }">
+                <a v-if="safeExternalUrl(row.url)" :href="safeExternalUrl(row.url)" target="_blank" rel="noopener" class="search-link">{{ row.title }}</a>
+              <span v-else>{{ row.title }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="query" label="搜索词" min-width="160" />
+            <el-table-column label="Overlay Source" width="170">
+              <template #default="{ row }">
+                <el-tag v-if="row.source_id" type="success" size="small">已桥接</el-tag>
+                <el-button v-else link type="primary" :loading="overlayAddingResultId === row.result_id" @click="bridgePersistedResult(row)">
+                  加入 overlay
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
 
         <el-empty v-else-if="searchDone" description="未找到相关资料" />
       </template>
@@ -76,10 +105,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { healthApi } from '@/api/modules/health'
-import { searchApi } from '@/api/modules/search'
+import { searchApi, type PersistedSearchResult, type SearchResultItem } from '@/api/modules/search'
 import { useProjectStore } from '@/stores/project'
 
 const router = useRouter()
@@ -87,16 +117,43 @@ const projectStore = useProjectStore()
 
 const projectId = computed(() => projectStore.currentProject?.id)
 const searchQuery = ref('')
-const searchResults = ref<any[]>([])
+const searchResults = ref<SearchResultItem[]>([])
+const persistedResults = ref<PersistedSearchResult[]>([])
 const searching = ref(false)
 const searchDone = ref(false)
 const configMissing = ref(false)
 const readinessWarning = ref('')
 const searchError = ref('')
+const overlayAddingUrl = ref('')
+const overlayAddingResultId = ref('')
 
 onMounted(async () => {
   await loadSearchConfig()
+  await loadPersistedResults()
 })
+
+watch(projectId, async (nextProjectId, previousProjectId) => {
+  if (nextProjectId === previousProjectId) return
+  searchResults.value = []
+  persistedResults.value = []
+  searchDone.value = false
+  searchError.value = ''
+  overlayAddingUrl.value = ''
+  overlayAddingResultId.value = ''
+  if (nextProjectId) {
+    await loadPersistedResults()
+  }
+})
+
+function safeExternalUrl(url?: string | null) {
+  if (!url) return ''
+  try {
+    const parsed = new URL(url)
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : ''
+  } catch {
+    return ''
+  }
+}
 
 async function loadSearchConfig() {
   try {
@@ -119,6 +176,14 @@ async function reloadSearchConfig() {
   await loadSearchConfig()
 }
 
+async function loadPersistedResults() {
+  if (!projectId.value) {
+    persistedResults.value = []
+    return
+  }
+  persistedResults.value = await searchApi.listPersistedResults(projectId.value)
+}
+
 async function doSearch() {
   if (!projectId.value || !searchQuery.value.trim() || configMissing.value || !!readinessWarning.value) return
   searching.value = true
@@ -137,6 +202,43 @@ async function doSearch() {
     }
   } finally {
     searching.value = false
+  }
+}
+
+async function bridgePersistedResult(result: PersistedSearchResult) {
+  if (!projectId.value) return
+  overlayAddingResultId.value = result.result_id
+  try {
+    const bridged = await searchApi.bridgeOverlaySources(projectId.value, [result.result_id])
+    const sourceId = bridged.source_ids[0]
+    result.source_id = sourceId
+    ElMessage.success(bridged.results[0]?.reused ? '已复用 overlay source' : '已加入 overlay source')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || '加入 overlay 失败')
+  } finally {
+    overlayAddingResultId.value = ''
+  }
+}
+
+async function addResultToOverlay(row: SearchResultItem, index: number) {
+  if (!projectId.value) return
+  overlayAddingUrl.value = row.url
+  try {
+    const saved = await searchApi.persistResult(projectId.value, {
+      query: searchQuery.value,
+      provider: row.provider || 'tavily',
+      url: row.url,
+      title: row.title,
+      snippet: row.snippet,
+      result_rank: index + 1,
+      is_selected: true,
+    })
+    await bridgePersistedResult(saved)
+    await loadPersistedResults()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || '保存搜索结果失败')
+  } finally {
+    overlayAddingUrl.value = ''
   }
 }
 </script>
@@ -164,6 +266,14 @@ async function doSearch() {
   margin: 12px 0 16px;
   font-size: 13px;
   color: #909399;
+}
+.saved-section {
+  margin-top: 20px;
+}
+.section-title {
+  margin-bottom: 10px;
+  font-weight: 600;
+  color: #303133;
 }
 .search-link {
   color: #409EFF;

@@ -11,7 +11,12 @@ from sqlalchemy import select
 from app.core.config import get_llm_config, replace_runtime_settings
 from app.db.sqlite import get_runtime_settings_map
 from app.main import create_app, lifespan
-from app.models.sqlite_models import RuntimeSetting
+from app.models.sqlite_models import (
+    ProjectOverlayExtractionSession,
+    ProjectOverlayNode,
+    ProjectOverlayProjectionState,
+    RuntimeSetting,
+)
 
 
 async def test_lifespan_degrades_when_neo4j_startup_fails():
@@ -325,6 +330,99 @@ async def test_health_readiness_uses_registry_default_domain_for_graph_sync(clie
     assert resp.status_code == 200
     assert resp.json()["services"]["graph_sync"]["domain"] == "demo_domain"
     sync_service.get_sync_status.assert_awaited_once_with("demo_domain")
+
+
+async def test_health_readiness_exposes_overlay_projection_error_without_blocking_sqlite_truth(client, db_session, monkeypatch):
+    from app.models.sqlite_models import LearningProject
+
+    db_session.add(
+        LearningProject(
+            id="project-drifted",
+            title="Project Drifted",
+            goal_text="系统学习机器学习基础",
+            goal_type="domain",
+            domain="machine_learning",
+        )
+    )
+    await db_session.flush()
+    session = ProjectOverlayExtractionSession(
+        project_id="project-drifted",
+        session_id="session-drifted",
+        session_status="validated",
+    )
+    db_session.add(session)
+    db_session.add(
+        ProjectOverlayNode(
+            project_id="project-drifted",
+            session_id="session-drifted",
+            node_id="po:project-drifted:n:test",
+            canonical_payload_hash="node-hash",
+            name="Overlay Node",
+            group="concept",
+            category="foundation",
+            difficulty_final=1,
+            importance_final=5,
+            estimated_hours=2,
+            req_math=1,
+            req_coding=1,
+            req_ml=1,
+            theory_weight=0.5,
+            practice_weight=0.5,
+        )
+    )
+    db_session.add(
+        ProjectOverlayProjectionState(
+            project_id="project-drifted",
+            status="error",
+            overlay_hash="overlay-hash",
+            error_message="projection failed",
+        )
+    )
+    await db_session.commit()
+    sync_service = SimpleNamespace(
+        get_sync_status=AsyncMock(
+            return_value={
+                "status": "ok",
+                "ready": True,
+                "in_sync": True,
+                "reason": "synced",
+                "domain": "demo_domain",
+                "version": "1.0.0",
+                "pack_hash": "pack-hash",
+                "main_graph_synced": True,
+                "entity_graph_synced": True,
+                "nodes": 1,
+                "edges": 0,
+            }
+        )
+    )
+    monkeypatch.setattr(
+        "app.api.v1.health.get_domain_pack_registry",
+        lambda: SimpleNamespace(resolve_domain=lambda: "demo_domain"),
+    )
+    monkeypatch.setattr("app.api.v1.health.get_graph_sync_service", lambda neo4j: sync_service)
+
+    with (
+        patch("app.api.v1.health.llm_health_check", AsyncMock(return_value={"status": "skipped"})),
+        patch("app.api.v1.health._check_neo4j", AsyncMock(return_value={"status": "ok", "ready": True})),
+        patch("app.api.v1.health._check_search", AsyncMock(return_value={"status": "skipped", "ready": False})),
+    ):
+        resp = await client.get("/api/v1/health/readiness")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["core_ready"] is False
+    assert body["services"]["graph_sync"]["ready"] is True
+    overlay_projection = body["services"]["graph_sync"]["overlay_projection"]
+    assert overlay_projection["status"] == "error"
+    assert overlay_projection["ready"] is False
+    assert overlay_projection["in_sync"] is False
+    assert overlay_projection["problem_projects"] == 1
+    assert overlay_projection["latest_project_id"] == "project-drifted"
+    assert overlay_projection["overlay_hash"]
+    assert overlay_projection["overlay_hash"] != "overlay-hash"
+    assert overlay_projection["projected_hash"] == "overlay-hash"
+    assert overlay_projection["reason"] == "projection failed"
 
 
 async def test_health_readiness_reports_blocked_graph_sync_with_registry_default_domain(client):

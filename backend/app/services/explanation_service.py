@@ -114,7 +114,7 @@ def build_explanation(
 ) -> ExplanationResponse:
     goal = audit.get("goal_result", {}) or {}
     target_ids: list[str] = list(goal.get("target_node_ids", []))
-    mode: str = goal.get("mode", "")
+    mode: str = audit.get("ordering_mode") or goal.get("mode", "")
     profile_snapshot: dict[str, Any] = audit.get("profile_snapshot") or {}
     requires_rev_adj = _resolve_requires_rev_adj(audit, legacy_requires_rev_adj)
     scoring_config = scoring_config or {}
@@ -345,10 +345,14 @@ def _build_budget_explanation(
 
     original_suggestion = bs.get("suggestion", "")
     prefix = _build_summary_prefix(audit, nodes_by_id, dep_chains, target_ids)
-    if prefix and original_suggestion:
-        suggestion = f"{prefix}\n{original_suggestion}"
-    else:
-        suggestion = prefix or original_suggestion
+    persona_note = _build_persona_note(audit)
+    path_mode_note = _build_path_mode_note(audit, nodes_by_id)
+    parts = [
+        part
+        for part in (prefix, persona_note, path_mode_note, original_suggestion)
+        if part
+    ]
+    suggestion = "\n".join(parts)
 
     return BudgetExplanation(
         total_hours=bs.get("total_hours", bs.get("planned_hours", 0)),
@@ -357,6 +361,37 @@ def _build_budget_explanation(
         status=bs.get("status", ""),
         suggestion=suggestion,
     )
+
+
+def _build_persona_note(audit: dict[str, Any]) -> str:
+    profile_snapshot = audit.get("profile_snapshot") or {}
+    summary = profile_snapshot.get("persona_summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return ""
+    return f"学习者画像：{summary.strip()}"
+
+
+def _build_path_mode_note(
+    audit: dict[str, Any],
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> str:
+    path_mode = audit.get("path_mode", "standard")
+    budget_status = audit.get("budget_status") or (audit.get("budget_summary") or {}).get("status")
+    excluded_nodes = audit.get("excluded_nodes") or []
+    if budget_status == "over_budget_required_closure":
+        return "当前目标的硬前置闭包已超过预算，系统保留完整依赖链，未裁剪必要知识点。"
+    if path_mode != "compressed" or not excluded_nodes:
+        return ""
+    names = [
+        _get_node_name(item.get("node_id", ""), nodes_by_id)
+        for item in excluded_nodes
+        if isinstance(item, dict) and item.get("node_id")
+    ]
+    if not names:
+        return "压缩模式已裁剪可选补强节点，仅保留目标与必要前置依赖。"
+    shown = "、".join(names[:3])
+    suffix = "等" if len(names) > 3 else ""
+    return f"压缩模式已裁剪 {shown}{suffix} 等可选补强节点，仅保留目标与必要前置依赖。"
 
 
 def _build_summary_prefix(

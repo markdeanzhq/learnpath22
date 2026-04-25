@@ -64,6 +64,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { SuccessFilled, Loading, RemoveFilled, MoreFilled } from '@element-plus/icons-vue'
+import { buildPathGraphQuery } from '@/api/modules/graph'
 import type { PathStage } from '@/api/modules/plan'
 import type { TrackingEventResponse } from '@/api/modules/tracking'
 
@@ -114,10 +115,7 @@ function handleLocateNode(nodeId: string) {
   emit('locateNode', nodeId)
   router.push({
     name: 'Knowledge',
-    query: {
-      nodeId,
-      scope: 'project',
-    },
+    query: buildPathGraphQuery(nodeId),
   })
 }
 </script>

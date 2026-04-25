@@ -4,7 +4,7 @@ import uuid
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -33,6 +33,7 @@ class LearningProject(Base):
     goal_type: Mapped[str] = mapped_column(String(20))
     domain: Mapped[str] = mapped_column(String(50), default="machine_learning")
     status: Mapped[str] = mapped_column(String(20), default="active")
+    path_mode: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, default="standard")
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -62,6 +63,10 @@ class LearnerProfile(Base):
     practice_weight: Mapped[float] = mapped_column(Float, default=0.5)
     weekly_hours: Mapped[float] = mapped_column(Float, default=10.0)
     deadline_weeks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    path_mode_preference: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    persona_label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    persona_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    persona_evidence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     raw_answers_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     collector_trace_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
@@ -155,6 +160,261 @@ class ResourceBinding(Base):
     source_type: Mapped[str] = mapped_column(String(20), default="manual")
     is_selected: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+
+class ProjectOverlaySource(Base):
+    __tablename__ = "project_overlay_sources"
+    __table_args__ = (
+        UniqueConstraint("project_id", "source_id", name="uq_overlay_sources_project_source"),
+    )
+
+    source_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    source_type: Mapped[str] = mapped_column(String(30))
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    raw_text_excerpt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    retrieved_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    quality_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectOverlayExtractionSession(Base):
+    __tablename__ = "project_overlay_extraction_sessions"
+    __table_args__ = (
+        UniqueConstraint("project_id", "session_id", name="uq_overlay_sessions_project_session"),
+    )
+
+    session_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    mode: Mapped[str] = mapped_column(String(30), default="default")
+    session_status: Mapped[str] = mapped_column(String(30), default="drafted")
+    source_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    warnings_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectOverlayNode(Base):
+    __tablename__ = "project_overlay_nodes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "session_id"],
+            ["project_overlay_extraction_sessions.project_id", "project_overlay_extraction_sessions.session_id"],
+        ),
+        UniqueConstraint("project_id", "node_id", name="uq_overlay_nodes_project_node"),
+    )
+
+    node_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    session_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    group: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    difficulty_final: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    importance_final: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    estimated_hours: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    req_math: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    req_coding: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    req_ml: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    theory_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    practice_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    validation_status: Mapped[str] = mapped_column(String(30), default="unchecked")
+    review_status: Mapped[str] = mapped_column(String(30), default="pending")
+    planning_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    promotion_status: Mapped[str] = mapped_column(String(30), default="not_promoted")
+    source_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provenance_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duplicate_candidates_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    legality_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    validation_errors_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    canonical_payload_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectOverlayEdge(Base):
+    __tablename__ = "project_overlay_edges"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "session_id"],
+            ["project_overlay_extraction_sessions.project_id", "project_overlay_extraction_sessions.session_id"],
+        ),
+        UniqueConstraint("project_id", "edge_id", name="uq_overlay_edges_project_edge"),
+    )
+
+    edge_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    session_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    source_node_id: Mapped[str] = mapped_column(Text)
+    target_node_id: Mapped[str] = mapped_column(Text)
+    relation_type: Mapped[str] = mapped_column(String(30))
+    validation_status: Mapped[str] = mapped_column(String(30), default="unchecked")
+    review_status: Mapped[str] = mapped_column(String(30), default="pending")
+    planning_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    promotion_status: Mapped[str] = mapped_column(String(30), default="not_promoted")
+    source_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provenance_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duplicate_candidates_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    legality_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    validation_errors_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    canonical_payload_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectOverlayResource(Base):
+    __tablename__ = "project_overlay_resources"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "session_id"],
+            ["project_overlay_extraction_sessions.project_id", "project_overlay_extraction_sessions.session_id"],
+        ),
+        UniqueConstraint("project_id", "resource_id", name="uq_overlay_resources_project_resource"),
+    )
+
+    resource_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    session_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resource_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    validation_status: Mapped[str] = mapped_column(String(30), default="unchecked")
+    review_status: Mapped[str] = mapped_column(String(30), default="pending")
+    planning_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    promotion_status: Mapped[str] = mapped_column(String(30), default="not_promoted")
+    source_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provenance_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duplicate_candidates_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    validation_errors_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    canonical_payload_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectOverlayResourceBinding(Base):
+    __tablename__ = "project_overlay_resource_bindings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "resource_id"],
+            ["project_overlay_resources.project_id", "project_overlay_resources.resource_id"],
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "source_result_id"],
+            ["persisted_search_results.project_id", "persisted_search_results.result_id"],
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    resource_id: Mapped[str] = mapped_column(Text)
+    target_type: Mapped[str] = mapped_column(String(30))
+    target_id: Mapped[str] = mapped_column(Text)
+    source_result_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    binding_source: Mapped[str] = mapped_column(String(30), default="overlay")
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectOverlayProjectionState(Base):
+    __tablename__ = "project_overlay_projection_states"
+    __table_args__ = (
+        UniqueConstraint("project_id", name="uq_overlay_projection_state_project"),
+    )
+
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), default="never_synced")
+    overlay_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    projected_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectOverlayPromotionBatch(Base):
+    __tablename__ = "project_overlay_promotion_batches"
+    __table_args__ = (
+        UniqueConstraint("project_id", "batch_id", name="uq_overlay_promotion_batches_project_batch"),
+    )
+
+    batch_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    status: Mapped[str] = mapped_column(String(30), default="previewed")
+    requested_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    baseline_pack_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    resulting_pack_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    preview_report_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectOverlayPromotionItem(Base):
+    __tablename__ = "project_overlay_promotion_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "batch_id"],
+            ["project_overlay_promotion_batches.project_id", "project_overlay_promotion_batches.batch_id"],
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "source_session_id"],
+            ["project_overlay_extraction_sessions.project_id", "project_overlay_extraction_sessions.session_id"],
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    batch_id: Mapped[str] = mapped_column(String(36))
+    element_type: Mapped[str] = mapped_column(String(30))
+    element_id: Mapped[str] = mapped_column(Text)
+    source_session_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    source_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    provenance_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PersistedSearchResult(Base):
+    __tablename__ = "persisted_search_results"
+    __table_args__ = (
+        UniqueConstraint("project_id", "result_id", name="uq_persisted_search_results_project_result"),
+        ForeignKeyConstraint(
+            ["project_id", "source_id"],
+            ["project_overlay_sources.project_id", "project_overlay_sources.source_id"],
+        ),
+    )
+
+    result_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    source_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    query: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(String(50))
+    url: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    retrieved_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    quality_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    is_selected: Mapped[bool] = mapped_column(Boolean, default=True)
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def _naive_utc_now() -> datetime:

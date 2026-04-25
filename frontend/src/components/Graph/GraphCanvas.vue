@@ -22,7 +22,10 @@ import cytoscape from 'cytoscape'
 import ReviewContextMenu from './ReviewContextMenu.vue'
 import { CATEGORY_COLORS } from './graphMeta'
 
-const REVIEW_ACTIONABLE_STATUSES = new Set(['pending', 'confirmed', 'removed'])
+const BASELINE_REVIEW_STATUSES = new Set(['pending', 'confirmed', 'removed'])
+const OVERLAY_REVIEW_STATUSES = new Set(['pending', 'confirmed', 'removed', 'rejected'])
+const REVIEW_ACTIONABLE_STATUSES = OVERLAY_REVIEW_STATUSES
+const UNKNOWN_LIFECYCLE = 'unknown'
 
 const props = withDefaults(defineProps<{
   elements: any[]
@@ -163,7 +166,28 @@ const cytoscapeStyle: any[] = [
     },
   },
   {
-    selector: 'node[review_status = "removed"]',
+    selector: 'node[origin = "overlay"]',
+    style: {
+      'border-style': 'dashed',
+      'border-color': '#E6A23C',
+      'border-width': 4,
+    },
+  },
+  {
+    selector: 'node[origin = "overlay"][validation_status = "unknown"], node[origin = "overlay"][review_status = "unknown"]',
+    style: {
+      'border-color': '#909399',
+      'border-width': 5,
+    },
+  },
+  {
+    selector: 'node[origin = "overlay"][planning_enabled = 0], node[origin = "overlay"][planning_enabled = false]',
+    style: {
+      'opacity': 0.45,
+    },
+  },
+  {
+    selector: 'node[review_status = "removed"], node[review_status = "rejected"]',
     style: {
       'background-color': '#C0C4CC',
       'border-color': '#909399',
@@ -181,7 +205,29 @@ const cytoscapeStyle: any[] = [
     },
   },
   {
-    selector: 'edge[review_status = "removed"]',
+    selector: 'edge[origin = "overlay"]',
+    style: {
+      'line-style': 'dotted',
+      'line-color': '#E6A23C',
+      'target-arrow-color': '#E6A23C',
+    },
+  },
+  {
+    selector: 'edge[origin = "overlay"][validation_status = "unknown"], edge[origin = "overlay"][review_status = "unknown"]',
+    style: {
+      'line-color': '#909399',
+      'target-arrow-color': '#909399',
+      'width': 4,
+    },
+  },
+  {
+    selector: 'edge[origin = "overlay"][planning_enabled = 0], edge[origin = "overlay"][planning_enabled = false]',
+    style: {
+      'opacity': 0.35,
+    },
+  },
+  {
+    selector: 'edge[review_status = "removed"], edge[review_status = "rejected"]',
     style: {
       'line-color': '#C0C4CC',
       'target-arrow-color': '#C0C4CC',
@@ -232,7 +278,39 @@ function getLayoutConfig(layoutName: string) {
 }
 
 function getReviewStatus(status?: string) {
-  return REVIEW_ACTIONABLE_STATUSES.has(status || '') ? status : 'pending'
+  return REVIEW_ACTIONABLE_STATUSES.has(status || '') ? status : UNKNOWN_LIFECYCLE
+}
+
+function getElementOrigin(data?: Record<string, any> | null) {
+  return data && Object.prototype.hasOwnProperty.call(data, 'origin') ? data.origin : 'unknown'
+}
+
+function hasKnownOrigin(data?: Record<string, any> | null) {
+  const origin = getElementOrigin(data)
+  return origin === 'baseline' || origin === 'overlay'
+}
+
+function isKnownReviewStatusForOrigin(data?: Record<string, any> | null) {
+  const origin = getElementOrigin(data)
+  const status = data?.review_status
+  if (origin === 'overlay') return OVERLAY_REVIEW_STATUSES.has(status)
+  if (origin === 'baseline') return BASELINE_REVIEW_STATUSES.has(status)
+  return false
+}
+
+function canEmitReview(data: Record<string, any> | null | undefined, status: string) {
+  const origin = getElementOrigin(data)
+  const statusAllowed = origin === 'overlay'
+    ? OVERLAY_REVIEW_STATUSES.has(status)
+    : origin === 'baseline' && BASELINE_REVIEW_STATUSES.has(status)
+  return hasKnownOrigin(data) && isKnownReviewStatusForOrigin(data) && statusAllowed
+}
+
+function normalizeLifecycleValue(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return UNKNOWN_LIFECYCLE
+  }
+  return value
 }
 
 function getSingleMenuElement(target: any, targetType?: MenuTargetType | null) {
@@ -361,6 +439,38 @@ function openContextMenu(evt: any, targetType: MenuTargetType) {
   }
 }
 
+function normalizeElementLifecycleData(elements: any[]) {
+  return elements.map((element) => ({
+    ...element,
+    data: {
+      ...element.data,
+      origin: getElementOrigin(element.data),
+      validation_status: normalizeLifecycleValue(element.data?.validation_status),
+      review_status: getReviewStatus(element.data?.review_status),
+      promotion_status: normalizeLifecycleValue(element.data?.promotion_status),
+    },
+  }))
+}
+
+function applyElementDataUpdates(nextElements: any[]) {
+  if (!cy) return false
+
+  const nextIds = new Set(nextElements.map((element) => element.data?.id).filter(Boolean))
+  const currentIds = new Set(cy.elements().map((element: any) => element.id()))
+  if (nextIds.size !== currentIds.size) return false
+  for (const id of nextIds) {
+    if (!currentIds.has(id)) return false
+  }
+
+  nextElements.forEach((element) => {
+    const target = cy.getElementById(element.data.id)
+    if (target.length) {
+      target.data(element.data)
+    }
+  })
+  return true
+}
+
 function initCytoscape() {
   if (!containerRef.value || !cyContainerRef.value || !props.elements.length) return
   if (cy) {
@@ -371,7 +481,7 @@ function initCytoscape() {
 
   cy = cytoscape({
     container: cyContainerRef.value,
-    elements: props.elements,
+    elements: normalizeElementLifecycleData(props.elements),
     style: cytoscapeStyle,
     layout: getLayoutConfig(props.layout),
     minZoom: 0.3,
@@ -471,7 +581,7 @@ function setEdgeReviewStatus(edgeId: string, status: string) {
 
 function handleMenuReview(status: string) {
   const { targetType, targetData } = menuState.value
-  if (!targetType || !targetData?.id) return
+  if (!targetType || !targetData?.id || !canEmitReview(targetData, status)) return
 
   if (targetType === 'node') {
     emit('reviewNode', targetData.id, status)
@@ -500,8 +610,13 @@ onUnmounted(() => {
   }
 })
 
-watch(() => props.elements, () => {
-  nextTick(() => initCytoscape())
+watch(() => props.elements, async () => {
+  const nextElements = normalizeElementLifecycleData(props.elements)
+  if (applyElementDataUpdates(nextElements)) {
+    return
+  }
+  await nextTick()
+  initCytoscape()
 }, { deep: true })
 
 watch(() => props.layout, (newLayout) => {

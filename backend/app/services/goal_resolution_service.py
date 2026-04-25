@@ -9,13 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError
 from app.models.sqlite_models import GoalResolutionSession
-from app.repositories.graph_review_repository import get_removed_edge_ids, get_removed_node_ids
 from app.services.domain_pack_service import (
     DomainPackContract,
     get_domain_pack_registry,
     get_domain_pack_service,
 )
 from app.services.goal_service import UnsupportedGoalTypeError, resolve_goal_candidates
+from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 
 
 def _build_goal_text_hash(goal_text: str) -> str:
@@ -62,29 +62,11 @@ def _validate_requested_goal_type(
         raise AppError(code=422, message="INVALID_GOAL_TYPE")
 
 
-def _build_graph_hash(
-    pack_hash: str,
-    removed_node_ids: set[str] | list[str],
-    removed_edge_ids: set[str] | list[str],
-) -> str:
-    payload = json.dumps(
-        {
-            "pack_hash": pack_hash,
-            "removed_node_ids": sorted(removed_node_ids),
-            "removed_edge_ids": sorted(removed_edge_ids),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 async def build_project_graph_hash(db: AsyncSession, project_id: str, pack_hash: str) -> str:
-    removed_node_ids = await get_removed_node_ids(db, project_id)
-    removed_edge_ids = await get_removed_edge_ids(db, project_id)
-    return _build_graph_hash(pack_hash, removed_node_ids, removed_edge_ids)
-
+    snapshot = await build_project_graph_snapshot(db, project_id)
+    if snapshot.pack_hash != pack_hash:
+        raise AppError(code=409, message="STALE_RESOLUTION_SESSION")
+    return snapshot.project_graph_hash
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -103,6 +85,8 @@ async def create_goal_resolution_preview(
     project_id: str | None = None,
 ) -> dict[str, object]:
     pack = _resolve_pack(domain, expected_domain=expected_domain)
+    if project_id is not None:
+        pack = await build_project_graph_snapshot(db, project_id, domain=pack.domain, baseline_pack=pack)
     assert pack.contract is not None
     _validate_requested_goal_type(requested_goal_type, pack.contract)
 
@@ -130,9 +114,8 @@ async def create_goal_resolution_preview(
         )
 
     recommended_candidate_id = str(result.get("recommended_candidate_id") or candidates[0]["candidate_id"])
-    graph_hash = None
-    if project_id is not None:
-        graph_hash = await build_project_graph_hash(db, project_id, pack.contract.pack_hash)
+    graph_hash = pack.project_graph_hash if project_id is not None else None
+    session_pack_hash = pack.pack_hash if project_id is not None else pack.contract.pack_hash
     session = GoalResolutionSession(
         project_id=project_id,
         goal_text_hash=_build_goal_text_hash(goal_text),
@@ -141,7 +124,7 @@ async def create_goal_resolution_preview(
         auto_detected_goal_type=result["auto_detected_goal_type"],
         effective_goal_type=result["effective_goal_type"],
         pack_version=str(pack.manifest.get("version", "unknown")),
-        pack_hash=pack.contract.pack_hash,
+        pack_hash=session_pack_hash,
         graph_hash=graph_hash,
         candidates_json=json.dumps(candidates, ensure_ascii=False, sort_keys=True),
         recommended_candidate_id=recommended_candidate_id,

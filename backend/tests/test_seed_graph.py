@@ -119,6 +119,8 @@ async def test_seed_graph_passes_stage_and_resource_payloads_into_write_transact
             "order": 1,
             "description": "foundation",
             "category_keys": ["foundation"],
+            "owner": "domain_pack",
+            "origin": "baseline",
         },
         {
             "id": "stage_core",
@@ -127,6 +129,8 @@ async def test_seed_graph_passes_stage_and_resource_payloads_into_write_transact
             "order": 2,
             "description": "core",
             "category_keys": ["algorithm"],
+            "owner": "domain_pack",
+            "origin": "baseline",
         },
     ]
 
@@ -138,6 +142,8 @@ async def test_seed_graph_passes_stage_and_resource_payloads_into_write_transact
             "title": "监督学习建模流程卡片",
             "resource_type": "workflow_guide",
             "description": "workflow",
+            "owner": "domain_pack",
+            "origin": "baseline",
         }
     ]
 

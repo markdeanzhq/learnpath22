@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     RUNTIME_SECRETS_MASTER_KEY: str = ""
 
     LLM_EXPLANATION_POLISH: bool = False
+    DOMAIN_PACK_PROMOTION_ENABLED: bool = False
+    DOMAIN_PACK_PROMOTION_ADMIN_SECRET: str = ""
 
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
@@ -301,6 +303,14 @@ def get_llm_polish_enabled() -> bool:
         return parse_runtime_bool(override)
     except ValueError:
         return settings.LLM_EXPLANATION_POLISH
+
+
+def get_domain_pack_promotion_config() -> dict[str, str | bool]:
+    settings = get_settings()
+    return {
+        "enabled": settings.DOMAIN_PACK_PROMOTION_ENABLED,
+        "admin_secret": settings.DOMAIN_PACK_PROMOTION_ADMIN_SECRET,
+    }
 
 
 def get_environment_fingerprint() -> dict[str, Any]:

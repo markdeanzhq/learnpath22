@@ -31,6 +31,7 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { buildPathGraphQuery } from '@/api/modules/graph'
 import type { PathStage } from '@/api/modules/plan'
 import TaskCard from './TaskCard.vue'
 
@@ -46,10 +47,7 @@ function handleLocateNode(nodeId: string) {
   emit('locateNode', nodeId)
   router.push({
     name: 'Knowledge',
-    query: {
-      nodeId,
-      scope: 'project',
-    },
+    query: buildPathGraphQuery(nodeId),
   })
 }
 

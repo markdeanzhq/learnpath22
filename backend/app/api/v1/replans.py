@@ -24,7 +24,11 @@ def _build_node_name_map(stage_plan: dict[str, list[dict]]) -> dict[str, str]:
     }
 
 
-def _build_diff_details(diff: dict | None, node_name_map: dict[str, str], pack_node_names: dict[str, str]) -> dict | None:
+def _build_diff_details(
+    diff: dict | None,
+    node_name_map: dict[str, str],
+    pack_node_names: dict[str, str],
+) -> dict | None:
     if not diff:
         return None
 
@@ -54,23 +58,31 @@ async def trigger_replan(
         raise NotFoundError("项目不存在")
 
     try:
-        result = await replan(db, project_id, mode=req.mode)
+        if req.path_mode is None:
+            result = await replan(db, project_id, mode=req.mode)
+        else:
+            result = await replan(db, project_id, mode=req.mode, path_mode=req.path_mode)
     except ValueError as e:
-        raise AppError(code=400, message=str(e))
+        if str(e) == "INVALID_PATH_MODE":
+            raise AppError(code=422, message="INVALID_PATH_MODE") from e
+        raise AppError(code=400, message=str(e)) from e
 
     plan_result = result["plan_result"]
     stages = _dict_stages_to_list(plan_result["stage_plan"])
     node_name_map = _build_node_name_map(plan_result["stage_plan"])
-    pack = get_domain_pack_service(project.domain)
+    snapshot = result.get("snapshot")
     diff = result.get("diff")
+    nodes_by_id = snapshot.nodes_by_id if snapshot is not None else get_domain_pack_service(project.domain).nodes_by_id
+    snapshot_node_names = {nid: node["name"] for nid, node in nodes_by_id.items()}
     return {
         "id": result["path_id"],
         "version": result["version"],
         "mode": result["mode"],
         "stages": stages,
         "budget_status": plan_result["budget_summary"]["status"],
+        "path_mode": plan_result.get("path_mode", req.path_mode or getattr(project, "path_mode", "standard")),
         "total_hours": plan_result["total_hours"],
         "diff": diff,
-        "diff_details": _build_diff_details(diff, node_name_map, {nid: node["name"] for nid, node in pack.nodes_by_id.items()}),
+        "diff_details": _build_diff_details(diff, node_name_map, snapshot_node_names),
         "reason": req.reason,
     }

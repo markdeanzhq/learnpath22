@@ -15,6 +15,7 @@ from app.schemas.profile import (
     SubmitProfileRequest,
 )
 from app.services.profile_collector_service import (
+    build_persona_fields,
     get_collector_questions,
     map_answers_to_profile,
 )
@@ -31,6 +32,7 @@ async def submit_profile(
     project = await get_project(db, project_id)
     if not project:
         raise NotFoundError("项目不存在")
+    persona = build_persona_fields(req.model_dump())
     profile = await create_profile(
         db,
         project_id=project_id,
@@ -41,6 +43,10 @@ async def submit_profile(
         practice_weight=req.practice_weight,
         weekly_hours=req.weekly_hours,
         deadline_weeks=req.deadline_weeks,
+        path_mode_preference=req.path_mode_preference,
+        persona_label=req.persona_label or persona["persona_label"],
+        persona_summary=req.persona_summary or persona["persona_summary"],
+        persona_evidence=req.persona_evidence or persona["persona_evidence"],
         raw_answers_json=req.raw_answers_json,
         collector_trace_json=req.collector_trace_json,
     )
@@ -90,6 +96,7 @@ async def submit_answers(
 
     mapped = map_answers_to_profile([a.model_dump() for a in req.answers])
     collector_source = req.source if req.source in {"llm", "static"} else "unknown"
+    persona = build_persona_fields(mapped)
     profile = await create_profile(
         db,
         project_id=project_id,
@@ -99,6 +106,11 @@ async def submit_answers(
         theory_weight=mapped.get("theory_weight", 0.5),
         practice_weight=mapped.get("practice_weight", 0.5),
         weekly_hours=mapped.get("weekly_hours", 10.0),
+        deadline_weeks=mapped.get("deadline_weeks"),
+        path_mode_preference=mapped.get("path_mode_preference"),
+        persona_label=persona["persona_label"],
+        persona_summary=persona["persona_summary"],
+        persona_evidence=persona["persona_evidence"],
         raw_answers_json=json.dumps([a.model_dump() for a in req.answers], ensure_ascii=False),
         collector_trace_json=json.dumps({"source": collector_source, "mapped": mapped}, ensure_ascii=False),
     )

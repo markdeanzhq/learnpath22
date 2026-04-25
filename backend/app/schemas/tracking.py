@@ -35,3 +35,4 @@ class TrackingSummary(BaseModel):
 class ReplanRequest(BaseModel):
     reason: str = "画像更新后重规划"
     mode: str = Field(default="profile_update", pattern="^(progress_aware|profile_update)$")
+    path_mode: str | None = None

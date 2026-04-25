@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import app.services.goal_resolution_service as goal_resolution_service
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.models.sqlite_models import (
     GoalResolutionSession,
@@ -54,11 +54,48 @@ async def test_create_project_from_resolution_session(client, db_session):
     assert data["goal_resolution"]["requested_goal_type"] is None
     assert data["goal_resolution"]["auto_detected_goal_type"] == preview["auto_detected_goal_type"]
     assert data["goal_resolution"]["confirmed_target_node_ids"] == preview["candidates"][0]["target_node_ids"]
+    assert data["path_mode"] == "standard"
 
     session = await db_session.get(GoalResolutionSession, preview["session_id"])
     assert session is not None
     assert session.project_id == data["id"]
     assert session.status == "confirmed"
+
+
+async def test_create_project_accepts_path_mode_preference(client):
+    preview = await _create_preview_session(client)
+
+    resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "ML压缩路径",
+            "goal_text": "我想系统学习机器学习基础",
+            "resolution_session_id": preview["session_id"],
+            "selected_candidate_id": preview["recommended_candidate_id"],
+            "path_mode": "compressed",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["path_mode"] == "compressed"
+
+
+async def test_create_project_rejects_invalid_path_mode(client):
+    preview = await _create_preview_session(client)
+
+    resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "ML入门",
+            "goal_text": "我想系统学习机器学习基础",
+            "resolution_session_id": preview["session_id"],
+            "selected_candidate_id": preview["recommended_candidate_id"],
+            "path_mode": "unknown",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "INVALID_PATH_MODE"
 
 
 async def test_create_project_rejects_invalid_resolution_candidate(client):
@@ -246,6 +283,76 @@ async def test_list_projects(client, project):
     data = resp.json()
     assert len(data) >= 1
     assert any(p["id"] == project["id"] for p in data)
+
+
+async def test_list_projects_normalizes_legacy_null_path_mode(client, db_session, project):
+    await db_session.execute(
+        text("UPDATE learning_projects SET path_mode = NULL WHERE id = :project_id"),
+        {"project_id": project["id"]},
+    )
+    await db_session.commit()
+
+    resp = await client.get("/api/v1/projects")
+
+    assert resp.status_code == 200
+    listed = next(item for item in resp.json() if item["id"] == project["id"])
+    assert listed["path_mode"] == "standard"
+
+
+async def test_upgrade_learning_projects_schema_adds_path_mode_without_invalid_default(client, db_session):
+    from app.db.init_db import upgrade_learning_projects_schema
+
+    await db_session.execute(text("DROP TABLE learning_projects"))
+    await db_session.execute(
+        text(
+            """
+            CREATE TABLE learning_projects (
+                id VARCHAR(36) PRIMARY KEY,
+                title VARCHAR(200),
+                goal_text TEXT,
+                goal_type VARCHAR(20),
+                domain VARCHAR(50),
+                status VARCHAR(20),
+                created_at DATETIME,
+                updated_at DATETIME
+            )
+            """
+        )
+    )
+    await db_session.commit()
+
+    await upgrade_learning_projects_schema(await db_session.connection())
+    await db_session.commit()
+
+    columns = (
+        await db_session.execute(text("PRAGMA table_info(learning_projects)"))
+    ).mappings().all()
+    column_names = {column["name"] for column in columns}
+    path_mode_column = next(column for column in columns if column["name"] == "path_mode")
+
+    assert "path_mode" in column_names
+    assert path_mode_column["dflt_value"] == "'standard'"
+
+
+async def test_upgrade_learning_projects_schema_backfills_null_path_mode(client, db_session, project):
+    from app.db.init_db import upgrade_learning_projects_schema
+
+    await db_session.execute(
+        text("UPDATE learning_projects SET path_mode = NULL WHERE id = :project_id"),
+        {"project_id": project["id"]},
+    )
+    await db_session.commit()
+
+    await upgrade_learning_projects_schema(await db_session.connection())
+    await db_session.commit()
+
+    value = (
+        await db_session.execute(
+            text("SELECT path_mode FROM learning_projects WHERE id = :project_id"),
+            {"project_id": project["id"]},
+        )
+    ).scalar_one()
+    assert value == "standard"
 
 
 async def test_delete_project_success(client, db_session, project_with_dependents):

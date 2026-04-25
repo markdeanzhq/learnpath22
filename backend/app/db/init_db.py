@@ -12,6 +12,7 @@ from app.services.goal_service import identify_goal_type, resolve_goal
 
 # Columns to add to learning_projects for confirmed-resolution fields (task 1.2)
 _RESOLUTION_COLUMNS = [
+    ("path_mode", "VARCHAR(30) DEFAULT 'standard'"),
     ("requested_goal_type", "VARCHAR(30)"),
     ("auto_detected_goal_type", "VARCHAR(30)"),
     ("confirmed_target_node_ids_json", "TEXT"),
@@ -25,42 +26,141 @@ _RESOLUTION_COLUMNS = [
     ("resolution_confirmed_at", "DATETIME"),
 ]
 
+_PROFILE_COLUMNS = [
+    ("path_mode_preference", "VARCHAR(30)"),
+    ("persona_label", "VARCHAR(100)"),
+    ("persona_summary", "TEXT"),
+    ("persona_evidence", "TEXT"),
+]
+
 _SESSION_COLUMNS = [
     ("domain", "VARCHAR(50)"),
     ("pack_hash", "VARCHAR(64)"),
     ("graph_hash", "VARCHAR(64)"),
 ]
 
+_OVERLAY_SOURCE_COLUMNS = [
+    ("summary", "TEXT"),
+    ("quality_status", "VARCHAR(30)"),
+]
+
+_OVERLAY_BINDING_COLUMNS = [
+    ("source_result_id", "VARCHAR(36)"),
+]
+
+_PERSISTED_SEARCH_RESULT_COLUMNS = [
+    ("source_id", "VARCHAR(36)"),
+]
+
+
+def _is_duplicate_column_error(exc: OperationalError) -> bool:
+    return "duplicate column name" in str(exc).lower()
+
+
+async def _add_column_if_missing(
+    conn: AsyncConnection,
+    *,
+    table_name: str,
+    column_name: str,
+    column_type: str,
+) -> None:
+    try:
+        await conn.execute(
+            text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+        )
+    except OperationalError as exc:
+        if _is_duplicate_column_error(exc):
+            return
+        raise
+
+
+_OVERLAY_INDEXES = [
+    ("idx_project_overlay_sources_project_id", "project_overlay_sources", "project_id"),
+    ("idx_project_overlay_extraction_sessions_project_id", "project_overlay_extraction_sessions", "project_id"),
+    ("idx_project_overlay_nodes_project_id", "project_overlay_nodes", "project_id"),
+    ("idx_project_overlay_nodes_session_id", "project_overlay_nodes", "session_id"),
+    ("idx_project_overlay_edges_project_id", "project_overlay_edges", "project_id"),
+    ("idx_project_overlay_edges_session_id", "project_overlay_edges", "session_id"),
+    ("idx_project_overlay_resources_project_id", "project_overlay_resources", "project_id"),
+    ("idx_project_overlay_resources_session_id", "project_overlay_resources", "session_id"),
+    ("idx_project_overlay_resource_bindings_project_id", "project_overlay_resource_bindings", "project_id"),
+    ("idx_project_overlay_resource_bindings_resource_id", "project_overlay_resource_bindings", "resource_id"),
+    ("idx_project_overlay_resource_bindings_source_result_id", "project_overlay_resource_bindings", "source_result_id"),
+    ("idx_project_overlay_projection_states_project_id", "project_overlay_projection_states", "project_id"),
+    ("idx_project_overlay_promotion_batches_project_id", "project_overlay_promotion_batches", "project_id"),
+    ("idx_project_overlay_promotion_items_project_id", "project_overlay_promotion_items", "project_id"),
+    ("idx_project_overlay_promotion_items_batch_id", "project_overlay_promotion_items", "batch_id"),
+    ("idx_persisted_search_results_project_id", "persisted_search_results", "project_id"),
+    ("idx_persisted_search_results_source_id", "persisted_search_results", "source_id"),
+    ("idx_persisted_search_results_result_id", "persisted_search_results", "result_id"),
+]
+
 
 async def upgrade_learning_projects_schema(conn: AsyncConnection) -> None:
-    """Add confirmed-resolution columns to learning_projects if they don't exist yet.
-
-    Idempotent: safe to call multiple times; existing columns are skipped silently.
-    Accepts an AsyncConnection (e.g. from engine.begin()) so callers can manage
-    the transaction boundary themselves.
-    """
     for col_name, col_type in _RESOLUTION_COLUMNS:
-        try:
-            await conn.execute(
-                text(
-                    f"ALTER TABLE learning_projects ADD COLUMN {col_name} {col_type} DEFAULT NULL"
-                )
-            )
-        except OperationalError:
-            # Column already exists — SQLite raises OperationalError in this case
-            pass
+        await _add_column_if_missing(
+            conn,
+            table_name="learning_projects",
+            column_name=col_name,
+            column_type=col_type,
+        )
+    await conn.execute(
+        text("UPDATE learning_projects SET path_mode = 'standard' WHERE path_mode IS NULL")
+    )
+
+
+async def upgrade_learner_profiles_schema(conn: AsyncConnection) -> None:
+    for col_name, col_type in _PROFILE_COLUMNS:
+        await _add_column_if_missing(
+            conn,
+            table_name="learner_profiles",
+            column_name=col_name,
+            column_type=col_type,
+        )
 
 
 async def upgrade_goal_resolution_sessions_schema(conn: AsyncConnection) -> None:
     for col_name, col_type in _SESSION_COLUMNS:
-        try:
-            await conn.execute(
-                text(
-                    f"ALTER TABLE goal_resolution_sessions ADD COLUMN {col_name} {col_type} DEFAULT NULL"
-                )
+        await _add_column_if_missing(
+            conn,
+            table_name="goal_resolution_sessions",
+            column_name=col_name,
+            column_type=col_type,
+        )
+
+
+async def upgrade_project_overlay_schema(conn: AsyncConnection) -> None:
+    for col_name, col_type in _OVERLAY_SOURCE_COLUMNS:
+        await _add_column_if_missing(
+            conn,
+            table_name="project_overlay_sources",
+            column_name=col_name,
+            column_type=col_type,
+        )
+    for col_name, col_type in _OVERLAY_BINDING_COLUMNS:
+        await _add_column_if_missing(
+            conn,
+            table_name="project_overlay_resource_bindings",
+            column_name=col_name,
+            column_type=col_type,
+        )
+    for col_name, col_type in _PERSISTED_SEARCH_RESULT_COLUMNS:
+        await _add_column_if_missing(
+            conn,
+            table_name="persisted_search_results",
+            column_name=col_name,
+            column_type=col_type,
+        )
+
+
+async def create_project_overlay_indexes(conn: AsyncConnection) -> None:
+    for index_name, table_name, column_name in _OVERLAY_INDEXES:
+        await conn.execute(
+            text(
+                f"CREATE INDEX IF NOT EXISTS {index_name} "
+                f"ON {table_name} ({column_name})"
             )
-        except OperationalError:
-            pass
+        )
 
 
 async def cleanup_expired_sessions(db: AsyncSession) -> int:
@@ -161,7 +261,10 @@ async def init_sqlite():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await upgrade_learning_projects_schema(conn)
+        await upgrade_learner_profiles_schema(conn)
         await upgrade_goal_resolution_sessions_schema(conn)
+        await upgrade_project_overlay_schema(conn)
+        await create_project_overlay_indexes(conn)
 
     async with async_session() as db:
         await cleanup_expired_sessions(db)

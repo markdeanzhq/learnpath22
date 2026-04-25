@@ -19,10 +19,10 @@ from app.repositories.plan_repository import get_latest_plan, get_plan_version_c
 from app.repositories.profile_repository import get_latest_profile
 from app.repositories.project_repository import get_project
 from app.repositories.tracking_repository import get_latest_event_per_node
-from app.repositories.graph_review_repository import get_removed_node_ids, get_removed_edge_ids
-from app.services.domain_pack_service import get_domain_pack_service
+from app.schemas.project import validate_path_mode
 from app.services.goal_service import UnsupportedGoalTypeError
 from app.services.planner_service import build_filtered_graph, plan_with_profile
+from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 
 
 def _profile_row_to_dict(profile_row: Any) -> dict[str, Any]:
@@ -33,6 +33,10 @@ def _profile_row_to_dict(profile_row: Any) -> dict[str, Any]:
         "theory_weight": profile_row.theory_weight,
         "weekly_hours": profile_row.weekly_hours,
         "deadline_weeks": profile_row.deadline_weeks,
+        "path_mode_preference": profile_row.path_mode_preference,
+        "persona_label": profile_row.persona_label,
+        "persona_summary": profile_row.persona_summary,
+        "persona_evidence": profile_row.persona_evidence,
     }
 
 
@@ -50,6 +54,10 @@ def _profile_snapshot_to_dict(snapshot: dict[str, Any] | None) -> dict[str, Any]
         "theory_weight": theory_weight,
         "weekly_hours": snapshot.get("weekly_hours"),
         "deadline_weeks": snapshot.get("deadline_weeks"),
+        "path_mode_preference": snapshot.get("path_mode_preference"),
+        "persona_label": snapshot.get("persona_label"),
+        "persona_summary": snapshot.get("persona_summary"),
+        "persona_evidence": snapshot.get("persona_evidence"),
     }
 
 
@@ -102,10 +110,22 @@ def _build_confirmed_goal_result(project: Any) -> dict[str, Any] | None:
     }
 
 
-def _apply_goal_target_effects(goal_result: dict[str, Any], removed_node_ids: set[str]) -> dict[str, Any]:
+def _apply_goal_target_effects(
+    goal_result: dict[str, Any],
+    removed_node_ids: set[str],
+    visible_node_ids: set[str] | None = None,
+) -> dict[str, Any]:
     updated_goal_result = deepcopy(goal_result)
-    confirmed_target_node_ids = list(updated_goal_result.get("confirmed_target_node_ids") or updated_goal_result.get("target_node_ids") or [])
-    effective_target_node_ids = [nid for nid in confirmed_target_node_ids if nid not in removed_node_ids]
+    confirmed_target_node_ids = list(
+        updated_goal_result.get("confirmed_target_node_ids") or updated_goal_result.get("target_node_ids") or []
+    )
+    if visible_node_ids is None:
+        effective_target_node_ids = [nid for nid in confirmed_target_node_ids if nid not in removed_node_ids]
+    else:
+        effective_target_node_ids = [
+            nid for nid in confirmed_target_node_ids
+            if nid in visible_node_ids and nid not in removed_node_ids
+        ]
     updated_goal_result["confirmed_target_node_ids"] = confirmed_target_node_ids
     updated_goal_result["effective_target_node_ids"] = effective_target_node_ids
     updated_goal_result["target_node_ids"] = effective_target_node_ids
@@ -120,17 +140,20 @@ async def replan(
     db: AsyncSession,
     project_id: str,
     mode: str = "profile_update",
+    path_mode: str | None = None,
 ) -> dict[str, Any]:
     project = await get_project(db, project_id)
     if not project:
         raise ValueError("项目不存在")
+    path_mode = validate_path_mode(path_mode or getattr(project, "path_mode", None))
+    project.path_mode = path_mode
 
     latest_profile_row = await get_latest_profile(db, project_id)
     latest_profile = _profile_row_to_dict(latest_profile_row) if latest_profile_row else None
 
-    pack = get_domain_pack_service(project.domain)
-    removed_nodes = await get_removed_node_ids(db, project_id)
-    removed_edges = await get_removed_edge_ids(db, project_id)
+    snapshot = await build_project_graph_snapshot(db, project_id, domain=project.domain)
+    removed_nodes = snapshot.removed_node_ids
+    removed_edges = snapshot.removed_edge_ids
 
     confirmed_goal_result = _build_confirmed_goal_result(project)
 
@@ -140,10 +163,11 @@ async def replan(
                 db,
                 project,
                 latest_profile,
-                pack,
+                snapshot,
                 removed_nodes,
                 removed_edges,
                 confirmed_goal_result=confirmed_goal_result,
+                path_mode=path_mode,
             )
         except UnsupportedGoalTypeError as exc:
             raise AppError(code=409, message="GOAL_DEFAULT_TARGETS_UNAVAILABLE", details={"reason": str(exc)}) from exc
@@ -155,10 +179,11 @@ async def replan(
                 db,
                 project,
                 latest_profile,
-                pack,
+                snapshot,
                 removed_nodes,
                 removed_edges,
                 confirmed_goal_result=confirmed_goal_result,
+                path_mode=path_mode,
             )
         except UnsupportedGoalTypeError as exc:
             raise AppError(code=409, message="GOAL_DEFAULT_TARGETS_UNAVAILABLE", details={"reason": str(exc)}) from exc
@@ -175,6 +200,7 @@ async def replan(
         "plan_result": result["plan_result"],
         "diff": result.get("diff"),
         "mode": mode,
+        "snapshot": snapshot,
     }
 
 
@@ -186,6 +212,7 @@ async def _replan_profile_update(
     removed_node_ids: set[str],
     removed_edge_ids: set[str],
     confirmed_goal_result: dict[str, Any] | None = None,
+    path_mode: str = "standard",
 ) -> dict[str, Any]:
     """画像更新模式：全量重生成 + 与上一版 diff。"""
     old_plan = await get_latest_plan(db, project.id)
@@ -207,6 +234,7 @@ async def _replan_profile_update(
         removed_node_ids=removed_node_ids,
         removed_edge_ids=removed_edge_ids,
         confirmed_goal_result=deepcopy(confirmed_goal_result) if confirmed_goal_result else None,
+        path_mode=path_mode,
     )
 
     new_node_ids = set(plan_result["ordered_ids"])
@@ -252,6 +280,7 @@ async def _replan_progress_aware(
     removed_node_ids: set[str],
     removed_edge_ids: set[str],
     confirmed_goal_result: dict[str, Any] | None = None,
+    path_mode: str = "standard",
 ) -> dict[str, Any]:
     """进度感知模式：锁定已完成节点，跳过 skipped，仅重规划 pending。"""
     node_status = await get_latest_event_per_node(db, project.id)
@@ -276,6 +305,7 @@ async def _replan_progress_aware(
         removed_node_ids=removed_node_ids,
         removed_edge_ids=removed_edge_ids,
         confirmed_goal_result=deepcopy(confirmed_goal_result) if confirmed_goal_result else None,
+        path_mode=path_mode,
     )
 
     plan_node_ids = set(full_plan["ordered_ids"])
@@ -336,12 +366,17 @@ async def _replan_progress_aware(
         sum(pack.nodes_by_id[nid]["estimated_hours"] for nid in pending_ordered_ids), 1
     )
     budget_summary = calc_budget_summary(profile, total_hours)
+    budget_summary["path_mode"] = path_mode
     reinforcement_logs = {
         nid: log
         for nid, log in full_plan["audit"].get("reinforcement_logs", {}).items()
         if nid in pending_ids
     }
-    audit_goal_result = _apply_goal_target_effects(full_plan["goal_result"], removed_node_ids)
+    audit_goal_result = _apply_goal_target_effects(
+        full_plan["goal_result"],
+        removed_node_ids,
+        set(pack.nodes_by_id),
+    )
     audit_goal_result["effective_target_node_ids"] = pending_target_ids
     audit_goal_result["target_node_ids"] = pending_target_ids
 
@@ -357,9 +392,28 @@ async def _replan_progress_aware(
         filtered_requires_adj=filtered_adj,
         filtered_requires_rev_adj=filtered_rev_adj,
         pack_version=pack.manifest.get("version"),
+        project_graph_hash=getattr(pack, "project_graph_hash", None),
+        overlay_lineage=getattr(pack, "overlay_lineage", None),
         closure_ids=sorted(full_plan["audit"].get("closure_ids", [])),
         reinforced_ids=sorted(pending_reinforced_ids),
         final_ids=sorted(pending_ordered_ids),
+        path_mode=path_mode,
+        ordering_mode=(
+            full_plan["audit"].get("ordering_mode")
+            or full_plan["goal_result"].get("mode")
+        ),
+        budget_status=budget_summary["status"],
+        included_nodes=[
+            {"node_id": node_id, "reason": "remaining_after_progress_filter"}
+            for node_id in pending_ordered_ids
+        ],
+        excluded_nodes=[
+            {"node_id": node_id, "exclusion_reason": "progress_completed"}
+            for node_id in sorted(completed_ids)
+        ] + [
+            {"node_id": node_id, "exclusion_reason": "progress_skipped"}
+            for node_id in sorted(skipped_ids)
+        ],
     )
 
     plan_result = {
@@ -375,6 +429,7 @@ async def _replan_progress_aware(
         ),
         "total_hours": total_hours,
         "node_count": len(pending_ordered_ids),
+        "path_mode": path_mode,
     }
 
     diff = {

@@ -19,6 +19,15 @@ from app.db.neo4j import Neo4jDriver
 from app.db.sqlite import get_db, persist_runtime_settings
 from app.services.domain_pack_service import get_domain_pack_registry
 from app.services.graph_sync_service import get_graph_sync_service
+from app.repositories.project_repository import list_projects
+from app.services.project_overlay_projection_service import (
+    PROJECTION_STATUS_DRIFTED,
+    PROJECTION_STATUS_EMPTY,
+    PROJECTION_STATUS_ERROR,
+    PROJECTION_STATUS_MISSING,
+    PROJECTION_STATUS_OK,
+    get_project_overlay_projection_status,
+)
 from app.services.search_service import search
 
 router = APIRouter()
@@ -102,7 +111,7 @@ async def readiness_check(
 ):
     sqlite_status = await _check_sqlite(db)
     neo4j_status = await _check_neo4j(neo4j)
-    graph_sync_status = await _check_graph_sync(neo4j) if neo4j_status["ready"] else {
+    graph_sync_status = await _check_graph_sync(neo4j, db) if neo4j_status["ready"] else {
         "status": "blocked",
         "ready": False,
         "in_sync": False,
@@ -119,7 +128,8 @@ async def readiness_check(
         "llm": llm_status,
         "search": search_status,
     }
-    core_ready = all(service["ready"] for service in (sqlite_status, neo4j_status, graph_sync_status))
+    graph_ready = graph_sync_status["ready"] and graph_sync_status.get("overlay_projection", {"ready": True})["ready"]
+    core_ready = sqlite_status["ready"] and neo4j_status["ready"] and graph_ready
     demo_ready = core_ready
     enhanced_ready = all(service["ready"] for service in (llm_status, search_status))
 
@@ -161,10 +171,10 @@ def _get_default_domain() -> str:
     return get_domain_pack_registry().resolve_domain()
 
 
-async def _check_graph_sync(neo4j: Neo4jDriver) -> dict:
+async def _check_graph_sync(neo4j: Neo4jDriver, db: AsyncSession | None = None) -> dict:
     domain = _get_default_domain()
     try:
-        return await get_graph_sync_service(neo4j).get_sync_status(domain)
+        status = await get_graph_sync_service(neo4j).get_sync_status(domain)
     except (RuntimeError, ValueError) as e:
         return {
             "status": "error",
@@ -173,6 +183,57 @@ async def _check_graph_sync(neo4j: Neo4jDriver) -> dict:
             "domain": domain,
             "reason": str(e),
         }
+    if db is not None:
+        status["overlay_projection"] = await _overlay_projection_readiness(db)
+    return status
+
+
+async def _overlay_projection_readiness(db: AsyncSession) -> dict:
+    projects = await list_projects(db)
+    if not projects:
+        return {
+            "status": PROJECTION_STATUS_EMPTY,
+            "ready": True,
+            "in_sync": True,
+            "checked_projects": 0,
+            "reason": "no_projects",
+        }
+
+    statuses = [
+        await get_project_overlay_projection_status(db, project.id)
+        for project in projects
+    ]
+    problem_statuses = [
+        item
+        for item in statuses
+        if item["status"] not in {PROJECTION_STATUS_EMPTY, PROJECTION_STATUS_OK}
+    ]
+    if problem_statuses:
+        priority = {
+            PROJECTION_STATUS_ERROR: 0,
+            PROJECTION_STATUS_DRIFTED: 1,
+            PROJECTION_STATUS_MISSING: 2,
+        }
+        problem_statuses.sort(key=lambda item: priority.get(item["status"], 99))
+        latest = problem_statuses[0]
+        return {
+            "status": latest["status"],
+            "ready": False,
+            "in_sync": False,
+            "problem_projects": len(problem_statuses),
+            "latest_project_id": latest["project_id"],
+            "overlay_hash": latest.get("overlay_hash"),
+            "projected_hash": latest.get("projected_hash"),
+            "reason": latest["reason"],
+        }
+
+    return {
+        "status": PROJECTION_STATUS_OK,
+        "ready": True,
+        "in_sync": True,
+        "checked_projects": len(statuses),
+        "reason": "synced",
+    }
 
 
 async def _check_search() -> dict:

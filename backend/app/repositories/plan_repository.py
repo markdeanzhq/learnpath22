@@ -63,7 +63,11 @@ async def get_latest_plan(
     result = await db.execute(
         select(LearningPath)
         .where(LearningPath.project_id == project_id)
-        .order_by(LearningPath.created_at.desc())
+        .order_by(
+            LearningPath.version.desc(),
+            LearningPath.created_at.desc(),
+            LearningPath.id.desc(),
+        )
         .limit(1)
     )
     return result.scalar_one_or_none()
@@ -110,22 +114,38 @@ async def get_all_planned_node_ids(
     return list(node_ids)
 
 
+def extract_plan_node_ids(plan_json: str | None) -> list[str]:
+    if not plan_json:
+        return []
+
+    plan_data = json.loads(plan_json)
+    node_ids: set[str] = set()
+    if isinstance(plan_data, dict):
+        for tasks in plan_data.values():
+            if not isinstance(tasks, list):
+                continue
+            node_ids.update(
+                task["node_id"]
+                for task in tasks
+                if isinstance(task, dict) and "node_id" in task
+            )
+    elif isinstance(plan_data, list):
+        for stage in plan_data:
+            if not isinstance(stage, dict):
+                continue
+            node_ids.update(
+                task["node_id"]
+                for task in stage.get("tasks", [])
+                if isinstance(task, dict) and "node_id" in task
+            )
+
+    return sorted(node_ids)
+
+
 async def get_latest_plan_node_ids(
     db: AsyncSession, project_id: str
 ) -> list[str]:
     path = await get_latest_plan(db, project_id)
-    if not path or not path.plan_json:
+    if not path:
         return []
-
-    plan_data = json.loads(path.plan_json)
-    node_ids: set[str] = set()
-    if isinstance(plan_data, dict):
-        for tasks in plan_data.values():
-            node_ids.update(t["node_id"] for t in tasks if "node_id" in t)
-    elif isinstance(plan_data, list):
-        for stage in plan_data:
-            node_ids.update(
-                t["node_id"] for t in stage.get("tasks", []) if "node_id" in t
-            )
-
-    return sorted(node_ids)
+    return extract_plan_node_ids(path.plan_json)

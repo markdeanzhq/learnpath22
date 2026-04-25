@@ -152,6 +152,8 @@ async def test_replan_progress_aware_uses_previous_plan_profile_snapshot(client,
     assert snapshot["theory_weight"] == profile["theory_weight"]
     assert snapshot["weekly_hours"] == profile["weekly_hours"]
     assert snapshot["deadline_weeks"] == profile["deadline_weeks"]
+    assert snapshot["persona_label"] == profile["persona_label"]
+    assert snapshot["persona_summary"] == profile["persona_summary"]
 
 
 async def test_replan_progress_aware_excludes_descendants_of_skipped_nodes(client, project, plan):

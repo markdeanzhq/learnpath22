@@ -24,6 +24,59 @@ async def test_generate_plan_without_profile(client, project):
     assert resp.status_code == 400
 
 
+async def test_generate_plan_rejects_invalid_path_mode(client, project, profile):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans",
+        json={"path_mode": "unknown"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "INVALID_PATH_MODE"
+
+
+async def test_generate_plan_accepts_compressed_path_mode(client, project, profile):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans",
+        json={"path_mode": "compressed"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["path_mode"] == "compressed"
+
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    latest = latest_resp.json()
+    assert latest["path_mode"] == "compressed"
+    assert latest["audit"]["path_mode"] == "compressed"
+    assert latest["audit"]["included_nodes"]
+
+
+async def test_generate_plan_audit_includes_persona_snapshot(client, project):
+    profile_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/profiles",
+        json={
+            "math_level": 4,
+            "coding_level": 5,
+            "ml_level": 3,
+            "theory_weight": 0.2,
+            "practice_weight": 0.8,
+            "weekly_hours": 18,
+            "deadline_weeks": 6,
+            "path_mode_preference": "practice_first",
+        },
+    )
+    assert profile_resp.status_code == 200
+
+    plan_resp = await client.post(f"/api/v1/projects/{project['id']}/plans")
+    assert plan_resp.status_code == 200
+
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    snapshot = latest_resp.json()["audit"]["profile_snapshot"]
+    assert snapshot["path_mode_preference"] == "practice_first"
+    assert snapshot["persona_label"] == "实践驱动型学习者"
+    assert "实践驱动型学习者" in snapshot["persona_summary"]
+
+
 async def test_generate_plan_project_not_found(client):
     resp = await client.post("/api/v1/projects/nonexistent/plans")
     assert resp.status_code == 404

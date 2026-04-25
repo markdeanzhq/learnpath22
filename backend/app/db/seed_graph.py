@@ -16,6 +16,8 @@ STAGE_SEQUENCE_RELATIONSHIP = "PRECEDES"
 STAGE_NODE_RELATIONSHIP = "CONTAINS"
 STAGE_RESOURCE_RELATIONSHIP = "HAS_RESOURCE"
 RESOURCE_NODE_RELATIONSHIP = "COVERS"
+BASELINE_OWNER = "domain_pack"
+BASELINE_ORIGIN = "baseline"
 
 
 async def initialize_knowledge_node_schema(driver: Neo4jDriver) -> None:
@@ -51,6 +53,8 @@ def _build_node_payload(node: dict[str, Any], domain: str) -> dict[str, Any]:
         "practice_weight": node.get("practice_weight"),
         "bridge_value": node.get("bridge_value"),
         "optional_level": node.get("optional_level"),
+        "owner": BASELINE_OWNER,
+        "origin": BASELINE_ORIGIN,
     }
 
 
@@ -101,6 +105,8 @@ async def _run_strict_mirror_sync(
             "order": stage["order"],
             "description": stage.get("description", ""),
             "category_keys": stage.get("category_keys", []),
+            "owner": BASELINE_OWNER,
+            "origin": BASELINE_ORIGIN,
         }
         for stage in stages
     ]
@@ -125,6 +131,8 @@ async def _run_strict_mirror_sync(
             "title": resource["title"],
             "resource_type": resource["resource_type"],
             "description": resource.get("description", ""),
+            "owner": BASELINE_OWNER,
+            "origin": BASELINE_ORIGIN,
         }
         for resource in resources
     ]
@@ -147,11 +155,13 @@ async def _run_strict_mirror_sync(
         f"""
         MATCH (n:{NODE_LABEL})
         WHERE n.{DOMAIN_KEY} = $domain
+          AND coalesce(n.owner, $baseline_owner) = $baseline_owner
           AND NOT n.id IN $node_ids
         DETACH DELETE n
         """,
         domain=domain,
         node_ids=node_ids,
+        baseline_owner=BASELINE_OWNER,
     )
 
     stage_ids = [stage["id"] for stage in stages]
@@ -159,11 +169,13 @@ async def _run_strict_mirror_sync(
         f"""
         MATCH (s:{STAGE_LABEL})
         WHERE s.{DOMAIN_KEY} = $domain
+          AND coalesce(s.owner, $baseline_owner) = $baseline_owner
           AND NOT s.id IN $stage_ids
         DETACH DELETE s
         """,
         domain=domain,
         stage_ids=stage_ids,
+        baseline_owner=BASELINE_OWNER,
     )
 
     resource_ids = [resource["id"] for resource in resources]
@@ -171,11 +183,13 @@ async def _run_strict_mirror_sync(
         f"""
         MATCH (r:{RESOURCE_LABEL})
         WHERE r.{DOMAIN_KEY} = $domain
+          AND coalesce(r.owner, $baseline_owner) = $baseline_owner
           AND NOT r.id IN $resource_ids
         DETACH DELETE r
         """,
         domain=domain,
         resource_ids=resource_ids,
+        baseline_owner=BASELINE_OWNER,
     )
 
     await tx.run(

@@ -12,6 +12,7 @@ from app.services.profile_collector_service import (
     generate_llm_questions,
     get_collector_questions,
     get_static_questions,
+    map_answers_to_profile,
 )
 
 
@@ -258,14 +259,78 @@ async def test_collector_submit_persists_source_marker_and_mapped_answers(
         {"question_id": "q_preference", "field": "theory_weight", "value": 0.6},
         {"question_id": "q_hours", "field": "weekly_hours", "value": 12},
     ]
-    assert json.loads(profile.collector_trace_json) == {
-        "source": source,
-        "mapped": {
+    trace = json.loads(profile.collector_trace_json)
+    assert trace["source"] == source
+    assert trace["mapped"]["math_level"] == 4
+    assert trace["mapped"]["theory_weight"] == 0.6
+    assert trace["mapped"]["practice_weight"] == 0.4
+    assert trace["mapped"]["weekly_hours"] == 12.0
+    assert trace["mapped"]["path_mode_preference"] == "standard"
+    assert trace["mapped"]["persona_label"]
+    assert trace["mapped"]["persona_summary"]
+
+
+async def test_submit_profile_generates_persona_fields(client, project):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/profiles",
+        json={
             "math_level": 4,
-            "coding_level": 1,
-            "ml_level": 1,
-            "theory_weight": 0.6,
-            "practice_weight": 0.4,
-            "weekly_hours": 12.0,
+            "coding_level": 5,
+            "ml_level": 3,
+            "theory_weight": 0.2,
+            "practice_weight": 0.8,
+            "weekly_hours": 18,
+            "deadline_weeks": 6,
+            "path_mode_preference": "practice_first",
         },
-    }
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["path_mode_preference"] == "practice_first"
+    assert data["persona_label"] == "实践驱动型学习者"
+    assert "实践驱动型学习者" in data["persona_summary"]
+    evidence = json.loads(data["persona_evidence"])
+    assert evidence["path_mode_preference"] == "practice_first"
+    assert evidence["deadline_weeks"] == 6
+
+
+async def test_collector_static_questions_include_budget_and_mode_fields(client, project):
+    resp = await client.post(f"/api/v1/projects/{project['id']}/collector/questions")
+
+    assert resp.status_code == 200
+    fields = {question["field"] for question in resp.json()["questions"]}
+    assert {"weekly_hours", "deadline_weeks", "path_mode_preference"} <= fields
+
+
+async def test_collector_submit_maps_deadline_path_mode_and_persona(client, project):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/collector/submit",
+        json={
+            "source": "static",
+            "answers": [
+                {"question_id": "q_math", "value": 2},
+                {"question_id": "q_coding", "value": 4},
+                {"question_id": "q_ml", "value": 3},
+                {"question_id": "q_hours", "value": 4},
+                {"question_id": "q_deadline", "value": 4},
+                {"question_id": "q_path_mode", "value": "compressed"},
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["deadline_weeks"] == 4
+    assert data["path_mode_preference"] == "compressed"
+    assert data["persona_label"] == "时间压缩型学习者"
+    assert data["persona_summary"]
+
+
+def test_map_answers_ignores_invalid_path_mode_and_uses_fallback():
+    mapped = map_answers_to_profile([
+        {"question_id": "q_path_mode", "value": "invalid"},
+    ])
+
+    assert mapped["path_mode_preference"] == "standard"
+    assert mapped["persona_label"] == "基础补齐型学习者"

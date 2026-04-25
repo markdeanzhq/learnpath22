@@ -22,6 +22,25 @@ export interface PlanResourcesResponse {
   stages: StageResourceGroup[]
 }
 
+export interface ProjectResourceBindingRequest {
+  resource_id: string
+  target_type: 'project_node' | 'path_stage'
+  target_id: string
+  source_result_id?: string | null
+  binding_source?: string
+}
+
+export interface ProjectResourceBindingResponse {
+  id: string
+  project_id: string
+  resource_id: string
+  target_type: string
+  target_id: string
+  source_result_id?: string | null
+  binding_source: string
+  created_at: string
+}
+
 export const resourceApi = {
   getPlanResources: (projectId: string, pathId: string): Promise<PlanResourcesResponse> =>
     request.get(`/projects/${projectId}/plans/${pathId}/resources`),
@@ -33,4 +52,9 @@ export const resourceApi = {
     payload: { stage_name?: string; node_id?: string; title: string; url: string; snippet?: string }
   ): Promise<ResourceItem> =>
     request.post(`/projects/${projectId}/plans/${pathId}/resources/bind`, payload),
+  bindProjectResource: (
+    projectId: string,
+    payload: ProjectResourceBindingRequest,
+  ): Promise<ProjectResourceBindingResponse> =>
+    request.post(`/projects/${projectId}/resources/bindings`, payload),
 }

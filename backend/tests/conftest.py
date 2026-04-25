@@ -3,12 +3,13 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.core.config import replace_runtime_settings
+from app.core.config import get_settings, replace_runtime_settings
 from app.models.sqlite_models import (
     Base,
     GraphReviewStatus,
@@ -34,6 +35,13 @@ _TestSession = async_sessionmaker(
 )
 
 
+@event.listens_for(_test_engine.sync_engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 async def _override_get_db():
     async with _TestSession() as session:
         yield session
@@ -48,11 +56,21 @@ async def _override_get_neo4j():
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def reset_runtime_config_state():
+    get_settings.cache_clear()
+    replace_runtime_settings({})
+    yield
+    get_settings.cache_clear()
+    replace_runtime_settings({})
+
+
 @pytest.fixture
 async def client():
     """Provide an httpx async client backed by an in-memory test database."""
     replace_runtime_settings({})
     async with _test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     from app.api.router import api_router

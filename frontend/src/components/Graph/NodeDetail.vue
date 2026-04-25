@@ -24,6 +24,43 @@
                 {{ node.is_main_path ? '是' : '否' }}
               </el-tag>
             </el-descriptions-item>
+            <el-descriptions-item label="来源">
+              <el-tag :type="getOriginTagType(node)" size="small">
+                {{ getOriginLabel(node) }}
+              </el-tag>
+            </el-descriptions-item>
+            <template v-if="node.origin === 'overlay'">
+              <el-descriptions-item label="校验状态">
+                <el-tag size="small" :type="getValidationTagType(node.validation_status)">
+                  {{ node.validation_status || 'unknown' }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="推广状态">
+                <el-tag size="small" :type="getPromotionTagType(node.promotion_status)">
+                  {{ node.promotion_status || 'unknown' }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="参与规划">
+                <el-switch
+                  :model-value="Boolean(node.planning_enabled)"
+                  size="small"
+                  active-text="参与"
+                  inactive-text="排除"
+                  :disabled="isPlanningDisabled(node)"
+                  @change="emitNodePlanningChange"
+                />
+              </el-descriptions-item>
+              <el-descriptions-item v-if="node.confidence !== undefined && node.confidence !== null" label="置信度">
+                {{ Number(node.confidence).toFixed(2) }}
+              </el-descriptions-item>
+              <el-descriptions-item v-if="node.validation_errors?.length" label="校验问题">
+                <div class="chip-list">
+                  <el-tag v-for="error in node.validation_errors" :key="error" size="small" type="danger" effect="plain">
+                    {{ error }}
+                  </el-tag>
+                </div>
+              </el-descriptions-item>
+            </template>
           </el-descriptions>
         </section>
 
@@ -49,9 +86,12 @@
                   <div class="edge-target">{{ getCounterpartLabel(edge) }}</div>
                   <div class="edge-direction">{{ getDirectionLabel(edge) }}</div>
                 </div>
-                <el-tag size="small" :type="getStatusTagType(edge.review_status)">
-                  {{ getStatusLabel(edge.review_status) }}
-                </el-tag>
+                <div class="edge-status-tags">
+                  <el-tag size="small" :type="getOriginTagType(edge)">{{ getOriginLabel(edge) }}</el-tag>
+                  <el-tag size="small" :type="getStatusTagType(edge.review_status)">
+                    {{ getStatusLabel(edge.review_status) }}
+                  </el-tag>
+                </div>
               </div>
 
               <div class="edge-meta">
@@ -64,14 +104,31 @@
                 <span class="edge-meta-value">{{ edge.reason || '未提供' }}</span>
               </div>
 
+              <div v-if="edge.origin === 'overlay'" class="edge-meta">
+                <span class="edge-meta-label">overlay</span>
+                <span class="edge-meta-value">
+                  {{ edge.validation_status || 'unknown' }} / {{ edge.promotion_status || 'unknown' }}
+                </span>
+              </div>
+
+              <div v-if="edge.origin === 'overlay'" class="edge-meta">
+                <span class="edge-meta-label">参与规划</span>
+                <el-switch
+                  :model-value="Boolean(edge.planning_enabled)"
+                  size="small"
+                  :disabled="isPlanningDisabled(edge)"
+                  @change="(value: string | number | boolean) => emit('set-overlay-planning', edge, Boolean(value))"
+                />
+              </div>
+
               <div class="edge-actions">
                 <el-button
-                  v-for="action in reviewActions"
+                  v-for="action in getReviewActions(edge)"
                   :key="action.status"
                   size="small"
                   :type="normalizeStatus(edge.review_status) === action.status ? action.buttonType : 'default'"
                   :plain="normalizeStatus(edge.review_status) !== action.status"
-                  :disabled="normalizeStatus(edge.review_status) === action.status"
+                  :disabled="normalizeStatus(edge.review_status) === action.status || isReviewDisabled(edge)"
                   @click="emit('review-edge', edge.id, action.status)"
                 >
                   {{ action.label }}
@@ -102,7 +159,9 @@ type NodeDetailData = GraphNodeData & {
   outgoing_edges?: SelectedAdjacentEdge[]
 }
 
-const REVIEW_STATUSES: ReviewStatus[] = ['pending', 'confirmed', 'removed']
+const REVIEW_STATUSES: ReviewStatus[] = ['pending', 'confirmed', 'removed', 'rejected'] as ReviewStatus[]
+const BASELINE_REVIEW_STATUSES: ReviewStatus[] = ['pending', 'confirmed', 'removed'] as ReviewStatus[]
+const OVERLAY_REVIEW_STATUSES: ReviewStatus[] = ['pending', 'confirmed', 'removed', 'rejected'] as ReviewStatus[]
 const RELATION_LABELS = Object.fromEntries(
   GRAPH_RELATION_LEGEND.map(({ type, label }) => [type, label]),
 ) as Record<string, string>
@@ -110,12 +169,14 @@ const RELATION_LABELS = Object.fromEntries(
 const props = defineProps<{ node: NodeDetailData | null }>()
 const emit = defineEmits<{
   'review-edge': [edgeId: string, status: ReviewStatus]
+  'set-overlay-planning': [data: GraphNodeData | GraphEdgeData, enabled: boolean]
 }>()
 
 const visible = ref(false)
 const reviewActions = [
   { status: 'confirmed', label: '确认保留', buttonType: 'success' },
   { status: 'removed', label: '标记移除', buttonType: 'danger' },
+  { status: 'rejected', label: '拒绝扩展', buttonType: 'danger' },
   { status: 'pending', label: '恢复待审', buttonType: 'warning' },
 ] as const satisfies ReadonlyArray<{
   status: ReviewStatus
@@ -134,21 +195,93 @@ watch(
 const categoryColor = computed(() => CATEGORY_COLORS[props.node?.category || ''] || '#909399')
 const categoryLabel = computed(() => CATEGORY_LABELS[props.node?.category || ''] || props.node?.category || '')
 const adjacentEdges = computed(() => props.node?.adjacent_edges || [])
+const currentNode = computed(() => props.node)
 
-function normalizeStatus(status?: string | null): ReviewStatus {
-  return REVIEW_STATUSES.includes(status as ReviewStatus) ? (status as ReviewStatus) : 'pending'
+function normalizeStatus(status?: string | null): ReviewStatus | null {
+  return REVIEW_STATUSES.includes(status as ReviewStatus) ? (status as ReviewStatus) : null
+}
+
+function getOrigin(data: GraphNodeData | GraphEdgeData) {
+  return Object.prototype.hasOwnProperty.call(data, 'origin') ? data.origin : 'unknown'
+}
+
+function isKnownOrigin(data: GraphNodeData | GraphEdgeData) {
+  const origin = getOrigin(data)
+  return origin === 'baseline' || origin === 'overlay'
+}
+
+function isKnownReviewStatusForOrigin(data: GraphNodeData | GraphEdgeData) {
+  const origin = getOrigin(data)
+  const status = data.review_status as ReviewStatus
+  if (origin === 'overlay') return OVERLAY_REVIEW_STATUSES.includes(status)
+  return origin === 'baseline' && BASELINE_REVIEW_STATUSES.includes(status)
+}
+
+function hasUnknownOverlayLifecycle(data: GraphNodeData | GraphEdgeData) {
+  return data.origin === 'overlay' && (data.validation_status === 'unknown' || data.promotion_status === 'unknown')
+}
+
+function isReviewDisabled(data: GraphNodeData | GraphEdgeData) {
+  return !isKnownOrigin(data) || !isKnownReviewStatusForOrigin(data)
+}
+
+function isPlanningDisabled(data: GraphNodeData | GraphEdgeData) {
+  return data.origin !== 'overlay' || !isKnownOrigin(data) || hasUnknownOverlayLifecycle(data) || data.promotion_status === 'promoted'
+}
+
+function getReviewActions(data: GraphNodeData | GraphEdgeData) {
+  if (!isKnownOrigin(data)) return []
+  const allowed = data.origin === 'overlay' ? OVERLAY_REVIEW_STATUSES : BASELINE_REVIEW_STATUSES
+  return reviewActions.filter((action) => allowed.includes(action.status))
+}
+
+function getOriginLabel(data: GraphNodeData | GraphEdgeData) {
+  const origin = getOrigin(data)
+  if (origin === 'overlay') return '项目扩展'
+  if (origin === 'baseline') return '领域基线'
+  return '未知来源'
+}
+
+function getOriginTagType(data: GraphNodeData | GraphEdgeData) {
+  const origin = getOrigin(data)
+  if (origin === 'overlay') return 'warning'
+  if (origin === 'baseline') return 'info'
+  return 'danger'
+}
+
+function emitNodePlanningChange(value: string | number | boolean) {
+  const node = currentNode.value
+  if (!node) return
+  emit('set-overlay-planning', node, Boolean(value))
 }
 
 function getStatusLabel(status?: string | null) {
-  if (normalizeStatus(status) === 'confirmed') return '已确认'
-  if (normalizeStatus(status) === 'removed') return '已移除'
-  return '待审核'
+  const normalized = normalizeStatus(status)
+  if (normalized === 'confirmed') return '已确认'
+  if (normalized === 'removed') return '已移除'
+  if (normalized === 'rejected') return '已拒绝'
+  if (normalized === 'pending') return '待审核'
+  return '未知状态'
 }
 
 function getStatusTagType(status?: string | null) {
-  if (normalizeStatus(status) === 'confirmed') return 'success'
-  if (normalizeStatus(status) === 'removed') return 'danger'
+  const normalized = normalizeStatus(status)
+  if (normalized === 'confirmed') return 'success'
+  if (normalized === 'removed' || normalized === 'rejected') return 'danger'
+  if (normalized === 'pending') return 'warning'
+  return 'danger'
+}
+
+function getValidationTagType(status?: string | null) {
+  if (status === 'valid') return 'success'
+  if (status === 'invalid') return 'danger'
   return 'warning'
+}
+
+function getPromotionTagType(status?: string | null) {
+  if (status === 'promoted') return 'success'
+  if (status === 'promotion_ready') return 'warning'
+  return 'info'
 }
 
 function getRelationLabel(type?: string | null) {
@@ -242,6 +375,13 @@ function getDirectionLabel(edge: SelectedAdjacentEdge) {
   color: #909399;
 }
 
+.edge-status-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .edge-meta {
   display: flex;
   align-items: flex-start;
@@ -264,6 +404,12 @@ function getDirectionLabel(edge: SelectedAdjacentEdge) {
   line-height: 1.5;
   color: #606266;
   word-break: break-word;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .edge-actions {

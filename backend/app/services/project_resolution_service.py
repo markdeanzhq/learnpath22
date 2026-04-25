@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AppError, NotFoundError
 from app.models.sqlite_models import GoalResolutionSession, LearningProject
 from app.repositories.project_repository import create_project, get_project
+from app.schemas.project import validate_path_mode
 from app.services.goal_resolution_service import (
     _build_goal_text_hash,
     build_project_graph_hash,
@@ -51,6 +52,7 @@ def _serialize_project(project: LearningProject) -> dict[str, Any]:
         "goal_type": project.goal_type,
         "domain": project.domain,
         "status": project.status,
+        "path_mode": getattr(project, "path_mode", None) or "standard",
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "goal_resolution": _build_goal_resolution_summary(project),
@@ -113,6 +115,13 @@ def _get_selected_candidate(
     return selected_candidate
 
 
+def _validate_path_mode_or_raise(path_mode: str | None) -> str:
+    try:
+        return validate_path_mode(path_mode)
+    except ValueError as exc:
+        raise AppError(code=422, message="INVALID_PATH_MODE") from exc
+
+
 def _apply_confirmed_resolution(
     project: LearningProject,
     *,
@@ -148,7 +157,9 @@ async def create_project_from_resolution_session(
     domain: str | None,
     resolution_session_id: str,
     selected_candidate_id: str,
+    path_mode: str = "standard",
 ) -> dict[str, Any]:
+    path_mode = _validate_path_mode_or_raise(path_mode)
     session = await _get_valid_session(db, resolution_session_id=resolution_session_id)
     selected_candidate = _get_selected_candidate(session, selected_candidate_id)
     resolved_domain = resolve_compatible_domain(domain)
@@ -168,6 +179,7 @@ async def create_project_from_resolution_session(
         goal_type=selected_candidate["goal_type"],
         domain=resolved_domain,
         commit=False,
+        path_mode=path_mode,
         requested_goal_type=session.requested_goal_type,
         auto_detected_goal_type=session.auto_detected_goal_type,
         confirmed_target_node_ids_json=json.dumps(selected_candidate["target_node_ids"], ensure_ascii=False),
@@ -175,7 +187,11 @@ async def create_project_from_resolution_session(
         confirmed_description=selected_candidate["description"],
         confirmed_template_id=selected_candidate.get("template_id"),
         confirmed_resolve_source=selected_candidate["resolve_source"],
-        confirmed_source_breakdown_json=json.dumps(selected_candidate.get("source_breakdown", {}), ensure_ascii=False, sort_keys=True),
+        confirmed_source_breakdown_json=json.dumps(
+            selected_candidate.get("source_breakdown", {}),
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
         confirmed_candidate_id=selected_candidate_id,
         resolution_pack_version=session.pack_version,
         resolution_confirmed_at=_naive_utc_now(),
@@ -220,6 +236,7 @@ async def update_project_goal_resolution(
     domain: str | None,
     resolution_session_id: str,
     selected_candidate_id: str,
+    path_mode: str | None = None,
 ) -> dict[str, Any]:
     project = await get_project(db, project_id)
     if project is None:
@@ -248,6 +265,8 @@ async def update_project_goal_resolution(
         selected_candidate=selected_candidate,
         goal_text=goal_text,
     )
+    if path_mode is not None:
+        project.path_mode = _validate_path_mode_or_raise(path_mode)
     session.status = "confirmed"
     await db.commit()
     await db.refresh(project)

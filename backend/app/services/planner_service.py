@@ -11,6 +11,7 @@ from app.planner.renderer import render_path_text
 from app.planner.scoring import compute_goal_relevance, select_profile_reinforcements
 from app.planner.staging import build_stage_plan
 from app.planner.topology import topo_sort_with_profile_priority
+from app.schemas.project import validate_path_mode
 from app.services.domain_pack_service import DomainPackService
 from app.services.goal_service import UnsupportedGoalTypeError, resolve_goal
 
@@ -45,6 +46,41 @@ def build_filtered_graph(
     return filtered_adj, filtered_rev_adj
 
 
+def _node_hours(pack: DomainPackService, node_ids: list[str]) -> float:
+    return round(sum(pack.nodes_by_id[nid]["estimated_hours"] for nid in node_ids), 1)
+
+
+def _mode_adjusted_goal_mode(goal_mode: str, path_mode: str) -> str:
+    if path_mode == "theory_first":
+        return "steady"
+    if path_mode == "practice_first":
+        return "practice"
+    return goal_mode
+
+
+def _build_included_nodes(node_ids: list[str], required_ids: set[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "node_id": node_id,
+            "reason": "required_closure" if node_id in required_ids else "optional_reinforcement",
+        }
+        for node_id in node_ids
+    ]
+
+
+def _build_excluded_nodes(
+    optional_ids: set[str],
+    included_ids: set[str],
+    path_mode: str,
+) -> list[dict[str, Any]]:
+    if path_mode != "compressed":
+        return []
+    return [
+        {"node_id": node_id, "exclusion_reason": "compressed_optional_reinforcement"}
+        for node_id in sorted(optional_ids - included_ids)
+    ]
+
+
 def plan_with_profile(
     goal_text: str,
     goal_type: str | None,
@@ -53,7 +89,9 @@ def plan_with_profile(
     removed_node_ids: set[str] | None = None,
     removed_edge_ids: set[str] | None = None,
     confirmed_goal_result: dict[str, Any] | None = None,
+    path_mode: str = "standard",
 ) -> dict[str, Any]:
+    path_mode = validate_path_mode(path_mode)
     scoring_config = pack.scoring_config
     stage_rules = pack.stage_rules
     
@@ -86,21 +124,24 @@ def plan_with_profile(
     confirmed_target_node_ids = list(
         goal_result.get("confirmed_target_node_ids") or goal_result.get("target_node_ids") or []
     )
-    # 过滤掉被移除的目标节点
+    visible_node_ids = set(pack.nodes_by_id)
     target_node_ids = [
         nid for nid in confirmed_target_node_ids
-        if nid not in removed_nodes
+        if nid in visible_node_ids and nid not in removed_nodes
     ]
     # legacy 场景的默认目标只能来自 pack-owned policy；confirmed 场景必须显式暴露空 effective targets
     if not target_node_ids and confirmed_goal_result is None:
+        goal_type_label = goal_result.get("goal_type")
         raise UnsupportedGoalTypeError(
-            f"No effective target nodes available for goal_type={goal_result.get('goal_type')} after applying pack default policy"
+            "No effective target nodes available for "
+            f"goal_type={goal_type_label} after applying pack default policy"
         )
 
     goal_result["confirmed_target_node_ids"] = confirmed_target_node_ids
     goal_result["effective_target_node_ids"] = list(target_node_ids)
     goal_result["target_node_ids"] = target_node_ids
-    mode = goal_result["mode"]
+    goal_result["path_mode"] = path_mode
+    mode = _mode_adjusted_goal_mode(goal_result["mode"], path_mode)
     goal_type_resolved = goal_result["goal_type"]
 
     filtered_adj, filtered_rev_adj = build_filtered_graph(
@@ -128,9 +169,18 @@ def plan_with_profile(
     )
     reinforced_closure_ids = get_prerequisite_closure(reinforced_ids, filtered_rev_adj)
 
-    final_ids = sorted(dict.fromkeys(
-        closure_ids + target_node_ids + reinforced_ids + reinforced_closure_ids
-    ))
+    required_ids = set(closure_ids) | set(target_node_ids)
+    optional_ids = set(reinforced_ids) | set(reinforced_closure_ids)
+    if path_mode == "compressed":
+        final_ids = sorted(required_ids)
+        reinforced_ids = [node_id for node_id in reinforced_ids if node_id in required_ids]
+        reinforcement_logs = {
+            node_id: log
+            for node_id, log in reinforcement_logs.items()
+            if node_id in required_ids
+        }
+    else:
+        final_ids = sorted(required_ids | optional_ids)
 
     # 4. 子图提取
     sub_adj, indegree = extract_subgraph(final_ids, filtered_adj)
@@ -162,10 +212,21 @@ def plan_with_profile(
     )
 
     # 8. 时间预算
-    planned_hours = round(
-        sum(pack.nodes_by_id[nid]["estimated_hours"] for nid in ordered_ids), 1
-    )
+    planned_hours = _node_hours(pack, ordered_ids)
+    required_hours = _node_hours(pack, sorted(required_ids))
     budget_summary = calc_budget_summary(profile, planned_hours)
+    if (
+        path_mode == "compressed"
+        and budget_summary["status"] != "feasible"
+        and required_hours > budget_summary["available_hours"]
+    ):
+        budget_summary["status"] = "over_budget_required_closure"
+        budget_summary["suggestion"] = "目标及硬前置依赖已超出预算，不能裁剪硬依赖链"
+    budget_summary["path_mode"] = path_mode
+    budget_summary["required_hours"] = required_hours
+
+    included_nodes = _build_included_nodes(ordered_ids, required_ids)
+    excluded_nodes = _build_excluded_nodes(optional_ids, set(ordered_ids), path_mode)
 
     # 9. 审计日志
     audit = build_plan_audit(
@@ -180,9 +241,16 @@ def plan_with_profile(
         filtered_requires_adj=filtered_adj,
         filtered_requires_rev_adj=filtered_rev_adj,
         pack_version=pack.manifest.get("version"),
+        project_graph_hash=getattr(pack, "project_graph_hash", None),
+        overlay_lineage=getattr(pack, "overlay_lineage", None),
         closure_ids=sorted(closure_ids),
         reinforced_ids=sorted(reinforced_ids),
         final_ids=sorted(final_ids),
+        path_mode=path_mode,
+        ordering_mode=mode,
+        budget_status=budget_summary["status"],
+        included_nodes=included_nodes,
+        excluded_nodes=excluded_nodes,
     )
 
     # 10. 文本渲染
@@ -198,4 +266,5 @@ def plan_with_profile(
         "text_output": text_output,
         "total_hours": planned_hours,
         "node_count": len(ordered_ids),
+        "path_mode": path_mode,
     }

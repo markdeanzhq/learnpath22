@@ -23,7 +23,7 @@
       <div class="menu-divider"></div>
     </div>
 
-    <div v-if="hintText" class="menu-hint">{{ hintText }}</div>
+    <div v-if="safeHintText" class="menu-hint">{{ safeHintText }}</div>
 
     <button
       v-for="action in reviewActions"
@@ -31,6 +31,7 @@
       type="button"
       class="menu-item"
       :class="{ active: normalizedCurrentStatus === action.status }"
+      :disabled="reviewDisabled"
       @click="emit('review', action.status)"
     >
       <span>{{ action.label }}</span>
@@ -54,16 +55,21 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 type ReviewTargetType = 'node' | 'edge'
-type ReviewStatus = 'confirmed' | 'removed' | 'pending'
+type ReviewStatus = 'confirmed' | 'removed' | 'pending' | 'rejected'
 type ReviewTargetData = {
   id?: string
+  origin?: string | null
   review_status?: string | null
+  validation_status?: string | null
+  promotion_status?: string | null
   type?: string | null
   reason?: string | null
   [key: string]: unknown
 }
 
-const REVIEW_STATUSES: ReviewStatus[] = ['confirmed', 'removed', 'pending']
+const REVIEW_STATUSES: ReviewStatus[] = ['confirmed', 'removed', 'pending', 'rejected']
+const BASELINE_REVIEW_STATUSES: ReviewStatus[] = ['confirmed', 'removed', 'pending']
+const OVERLAY_REVIEW_STATUSES: ReviewStatus[] = ['confirmed', 'removed', 'pending', 'rejected']
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -94,24 +100,39 @@ const menuStyle = ref<Record<string, string>>({
   top: '12px',
 })
 
-const reviewActions = [
+const allReviewActions = [
   { status: 'confirmed', label: '确认保留' },
   { status: 'removed', label: '标记移除' },
+  { status: 'rejected', label: '拒绝扩展' },
   { status: 'pending', label: '恢复待审' },
 ] as const satisfies ReadonlyArray<{ status: ReviewStatus; label: string }>
 
 const isNodeTarget = computed(() => props.targetType === 'node')
 const isEdgeTarget = computed(() => props.targetType === 'edge')
+const origin = computed(() => props.targetData && Object.prototype.hasOwnProperty.call(props.targetData, 'origin') ? props.targetData.origin : 'unknown')
+const isKnownOrigin = computed(() => origin.value === 'baseline' || origin.value === 'overlay')
+const allowedStatuses = computed(() => origin.value === 'overlay' ? OVERLAY_REVIEW_STATUSES : BASELINE_REVIEW_STATUSES)
+const rawCurrentStatus = computed(() => props.currentStatus ?? props.targetData?.review_status ?? null)
+const normalizedCurrentStatus = computed(() => normalizeStatus(rawCurrentStatus.value))
+const isKnownReviewStatus = computed(() => normalizedCurrentStatus.value !== null && allowedStatuses.value.includes(normalizedCurrentStatus.value))
+const reviewDisabled = computed(() => !isKnownOrigin.value || !isKnownReviewStatus.value)
+const safeHintText = computed(() => {
+  if (!isKnownOrigin.value) return '未知 origin，已禁用会影响规划或审核的操作。'
+  if (!isKnownReviewStatus.value) return '未知审核状态，已禁用会影响规划或审核的操作。'
+  return props.hintText
+})
+const reviewActions = computed(() => isKnownOrigin.value ? allReviewActions.filter((action) => allowedStatuses.value.includes(action.status)) : [])
 
-function normalizeStatus(status?: ReviewStatus | string | null): ReviewStatus {
-  return REVIEW_STATUSES.includes(status as ReviewStatus) ? status as ReviewStatus : 'pending'
+function normalizeStatus(status?: ReviewStatus | string | null): ReviewStatus | null {
+  return REVIEW_STATUSES.includes(status as ReviewStatus) ? status as ReviewStatus : null
 }
 
-const normalizedCurrentStatus = computed(() => normalizeStatus(props.currentStatus ?? props.targetData?.review_status))
 const title = computed(() => isEdgeTarget.value ? '关系审核' : '节点审核')
 const statusLabel = computed(() => {
+  if (!isKnownReviewStatus.value) return '未知状态'
   if (normalizedCurrentStatus.value === 'confirmed') return '已确认'
   if (normalizedCurrentStatus.value === 'removed') return '已移除'
+  if (normalizedCurrentStatus.value === 'rejected') return '已拒绝'
   return '待审核'
 })
 
@@ -151,7 +172,7 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 watch(
-  () => [props.visible, props.x, props.y, props.containerWidth, props.containerHeight, props.targetType, props.targetData?.id, props.targetData?.type, props.targetData?.review_status, props.targetData?.reason, props.currentStatus, props.hintText],
+  () => [props.visible, props.x, props.y, props.containerWidth, props.containerHeight, props.targetType, props.targetData?.id, props.targetData?.origin, props.targetData?.type, props.targetData?.review_status, props.targetData?.reason, props.currentStatus, props.hintText],
   async () => {
     if (!props.visible) {
       menuStyle.value = {
@@ -265,6 +286,11 @@ onBeforeUnmount(() => {
   color: #303133;
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.menu-item:disabled {
+  color: #c0c4cc;
+  cursor: not-allowed;
 }
 
 .menu-item:hover,

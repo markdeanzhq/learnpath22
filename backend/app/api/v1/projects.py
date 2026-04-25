@@ -38,6 +38,7 @@ async def create_project_endpoint(
         domain=req.domain,
         resolution_session_id=req.resolution_session_id,
         selected_candidate_id=req.selected_candidate_id,
+        path_mode=req.path_mode,
     )
 
 
@@ -73,6 +74,7 @@ async def update_project_goal_resolution_endpoint(
         domain=req.domain,
         resolution_session_id=req.resolution_session_id,
         selected_candidate_id=req.selected_candidate_id,
+        path_mode=req.path_mode,
     )
 
 

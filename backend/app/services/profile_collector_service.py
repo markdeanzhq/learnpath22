@@ -72,10 +72,42 @@ STATIC_QUESTIONS: list[dict[str, Any]] = [
             {"label": "20 小时以上", "value": 25},
         ],
     },
+    {
+        "id": "q_deadline",
+        "field": "deadline_weeks",
+        "question": "你希望多久完成这条学习路径？",
+        "options": [
+            {"label": "4 周内，需要非常紧凑", "value": 4},
+            {"label": "6 周左右", "value": 6},
+            {"label": "8 周左右", "value": 8},
+            {"label": "12 周左右，稳步推进", "value": 12},
+            {"label": "16 周以上，长期学习", "value": 16},
+        ],
+    },
+    {
+        "id": "q_path_mode",
+        "field": "path_mode_preference",
+        "question": "你更希望系统如何组织学习路径？",
+        "options": [
+            {"label": "标准路径，兼顾完整性和节奏", "value": "standard"},
+            {"label": "压缩路径，只保留必要前置和目标", "value": "compressed"},
+            {"label": "理论优先，先理解原理", "value": "theory_first"},
+            {"label": "实践优先，尽快进入练习", "value": "practice_first"},
+        ],
+    },
 ]
 
 # 字段池：LLM 生成的问题只能映射到这些字段
-ALLOWED_FIELDS = {"math_level", "coding_level", "ml_level", "theory_weight", "weekly_hours", "deadline_weeks"}
+ALLOWED_FIELDS = {
+    "math_level",
+    "coding_level",
+    "ml_level",
+    "theory_weight",
+    "weekly_hours",
+    "deadline_weeks",
+    "path_mode_preference",
+}
+ALLOWED_PATH_MODE_PREFERENCES = {"standard", "compressed", "theory_first", "practice_first"}
 
 
 def get_static_questions() -> list[dict[str, Any]]:
@@ -146,6 +178,9 @@ def map_answers_to_profile(answers: list[dict[str, Any]]) -> dict[str, Any]:
                 value = max(lo, min(hi, value))
             except (TypeError, ValueError):
                 continue
+        elif field == "path_mode_preference":
+            if value not in ALLOWED_PATH_MODE_PREFERENCES:
+                continue
 
         profile[field] = value
 
@@ -156,8 +191,51 @@ def map_answers_to_profile(answers: list[dict[str, Any]]) -> dict[str, Any]:
     profile.setdefault("theory_weight", 0.5)
     profile.setdefault("practice_weight", 1.0 - profile.get("theory_weight", 0.5))
     profile.setdefault("weekly_hours", 10.0)
+    profile.setdefault("path_mode_preference", "standard")
+    profile.update(build_persona_fields(profile))
 
     return profile
+
+
+def build_persona_fields(profile: dict[str, Any]) -> dict[str, str]:
+    math_level = int(profile.get("math_level") or 1)
+    coding_level = int(profile.get("coding_level") or 1)
+    ml_level = int(profile.get("ml_level") or 1)
+    theory_weight = float(profile.get("theory_weight") or 0.5)
+    weekly_hours = float(profile.get("weekly_hours") or 10.0)
+    deadline_weeks = profile.get("deadline_weeks")
+    path_mode = profile.get("path_mode_preference") or "standard"
+
+    if ml_level <= 2 and math_level <= 2:
+        label = "基础补齐型学习者"
+    elif coding_level >= 4 and theory_weight <= 0.4:
+        label = "实践驱动型学习者"
+    elif theory_weight >= 0.7:
+        label = "理论理解型学习者"
+    elif weekly_hours <= 5 or path_mode == "compressed":
+        label = "时间压缩型学习者"
+    else:
+        label = "均衡推进型学习者"
+
+    evidence = {
+        "math_level": math_level,
+        "coding_level": coding_level,
+        "ml_level": ml_level,
+        "theory_weight": theory_weight,
+        "weekly_hours": weekly_hours,
+        "deadline_weeks": deadline_weeks,
+        "path_mode_preference": path_mode,
+    }
+    deadline_text = f"，计划约 {deadline_weeks} 周完成" if deadline_weeks else ""
+    summary = (
+        f"{label}：当前数学/编程/机器学习基础为 "
+        f"{math_level}/{coding_level}/{ml_level}，每周约 {weekly_hours:g} 小时{deadline_text}。"
+    )
+    return {
+        "persona_label": label,
+        "persona_summary": summary,
+        "persona_evidence": json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+    }
 
 
 async def generate_llm_questions(

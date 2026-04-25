@@ -14,6 +14,16 @@ from app.models.sqlite_models import (
     LearningProject,
     PathStage,
     PathTask,
+    PersistedSearchResult,
+    ProjectOverlayEdge,
+    ProjectOverlayExtractionSession,
+    ProjectOverlayNode,
+    ProjectOverlayProjectionState,
+    ProjectOverlayPromotionBatch,
+    ProjectOverlayPromotionItem,
+    ProjectOverlayResource,
+    ProjectOverlayResourceBinding,
+    ProjectOverlaySource,
     TrackingEvent,
 )
 
@@ -90,6 +100,16 @@ async def delete_project(db: AsyncSession, project_id: str) -> bool:
         await db.execute(delete(PathStage).where(PathStage.path_id.in_(path_ids)))
         await db.execute(delete(LearningPath).where(LearningPath.id.in_(path_ids)))
 
+    await db.execute(delete(ProjectOverlayProjectionState).where(ProjectOverlayProjectionState.project_id == project_id))
+    await db.execute(delete(ProjectOverlayPromotionItem).where(ProjectOverlayPromotionItem.project_id == project_id))
+    await db.execute(delete(ProjectOverlayPromotionBatch).where(ProjectOverlayPromotionBatch.project_id == project_id))
+    await db.execute(delete(ProjectOverlayResourceBinding).where(ProjectOverlayResourceBinding.project_id == project_id))
+    await db.execute(delete(PersistedSearchResult).where(PersistedSearchResult.project_id == project_id))
+    await db.execute(delete(ProjectOverlayResource).where(ProjectOverlayResource.project_id == project_id))
+    await db.execute(delete(ProjectOverlayEdge).where(ProjectOverlayEdge.project_id == project_id))
+    await db.execute(delete(ProjectOverlayNode).where(ProjectOverlayNode.project_id == project_id))
+    await db.execute(delete(ProjectOverlayExtractionSession).where(ProjectOverlayExtractionSession.project_id == project_id))
+    await db.execute(delete(ProjectOverlaySource).where(ProjectOverlaySource.project_id == project_id))
     await db.execute(delete(LearnerProfile).where(LearnerProfile.project_id == project_id))
     await db.execute(delete(KnowledgeSource).where(KnowledgeSource.project_id == project_id))
     await db.execute(delete(TrackingEvent).where(TrackingEvent.project_id == project_id))

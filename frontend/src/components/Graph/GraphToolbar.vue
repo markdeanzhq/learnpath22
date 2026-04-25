@@ -2,7 +2,8 @@
   <div class="graph-toolbar">
     <el-space wrap>
       <el-radio-group :model-value="scope" size="small" @change="handleScopeChange">
-        <el-radio-button value="project">项目子图</el-radio-button>
+        <el-radio-button value="project">项目全图</el-radio-button>
+        <el-radio-button value="path">路径子图</el-radio-button>
         <el-radio-button value="domain">完整领域图</el-radio-button>
       </el-radio-group>
 
@@ -44,6 +45,7 @@
       />
 
       <el-button size="small" @click="emit('showEntities')" :loading="entityLoading">扩展实体</el-button>
+      <el-button size="small" type="primary" plain @click="emit('createOverlay')">扩展草稿</el-button>
 
       <el-button size="small" :icon="FullScreen" @click="emit('toggleFullscreen')" />
 
@@ -64,8 +66,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ZoomIn, ZoomOut, Search, FullScreen, RefreshRight, Connection } from '@element-plus/icons-vue'
+import type { GraphScope } from '@/api/modules/graph'
 
-type GraphScope = 'project' | 'domain'
 type GraphLayout = 'cose' | 'breadthfirst'
 
 defineProps<{
@@ -87,6 +89,7 @@ const emit = defineEmits<{
   fitView: []
   search: [keyword: string]
   showEntities: []
+  createOverlay: []
   toggleFullscreen: []
   toggleReview: [enabled: boolean]
 }>()

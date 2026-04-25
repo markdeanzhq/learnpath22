@@ -6,6 +6,8 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, Field
 
+PATH_MODE_PATTERN = "^(standard|compressed|theory_first|practice_first)$"
+
 
 class SubmitProfileRequest(BaseModel):
     math_level: int = Field(default=1, ge=1, le=5)
@@ -15,6 +17,10 @@ class SubmitProfileRequest(BaseModel):
     practice_weight: float = Field(default=0.5, ge=0.0, le=1.0)
     weekly_hours: float = Field(default=10.0, gt=0)
     deadline_weeks: Optional[int] = Field(default=None, ge=1)
+    path_mode_preference: Optional[str] = Field(default=None, pattern=PATH_MODE_PATTERN)
+    persona_label: Optional[str] = Field(default=None, max_length=100)
+    persona_summary: Optional[str] = None
+    persona_evidence: Optional[str] = None
     raw_answers_json: Optional[str] = None
     collector_trace_json: Optional[str] = None
 
@@ -29,6 +35,10 @@ class ProfileResponse(BaseModel):
     practice_weight: float
     weekly_hours: float
     deadline_weeks: Optional[int]
+    path_mode_preference: Optional[str] = None
+    persona_label: Optional[str] = None
+    persona_summary: Optional[str] = None
+    persona_evidence: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -36,7 +46,7 @@ class ProfileResponse(BaseModel):
 
 class QuestionOption(BaseModel):
     label: str
-    value: Union[float, int]
+    value: Union[float, int, str]
 
 
 class CollectorQuestion(BaseModel):
@@ -54,7 +64,7 @@ class CollectorQuestionsResponse(BaseModel):
 class AnswerItem(BaseModel):
     question_id: str = ""
     field: str = ""  # LLM 问卷用 field 映射
-    value: Union[float, int]
+    value: Union[float, int, str]
 
 
 class SubmitAnswersRequest(BaseModel):

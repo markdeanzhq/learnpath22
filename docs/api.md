@@ -135,6 +135,15 @@ project preview -> select candidate -> reconfirm
 | POST | /projects/{id}/collector/questions | 获取画像采集问题 |
 | POST | /projects/{id}/collector/submit | 提交问卷答案 |
 
+画像字段分为两类：
+- 规划权威输入：`math_level`、`coding_level`、`ml_level`、`theory_weight`、`practice_weight`、`weekly_hours`、`deadline_weeks`
+- 展示与解释字段：`path_mode_preference`、`persona_label`、`persona_summary`、`persona_evidence`
+
+说明：
+- `path_mode_preference` 支持 `standard`、`compressed`、`theory_first`、`practice_first`
+- persona 字段只进入展示、解释与 audit 快照，不改变同一 numeric profile 下的规划排序
+- LLM 自适应问卷必须输出 schema-constrained 结构；失败时回退静态问卷
+
 ## 路径规划
 
 | 方法 | 路径 | 说明 |
@@ -142,6 +151,14 @@ project preview -> select candidate -> reconfirm
 | POST | /projects/{id}/plans | 生成学习路径 |
 | GET | /projects/{id}/plans/latest | 获取最新路径 |
 | POST | /projects/{id}/replans | 触发重规划 |
+
+路径请求支持 `path_mode`：
+- `standard`：默认完整路径
+- `compressed`：保留目标与全部 `REQUIRES` ancestors，只裁剪 optional reinforcement / RELATED-only additions
+- `theory_first`：理论内容优先，但不破坏硬依赖
+- `practice_first`：实践内容优先，但不破坏硬依赖
+
+未知 `path_mode` 返回 `422 INVALID_PATH_MODE`。当 compressed mode 的 mandatory closure 已超预算时，返回 `budget_status=over_budget_required_closure`，不会裁剪硬依赖链。
 
 **路径响应结构:**
 ```json
@@ -246,19 +263,75 @@ project preview -> select candidate -> reconfirm
 | GET | /projects/{id}/graph/entities | 获取 Stage / Resource 等扩展实体的只读摘要 |
 | POST | /graph/seed | 同步 Domain Pack 到 Neo4j（全局操作） |
 
+`GET /projects/{id}/graph` 的 `scope` 语义：
+- `scope=domain`：当前机器学习 Domain Pack 的完整领域图
+- `scope=project`：项目全图，等于 baseline-minus-review 加 active overlay review graph
+- `scope=path&path_id=latest`：最新路径子图；只接受 `latest`，非 `latest` 返回 `422 INVALID_GRAPH_PATH_ID`
+
+path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnapshot` 构造 induced subgraph，不再查询 baseline-only Neo4j 子图，也不在 path 缺失时回退 project/domain graph。响应会携带 `path_id`、`node_ids`、`missing_node_ids`、`is_empty`，无 latest plan 时返回空图并设置 `empty_reason=project_latest_plan_missing`。
+
+非法 scope 返回 `422 INVALID_GRAPH_SCOPE`。所有图元素都会返回 `origin` 与 `scope`；overlay 元素额外返回 `validation_status`、`review_status`、`planning_enabled`、`promotion_status`、source/provenance/validation metadata。
+
 说明：
+- 无 latest plan 但已有 overlay draft 时，`scope=project` 仍返回项目图，不再把项目视为 `project_latest_plan_missing` 空态
 - `graph/entities` 只返回扩展实体展示数据，不会触发图谱重同步
 - 前端 Knowledge 页使用该接口展示 `Stage` / `Resource` 只读信息
 - Path / Dashboard 的“在图谱中定位”会跳转到 Knowledge，并由图谱画布聚焦对应 `nodeId`
+
+### Overlay Source、Extraction 与审核
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /projects/{id}/graph/overlay/sources | 创建 pasted text 或 search URL source |
+| POST | /projects/{id}/graph/overlay/extraction-sessions | 从 source IDs 创建抽取会话 |
+| GET | /projects/{id}/graph/overlay/extraction-sessions/{session_id} | 读取抽取会话详情 |
+| PATCH | /projects/{id}/graph/overlay/nodes/{element_id}/review | 只更新 overlay node 的 review 状态 |
+| PATCH | /projects/{id}/graph/overlay/edges/{element_id}/review | 只更新 overlay edge 的 review 状态 |
+| PATCH | /projects/{id}/graph/overlay/resources/{element_id}/review | 只更新 overlay resource 的 review 状态 |
+| PATCH | /projects/{id}/graph/overlay/nodes/{element_id}/planning | 只更新 overlay node 的 planning 开关 |
+| PATCH | /projects/{id}/graph/overlay/edges/{element_id}/planning | 只更新 overlay edge 的 planning 开关 |
+| PATCH | /projects/{id}/graph/overlay/resources/{element_id}/planning | 只更新 overlay resource 的 planning 开关 |
+
+说明：
+- baseline review 只允许 `pending|confirmed|removed`，`rejected` 返回 `422`；overlay review 允许 `pending|confirmed|rejected|removed`
+- `review_status` 与 `planning_enabled` 独立更新，互不隐式改写 validation/source/provenance/promotion 字段
+- unknown origin 或 unknown lifecycle status 在前端以安全未知状态展示，并禁用会影响审核或规划的操作
+- resource `planning_enabled` 只影响 resource 自身显示/推广资格，不改变 node/edge planner-visible 集合、`ProjectGraphSnapshot`、path graph、goal resolution、planner、replan 或 `project_graph_hash`
+- `custom_extension` mode 在创建 extraction session 前检查搜索 readiness；未就绪返回 `503 SEARCH_NOT_READY`
+- 搜索未就绪只阻断 custom extension，baseline/project graph 浏览仍可用
+- overlay ID 使用 `po:{project_id}:n|e|r:{hash}` 格式并做 collision 检查
+
+### Promotion Preview 与 Commit
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /projects/{id}/graph/overlay/promotion/preview | 校验可推广候选并返回 dry-run 结果 |
+| POST | /projects/{id}/graph/overlay/promotion/commit | 将合法 overlay 候选推广入 Domain Pack |
+| GET | /projects/{id}/graph/overlay/projection/status | 查询 overlay projection canonical status |
+
+说明：
+- preview 执行 field validation、duplicate detection、edge legality、DAG validation 与 pack reload validation，不写入 Domain Pack
+- commit 需要 `DOMAIN_PACK_PROMOTION_ENABLED=true` 且通过 admin secret 校验
+- flag 未开启返回 `403 PROMOTION_DISABLED`，secret 校验失败返回 `403 PROMOTION_FORBIDDEN`
+- commit 使用 temp file 写入、原子替换、reload、canonical hash rebuild 和 Neo4j baseline sync，保证用户可见 all-or-nothing 语义
+- promotion batch/item 会持久化 source project、session、sources、provenance、reviewer/admin、baseline pack hash 与 resulting pack hash
+- promoted overlay candidate 进入只读归档态，active graph、session detail、planner、path graph 与 overlay projection 默认隐藏；重复 commit 已归档集合返回安全 no-op/replay 语义，不重复写 pack、batch/item 或 Neo4j entity
+- projection status 枚举固定为 `missing|empty|ok|drifted|error`：无 overlay payload 为 `empty`，有 payload 无 projection state 为 `missing`，hash 匹配为 `ok`，hash 不一致为 `drifted`，异常为 `error`；响应保留 `reason`、`overlay_hash`、`projected_hash` 与 `projected_at`
 
 ## 搜索
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | /projects/{id}/search | 搜索学习资料（在线增强） |
+| POST | /projects/{id}/search-results | 保存 selected search result |
+| GET | /projects/{id}/search-results | 列出项目级持久化搜索结果 |
+| POST | /projects/{id}/search-results/bridge-overlay-sources | 幂等桥接 persisted search result 为 overlay source |
 
 说明：
 - 搜索能力服务于学习资料补充，不参与路径主链正确性判定
+- selected search result 可持久化为 project 级 source，刷新页面后仍可恢复 title、snippet、summary、quality、binding state
+- saved-search bridge 复用 `search_url` source type；同一 `(project_id, result_id)` 单调映射到稳定 `source_id`，重复点击或 replay 不创建重复 source，跨项目 result/source ID 会被拒绝
+- extraction session request 只接受 `source_ids[]`，不接受 `result_ids[]` 或混合字段；Knowledge drawer 会先把已保存搜索结果桥接为 `source_ids[]` 再创建 extraction session
 - 搜索结果可在前端路径页中进一步手动绑定到指定阶段
 
 ## 路径资源增强
@@ -268,6 +341,7 @@ project preview -> select candidate -> reconfirm
 | GET | /projects/{id}/plans/{path_id}/resources | 获取当前路径的阶段资源列表（静态保底 + 已绑定动态资源） |
 | POST | /projects/{id}/plans/{path_id}/resources/recommend | 按阶段自动补充 Tavily 候选资源 |
 | POST | /projects/{id}/plans/{path_id}/resources/bind | 手动把搜索结果绑定到指定阶段或节点 |
+| POST | /projects/{id}/resources/bindings | 绑定项目级资源到 project node 或 path stage |
 
 **手动绑定请求体示例：**
 ```json
