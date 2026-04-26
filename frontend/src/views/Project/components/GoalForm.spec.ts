@@ -3,7 +3,13 @@ import { defineComponent, h, nextTick } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import GoalForm from './GoalForm.vue'
 
-const { createMock, previewMock, previewForProjectMock, confirmGoalResolutionMock, setCurrentProjectMock } = vi.hoisted(() => ({
+const {
+  createMock,
+  previewMock,
+  previewForProjectMock,
+  confirmGoalResolutionMock,
+  setCurrentProjectMock,
+} = vi.hoisted(() => ({
   createMock: vi.fn(),
   previewMock: vi.fn(),
   previewForProjectMock: vi.fn(),

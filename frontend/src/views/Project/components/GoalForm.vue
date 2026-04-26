@@ -107,7 +107,9 @@
           </div>
           <div class="candidate-meta">
             <el-tag>{{ goalTypeLabel(candidate.goal_type) }}</el-tag>
-            <el-tag type="info">{{ candidate.resolve_source }}</el-tag>
+            <el-tag type="info" :title="resolveSourceMeta(candidate.resolve_source).detail || candidate.resolve_source">
+              {{ resolveSourceMeta(candidate.resolve_source).label }}
+            </el-tag>
             <el-tag type="warning">评分 {{ formatScore(candidate.score) }}</el-tag>
           </div>
         </div>
@@ -115,8 +117,16 @@
         <p class="candidate-explanation">{{ candidate.explanation }}</p>
 
         <div class="candidate-targets">
-          <span class="targets-label">目标节点：</span>
-          <span>{{ candidate.target_node_ids.join('、') }}</span>
+          <span class="targets-label">目标知识点：</span>
+          <el-tag
+            v-for="target in candidateTargetRefs(candidate)"
+            :key="target.node_id"
+            size="small"
+            effect="plain"
+            :title="`节点 ID：${target.node_id}`"
+          >
+            {{ target.node_name }}
+          </el-tag>
         </div>
       </el-card>
     </div>
@@ -126,8 +136,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
-import { projectApi, type GoalResolutionPreviewResponse, type GoalType, type GoalTypeSelection, type Project } from '@/api/modules/project'
+import { projectApi, type GoalResolutionCandidate, type GoalResolutionPreviewResponse, type GoalType, type GoalTypeSelection, type Project } from '@/api/modules/project'
 import { useProjectStore } from '@/stores/project'
+import { resolveSourceMeta } from '@/utils/displayLabels'
 
 interface GoalFormState {
   title: string
@@ -226,6 +237,16 @@ function goalTypeLabel(type: string) {
 
 function formatScore(score: number) {
   return score.toFixed(2)
+}
+
+function candidateTargetRefs(candidate: GoalResolutionCandidate) {
+  if (candidate.target_nodes?.length) {
+    return candidate.target_nodes
+  }
+  return candidate.target_node_ids.map((nodeId, index) => ({
+    node_id: nodeId,
+    node_name: candidate.target_node_names?.[index] || `未识别知识点（${nodeId}）`,
+  }))
 }
 
 function formatExpiresAt(expiresAt: string) {

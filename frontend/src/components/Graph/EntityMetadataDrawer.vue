@@ -16,7 +16,7 @@
               <div class="entity-card-header">
                 <div>
                   <div class="entity-title">{{ stage.order }}. {{ stage.name }}</div>
-                  <div class="entity-subtitle">{{ stage.id }}</div>
+                  <div class="entity-subtitle">追溯 ID：{{ stage.id }}</div>
                 </div>
                 <el-tag size="small">{{ stage.node_ids.length }} 节点</el-tag>
               </div>
@@ -39,7 +39,7 @@
                     type="success"
                     effect="plain"
                   >
-                    {{ resourceId }}
+                    {{ resourceTitleById.get(resourceId) || resourceId }}
                   </el-tag>
                   <span v-if="stage.resource_ids.length === 0" class="meta-empty">暂无关联资源</span>
                 </div>
@@ -62,9 +62,11 @@
               <div class="entity-card-header">
                 <div>
                   <div class="entity-title">{{ resource.title }}</div>
-                  <div class="entity-subtitle">{{ resource.id }}</div>
+                  <div class="entity-subtitle">追溯 ID：{{ resource.id }}</div>
                 </div>
-                <el-tag size="small" type="warning">{{ resource.resource_type }}</el-tag>
+                <el-tag size="small" :type="resourceTypeMeta(resource.resource_type).tagType" :title="resource.resource_type">
+                  {{ resourceTypeMeta(resource.resource_type).label }}
+                </el-tag>
               </div>
               <p class="entity-description">{{ resource.description || '未提供说明' }}</p>
               <div class="entity-meta-row">
@@ -95,6 +97,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { GraphEntityMetadata } from '@/api/modules/graph'
+import { resourceTypeMeta } from '@/utils/displayLabels'
 
 const props = defineProps<{
   modelValue: boolean
@@ -110,6 +113,10 @@ const visible = computed({
   get: () => props.modelValue,
   set: (value: boolean) => emit('update:modelValue', value),
 })
+
+const resourceTitleById = computed(() => new Map(
+  (props.metadata?.resources ?? []).map((resource) => [resource.id, resource.title]),
+))
 </script>
 
 <style scoped>

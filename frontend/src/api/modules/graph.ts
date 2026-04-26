@@ -1,7 +1,7 @@
 import request from '../request'
 
 export type GraphScope = 'domain' | 'project' | 'path'
-export const DEFAULT_GRAPH_SCOPE: GraphScope = 'project'
+export const DEFAULT_GRAPH_SCOPE: GraphScope = 'path'
 export const GRAPH_PATH_ID_LATEST = 'latest'
 export type GraphEmptyReason = 'project_latest_plan_missing' | string
 export type ReviewStatus = 'pending' | 'confirmed' | 'removed' | 'rejected'
@@ -88,12 +88,13 @@ export interface OverlayProjectionStatusResponse {
 export interface GraphSyncResponse {
   domain: string
   version: string
-  pack_hash: string
-  synced: boolean
+  pack_hash?: string
+  synced?: boolean
   forced?: boolean
   reason: 'unchanged' | 'changed' | 'forced' | string
   nodes: number
   edges: number
+  message?: string
   overlay_projection?: OverlayProjectionStatusResponse | Record<string, unknown>
 }
 
@@ -308,7 +309,7 @@ export interface GraphEntityMetadata {
 }
 
 export function buildGraphQuery(params: GetGraphParams = {}): GetGraphParams {
-  const scope = params.scope === 'domain' || params.scope === 'path' ? params.scope : DEFAULT_GRAPH_SCOPE
+  const scope = params.scope === 'domain' || params.scope === 'project' || params.scope === 'path' ? params.scope : DEFAULT_GRAPH_SCOPE
   const query: GetGraphParams = { scope }
 
   if (scope === 'path') {
@@ -335,7 +336,7 @@ export function buildPathGraphQuery(nodeId?: string | null): GraphRouteQuery {
 
 export function normalizeGraphScope(value: unknown): GraphScope {
   const nextValue = Array.isArray(value) ? value[0] : value
-  if (nextValue === 'domain' || nextValue === 'path') {
+  if (nextValue === 'domain' || nextValue === 'project' || nextValue === 'path') {
     return nextValue
   }
   return DEFAULT_GRAPH_SCOPE
@@ -354,6 +355,8 @@ export const graphApi = {
     request.get(`/projects/${projectId}/graph`, {
       params: buildGraphQuery(params),
     }),
+  seedGraph: (): Promise<GraphSyncResponse> =>
+    request.post('/graph/seed'),
   syncGraph: (projectId: string): Promise<GraphSyncResponse> =>
     request.post(`/projects/${projectId}/graph/sync`),
   getGraphEntities: (projectId: string): Promise<GraphEntityMetadata> =>

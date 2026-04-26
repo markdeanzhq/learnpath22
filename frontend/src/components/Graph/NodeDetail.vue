@@ -31,13 +31,13 @@
             </el-descriptions-item>
             <template v-if="node.origin === 'overlay'">
               <el-descriptions-item label="校验状态">
-                <el-tag size="small" :type="getValidationTagType(node.validation_status)">
-                  {{ node.validation_status || 'unknown' }}
+                <el-tag size="small" :type="validationStatusMeta(node.validation_status).tagType" :title="validationStatusMeta(node.validation_status).detail">
+                  {{ validationStatusMeta(node.validation_status).label }}
                 </el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="推广状态">
-                <el-tag size="small" :type="getPromotionTagType(node.promotion_status)">
-                  {{ node.promotion_status || 'unknown' }}
+                <el-tag size="small" :type="promotionStatusMeta(node.promotion_status).tagType" :title="promotionStatusMeta(node.promotion_status).detail">
+                  {{ promotionStatusMeta(node.promotion_status).label }}
                 </el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="参与规划">
@@ -100,14 +100,14 @@
               </div>
 
               <div class="edge-meta edge-meta-block">
-                <span class="edge-meta-label">reason</span>
+                <span class="edge-meta-label">关系依据</span>
                 <span class="edge-meta-value">{{ edge.reason || '未提供' }}</span>
               </div>
 
               <div v-if="edge.origin === 'overlay'" class="edge-meta">
-                <span class="edge-meta-label">overlay</span>
-                <span class="edge-meta-value">
-                  {{ edge.validation_status || 'unknown' }} / {{ edge.promotion_status || 'unknown' }}
+                <span class="edge-meta-label">扩展状态</span>
+                <span class="edge-meta-value" :title="`校验：${edge.validation_status || 'unknown'} / 推广：${edge.promotion_status || 'unknown'}`">
+                  {{ validationStatusMeta(edge.validation_status).label }} / {{ promotionStatusMeta(edge.promotion_status).label }}
                 </span>
               </div>
 
@@ -146,6 +146,7 @@
 import { computed, ref, watch } from 'vue'
 import type { GraphEdgeData, GraphNodeData, ReviewStatus } from '@/api/modules/graph'
 import { CATEGORY_COLORS, CATEGORY_LABELS, GRAPH_RELATION_LEGEND } from './graphMeta'
+import { promotionStatusMeta, validationStatusMeta } from '@/utils/displayLabels'
 
 type SelectedAdjacentEdge = GraphEdgeData & {
   direction: 'incoming' | 'outgoing'
@@ -270,18 +271,6 @@ function getStatusTagType(status?: string | null) {
   if (normalized === 'removed' || normalized === 'rejected') return 'danger'
   if (normalized === 'pending') return 'warning'
   return 'danger'
-}
-
-function getValidationTagType(status?: string | null) {
-  if (status === 'valid') return 'success'
-  if (status === 'invalid') return 'danger'
-  return 'warning'
-}
-
-function getPromotionTagType(status?: string | null) {
-  if (status === 'promoted') return 'success'
-  if (status === 'promotion_ready') return 'warning'
-  return 'info'
 }
 
 function getRelationLabel(type?: string | null) {

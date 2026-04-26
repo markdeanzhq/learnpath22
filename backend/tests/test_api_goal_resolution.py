@@ -33,6 +33,11 @@ async def test_goal_resolution_preview_returns_session_and_candidates(client, db
     assert data["effective_goal_type"] == "domain"
     assert data["recommended_candidate_id"] == data["candidates"][0]["candidate_id"]
     assert 1 <= len(data["candidates"]) <= 5
+    for candidate in data["candidates"]:
+        assert len(candidate["target_node_names"]) == len(candidate["target_node_ids"])
+        assert len(candidate["target_nodes"]) == len(candidate["target_node_ids"])
+        assert [node["node_id"] for node in candidate["target_nodes"]] == candidate["target_node_ids"]
+        assert [node["node_name"] for node in candidate["target_nodes"]] == candidate["target_node_names"]
 
     expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
     now = datetime.now(timezone.utc)

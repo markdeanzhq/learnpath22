@@ -26,6 +26,7 @@ const BASELINE_REVIEW_STATUSES = new Set(['pending', 'confirmed', 'removed'])
 const OVERLAY_REVIEW_STATUSES = new Set(['pending', 'confirmed', 'removed', 'rejected'])
 const REVIEW_ACTIONABLE_STATUSES = OVERLAY_REVIEW_STATUSES
 const UNKNOWN_LIFECYCLE = 'unknown'
+const PLANNING_DISABLED_CLASS = 'planning-disabled'
 
 const props = withDefaults(defineProps<{
   elements: any[]
@@ -181,7 +182,7 @@ const cytoscapeStyle: any[] = [
     },
   },
   {
-    selector: 'node[origin = "overlay"][planning_enabled = 0], node[origin = "overlay"][planning_enabled = false]',
+    selector: 'node.planning-disabled',
     style: {
       'opacity': 0.45,
     },
@@ -221,7 +222,7 @@ const cytoscapeStyle: any[] = [
     },
   },
   {
-    selector: 'edge[origin = "overlay"][planning_enabled = 0], edge[origin = "overlay"][planning_enabled = false]',
+    selector: 'edge.planning-disabled',
     style: {
       'opacity': 0.35,
     },
@@ -311,6 +312,10 @@ function normalizeLifecycleValue(value: unknown) {
     return UNKNOWN_LIFECYCLE
   }
   return value
+}
+
+function isPlanningDisabled(data?: Record<string, any> | null) {
+  return data?.planning_enabled === false || data?.planning_enabled === 0
 }
 
 function getSingleMenuElement(target: any, targetType?: MenuTargetType | null) {
@@ -440,16 +445,26 @@ function openContextMenu(evt: any, targetType: MenuTargetType) {
 }
 
 function normalizeElementLifecycleData(elements: any[]) {
-  return elements.map((element) => ({
-    ...element,
-    data: {
-      ...element.data,
-      origin: getElementOrigin(element.data),
-      validation_status: normalizeLifecycleValue(element.data?.validation_status),
-      review_status: getReviewStatus(element.data?.review_status),
-      promotion_status: normalizeLifecycleValue(element.data?.promotion_status),
-    },
-  }))
+  return elements.map((element) => {
+    const classes = new Set(String(element.classes || '').split(/\s+/).filter(Boolean))
+    if (isPlanningDisabled(element.data)) {
+      classes.add(PLANNING_DISABLED_CLASS)
+    } else {
+      classes.delete(PLANNING_DISABLED_CLASS)
+    }
+
+    return {
+      ...element,
+      classes: Array.from(classes).join(' '),
+      data: {
+        ...element.data,
+        origin: getElementOrigin(element.data),
+        validation_status: normalizeLifecycleValue(element.data?.validation_status),
+        review_status: getReviewStatus(element.data?.review_status),
+        promotion_status: normalizeLifecycleValue(element.data?.promotion_status),
+      },
+    }
+  })
 }
 
 function applyElementDataUpdates(nextElements: any[]) {
@@ -466,6 +481,9 @@ function applyElementDataUpdates(nextElements: any[]) {
     const target = cy.getElementById(element.data.id)
     if (target.length) {
       target.data(element.data)
+      if (typeof target.toggleClass === 'function') {
+        target.toggleClass(PLANNING_DISABLED_CLASS, isPlanningDisabled(element.data))
+      }
     }
   })
   return true

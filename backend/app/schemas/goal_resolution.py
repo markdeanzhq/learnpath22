@@ -12,10 +12,17 @@ class GoalResolutionPreviewRequest(BaseModel):
     domain: Optional[str] = None
 
 
+class GoalResolutionNodeRef(BaseModel):
+    node_id: str
+    node_name: str
+
+
 class GoalResolutionCandidateResponse(BaseModel):
     candidate_id: str
     goal_type: Literal["domain", "concept", "problem"]
     target_node_ids: list[str]
+    target_node_names: list[str] = Field(default_factory=list)
+    target_nodes: list[GoalResolutionNodeRef] = Field(default_factory=list)
     mode: str
     description: str
     template_id: Optional[str] = None

@@ -34,7 +34,7 @@ export interface LlmTestResponse {
   reason?: string
 }
 
-export type HealthServiceStatus = 'ok' | 'skipped' | 'error' | 'blocked' | 'missing' | 'unknown'
+export type HealthServiceStatus = 'ok' | 'skipped' | 'error' | 'blocked' | 'missing' | 'stale' | 'drifted' | 'unknown'
 
 export interface SearchHealthResponse {
   status: 'ok' | 'skipped' | 'error'

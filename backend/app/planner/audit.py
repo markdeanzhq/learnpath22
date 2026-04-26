@@ -26,6 +26,7 @@ def build_plan_audit(
     budget_status: str | None = None,
     included_nodes: list[dict[str, Any]] | None = None,
     excluded_nodes: list[dict[str, Any]] | None = None,
+    scoring_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "goal_result": goal_result,
@@ -61,4 +62,5 @@ def build_plan_audit(
         "closure_ids": closure_ids or [],
         "reinforced_ids": reinforced_ids or [],
         "final_ids": final_ids or [],
+        "scoring_config": scoring_config,
     }

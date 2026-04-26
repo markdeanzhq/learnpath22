@@ -62,10 +62,10 @@
           <el-table-column label="相关度" width="100">
             <template #default="{ row }">{{ (row.score * 100).toFixed(0) }}%</template>
           </el-table-column>
-          <el-table-column label="Overlay" width="150">
+          <el-table-column label="项目扩展" width="150">
             <template #default="{ row, $index }">
               <el-button link type="primary" :loading="overlayAddingUrl === row.url" @click="addResultToOverlay(row, $index)">
-                加入 overlay
+                加入项目扩展
               </el-button>
             </template>
           </el-table-column>
@@ -81,11 +81,11 @@
               </template>
             </el-table-column>
             <el-table-column prop="query" label="搜索词" min-width="160" />
-            <el-table-column label="Overlay Source" width="170">
+            <el-table-column label="扩展来源" width="170">
               <template #default="{ row }">
                 <el-tag v-if="row.source_id" type="success" size="small">已桥接</el-tag>
                 <el-button v-else link type="primary" :loading="overlayAddingResultId === row.result_id" @click="bridgePersistedResult(row)">
-                  加入 overlay
+                  加入项目扩展
                 </el-button>
               </template>
             </el-table-column>
@@ -212,9 +212,9 @@ async function bridgePersistedResult(result: PersistedSearchResult) {
     const bridged = await searchApi.bridgeOverlaySources(projectId.value, [result.result_id])
     const sourceId = bridged.source_ids[0]
     result.source_id = sourceId
-    ElMessage.success(bridged.results[0]?.reused ? '已复用 overlay source' : '已加入 overlay source')
+    ElMessage.success(bridged.results[0]?.reused ? '已复用项目扩展来源' : '已加入项目扩展来源')
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '加入 overlay 失败')
+    ElMessage.error(e?.response?.data?.error || '加入项目扩展失败')
   } finally {
     overlayAddingResultId.value = ''
   }

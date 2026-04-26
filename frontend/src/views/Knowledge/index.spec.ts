@@ -75,7 +75,7 @@ vi.mock('@/stores/project', () => ({
 
 vi.mock('@/api/modules/graph', () => {
   const buildGraphQuery = (params: any = {}) => {
-    const scope = params.scope === 'domain' || params.scope === 'path' ? params.scope : 'project'
+    const scope = ['domain', 'project', 'path'].includes(params.scope) ? params.scope : 'path'
     const query: any = { scope }
     if (scope === 'path') query.path_id = params.path_id || 'latest'
     if (params.nodeId) query.nodeId = params.nodeId
@@ -86,7 +86,7 @@ vi.mock('@/api/modules/graph', () => {
     buildGraphQuery,
     normalizeGraphScope: (value: any) => {
       const nextValue = Array.isArray(value) ? value[0] : value
-      return nextValue === 'domain' || nextValue === 'path' ? nextValue : 'project'
+      return nextValue === 'domain' || nextValue === 'project' || nextValue === 'path' ? nextValue : 'path'
     },
     normalizeGraphPathId: (scope: string, value: any) => {
       const nextValue = Array.isArray(value) ? value[0] : value
@@ -172,7 +172,7 @@ describe('Knowledge overlay entry', () => {
     vi.clearAllMocks()
     routeState.query = {}
     graphGetGraphMock.mockResolvedValue({
-      scope: 'project',
+      scope: 'path',
       elements: [],
       is_empty: true,
     })
@@ -206,7 +206,11 @@ describe('Knowledge overlay entry', () => {
       warnings: [],
       resources: [],
     })
-    graphCommitOverlayPromotionMock.mockResolvedValue({ reason: 'promoted', status: 'ready', batch: { status: 'promoted' } })
+    graphCommitOverlayPromotionMock.mockResolvedValue({
+      reason: 'promoted',
+      status: 'ready',
+      batch: { status: 'promoted' },
+    })
     graphGetOverlayProjectionStatusMock.mockResolvedValue({
       project_id: 'project-001',
       status: 'empty',
@@ -217,7 +221,15 @@ describe('Knowledge overlay entry', () => {
     searchListPersistedResultsMock.mockResolvedValue([])
     searchBridgeOverlaySourcesMock.mockResolvedValue({
       source_ids: ['src-saved-001'],
-      results: [{ result_id: 'result-001', source_id: 'src-saved-001', source_type: 'search_url', reused: true, repaired: false }],
+      results: [
+        {
+          result_id: 'result-001',
+          source_id: 'src-saved-001',
+          source_type: 'search_url',
+          reused: true,
+          repaired: false,
+        },
+      ],
     })
     resourceBindProjectResourceMock.mockResolvedValue({ id: 'binding-001' })
   })
@@ -242,13 +254,26 @@ describe('Knowledge overlay entry', () => {
     expect(successMock).toHaveBeenCalled()
   })
 
-  it('falls back invalid scope query to project graph safely', async () => {
+  it('opens the latest path graph by default', async () => {
+    mountKnowledge()
+    await flushPromises()
+
+    expect(graphGetGraphMock).toHaveBeenCalledWith('project-001', {
+      scope: 'path',
+      path_id: 'latest',
+    })
+  })
+
+  it('falls back invalid scope query to latest path graph safely', async () => {
     routeState.query = { scope: 'bad-scope' }
 
     mountKnowledge()
     await flushPromises()
 
-    expect(graphGetGraphMock).toHaveBeenCalledWith('project-001', { scope: 'project' })
+    expect(graphGetGraphMock).toHaveBeenCalledWith('project-001', {
+      scope: 'path',
+      path_id: 'latest',
+    })
   })
 
   it('loads path deep link with latest path id and selected node', async () => {
@@ -277,6 +302,7 @@ describe('Knowledge overlay entry', () => {
   })
 
   it('writes toolbar path scope selection back to the route', async () => {
+    routeState.query = { scope: 'project' }
     const wrapper = mountKnowledge()
     await flushPromises()
 
@@ -303,7 +329,8 @@ describe('Knowledge overlay entry', () => {
     expect(replaceMock).toHaveBeenLastCalledWith({
       name: 'Knowledge',
       query: {
-        scope: 'project',
+        scope: 'path',
+        path_id: 'latest',
         nodeId: 'ml_c01',
         sessionId: 'sess-001',
       },
@@ -336,7 +363,7 @@ describe('Knowledge overlay entry', () => {
     ;(wrapper.vm as any).overlayError = 'old error'
     ;(wrapper.vm as any).lastOverlaySession = { session: { session_id: 'old-session' } }
 
-    await (wrapper.vm as any).onScopeChange('path')
+    await (wrapper.vm as any).onScopeChange('project')
     await flushPromises()
 
     expect((wrapper.vm as any).overlayDrawerVisible).toBe(false)
@@ -383,7 +410,7 @@ describe('Knowledge overlay entry', () => {
     ;(wrapper.vm as any).overlayForm.mode = 'custom_extension'
     await (wrapper.vm as any).submitOverlayDraft()
 
-    expect((wrapper.vm as any).overlayError).toContain('baseline 图谱浏览不受影响')
+    expect((wrapper.vm as any).overlayError).toContain('领域基线图谱浏览不受影响')
     expect((wrapper.vm as any).graphState).toBe('empty')
   })
 
@@ -452,6 +479,7 @@ describe('Knowledge overlay entry', () => {
   })
 
   it('previews and commits promotion without persisting admin secret', async () => {
+    routeState.query = { scope: 'project' }
     const wrapper = mountKnowledge()
     await flushPromises()
 

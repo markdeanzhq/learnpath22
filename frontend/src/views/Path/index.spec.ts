@@ -7,6 +7,7 @@ const {
   pushMock,
   replanMock,
   loadLatestMock,
+  refreshServerStatusMock,
   planApiGetExplanationMock,
   resourceGetPlanResourcesMock,
   resourceRecommendMock,
@@ -14,10 +15,13 @@ const {
   currentProjectState,
   currentPlanState,
   lastReplanResultState,
+  llmApiKeySetState,
+  llmExplanationPolishState,
 } = vi.hoisted(() => ({
   pushMock: vi.fn(),
   replanMock: vi.fn(),
   loadLatestMock: vi.fn(),
+  refreshServerStatusMock: vi.fn(),
   planApiGetExplanationMock: vi.fn(),
   resourceGetPlanResourcesMock: vi.fn(),
   resourceRecommendMock: vi.fn(),
@@ -46,10 +50,23 @@ const {
   lastReplanResultState: {
     value: null as any,
   },
+  llmApiKeySetState: {
+    value: true,
+  },
+  llmExplanationPolishState: {
+    value: false,
+  },
 }))
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
+}))
+
+vi.mock('pinia', () => ({
+  storeToRefs: () => ({
+    llmApiKeySet: llmApiKeySetState,
+    llmExplanationPolish: llmExplanationPolishState,
+  }),
 }))
 
 vi.mock('element-plus', () => ({
@@ -85,6 +102,24 @@ vi.mock('@/stores/plan', () => ({
     loading: false,
     replan: replanMock,
     loadLatest: loadLatestMock,
+  }),
+}))
+
+vi.mock('@/stores/settings', () => ({
+  useSettingsStore: () => ({
+    get llmApiKeySet() {
+      return llmApiKeySetState.value
+    },
+    set llmApiKeySet(value) {
+      llmApiKeySetState.value = value
+    },
+    get llmExplanationPolish() {
+      return llmExplanationPolishState.value
+    },
+    set llmExplanationPolish(value) {
+      llmExplanationPolishState.value = value
+    },
+    refreshServerStatus: refreshServerStatusMock,
   }),
 }))
 
@@ -145,6 +180,36 @@ function mountPathIndex() {
   })
 }
 
+function createExplanationResponse(overrides: Record<string, any> = {}) {
+  return {
+    node_explanations: [],
+    ordering_explanations: [],
+    stage_explanations: [],
+    budget_explanation: null,
+    reinforcement_explanations: [],
+    dependency_chain_explanations: [],
+    meta: {
+      polish: {
+        requested: false,
+        applied: false,
+        scope: [],
+        fallback_reason: null,
+      },
+    },
+    ...overrides,
+  }
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: any) => void
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve
+    reject = nextReject
+  })
+  return { promise, resolve, reject }
+}
+
 describe('Path page goal reconfirm flow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -166,9 +231,76 @@ describe('Path page goal reconfirm flow', () => {
       stages: [],
     }
     lastReplanResultState.value = null
-    loadLatestMock.mockResolvedValue(undefined)
-    planApiGetExplanationMock.mockResolvedValue({ summary: 'ok' })
+    llmApiKeySetState.value = true
+    llmExplanationPolishState.value = false
+    refreshServerStatusMock.mockResolvedValue(undefined)
+    loadLatestMock.mockImplementation(async () => {
+      currentPlanState.value = {
+        id: 'plan-001',
+        version: 1,
+        budget_status: 'feasible',
+        total_hours: 12,
+        stages: [],
+      }
+    })
+    planApiGetExplanationMock.mockResolvedValue(createExplanationResponse())
     resourceGetPlanResourcesMock.mockResolvedValue({ plan_id: 'plan-001', stages: [] })
+  })
+
+  it('uses llmExplanationPolish from settings store on initial explanation load', async () => {
+    llmExplanationPolishState.value = true
+
+    mountPathIndex()
+    await flushPromises()
+
+    expect(refreshServerStatusMock).toHaveBeenCalled()
+    expect(planApiGetExplanationMock.mock.calls[0]?.[0]).toBe('project-001')
+    expect(planApiGetExplanationMock.mock.calls[0]?.[1]).toBe(true)
+  })
+
+  it('keeps the newest explanation response when requests resolve out of order', async () => {
+    planApiGetExplanationMock.mockResolvedValueOnce(createExplanationResponse())
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const requestA = createDeferred<any>()
+    const requestB = createDeferred<any>()
+    planApiGetExplanationMock
+      .mockImplementationOnce(() => requestA.promise)
+      .mockImplementationOnce(() => requestB.promise)
+
+    const vm = wrapper.vm as any
+    const reloadA = vm.reloadExplanation(false)
+    const reloadB = vm.reloadExplanation(true)
+
+    requestB.resolve(createExplanationResponse({
+      meta: {
+        polish: {
+          requested: true,
+          applied: true,
+          scope: ['node:ml-a01'],
+          fallback_reason: null,
+        },
+      },
+      node_explanations: [{ node_id: 'node-b', node_name: 'B', reason: 'newest', decision_type: 'target' }],
+    }))
+    await reloadB
+    await flushPromises()
+
+    expect(vm.explanation.meta.polish.applied).toBe(true)
+    expect(vm.explanation.node_explanations[0].node_id).toBe('node-b')
+    expect(vm.explanationError).toBe('')
+    expect(vm.explanationLoading).toBe(false)
+
+    requestA.reject({ response: { data: { error: 'stale failed' } } })
+    await reloadA
+    await flushPromises()
+
+    expect(vm.explanation.meta.polish.applied).toBe(true)
+    expect(vm.explanation.node_explanations[0].node_id).toBe('node-b')
+    expect(vm.explanationError).toBe('')
+    expect(vm.explanationLoading).toBe(false)
   })
 
   it('redirects to project-level reconfirm when replan hits GOAL_TARGETS_REMOVED', async () => {

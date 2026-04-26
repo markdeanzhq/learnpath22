@@ -34,7 +34,19 @@
           <StageTimeline :stages="planStore.currentPlan.stages" />
         </el-tab-pane>
         <el-tab-pane label="规划解释" name="explanation">
-          <Explanation :explanation="explanation" @polish-change="reloadExplanation" />
+          <Explanation
+            :explanation="explanation"
+            :loading="explanationLoading"
+            :error="explanationError"
+            :polish-requested="polishRequested"
+            :ai-availability="aiAvailability"
+            :ask-response="askResponse"
+            :ask-loading="askLoading"
+            :ask-error="askError"
+            @polish-change="reloadExplanation"
+            @retry="retryExplanation"
+            @ask-question="askExplanationQuestion"
+          />
         </el-tab-pane>
         <el-tab-pane label="推荐资源" name="resources">
           <div class="resources-section">
@@ -191,25 +203,29 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Guide } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
-import { planApi, type ExplanationResponse } from '@/api/modules/plan'
+import { useSettingsStore } from '@/stores/settings'
+import type { ExplanationAskRequest } from '@/api/modules/plan'
 import { searchApi, type SearchResultItem } from '@/api/modules/search'
 import { resourceApi, type PlanResourcesResponse } from '@/api/modules/resource'
 import StageTimeline from './components/StageTimeline.vue'
 import Explanation from './Explanation.vue'
+import { useExplanationState } from './useExplanationState'
 
 const router = useRouter()
 const projectStore = useProjectStore()
 const planStore = usePlanStore()
+const settingsStore = useSettingsStore()
+const { llmApiKeySet, llmExplanationPolish } = storeToRefs(settingsStore)
 
 const activeTab = ref('timeline')
 const loadError = ref('')
 const projectId = computed(() => projectStore.currentProject?.id)
-const explanation = ref<ExplanationResponse | null>(null)
 const searchQuery = ref('')
 const searchResults = ref<SearchResultItem[]>([])
 const searching = ref(false)
@@ -219,6 +235,21 @@ const resourcesLoading = ref(false)
 const recommendLoading = ref(false)
 const bindLoading = ref(false)
 const selectedStageName = ref('')
+const explanationState = useExplanationState(projectId)
+const {
+  explanation,
+  polishRequested,
+  loading: explanationLoading,
+  error: explanationError,
+  askResponse,
+  askLoading,
+  askError,
+} = explanationState
+const aiAvailability = computed(() => ({
+  llmApiKeySet: llmApiKeySet.value,
+  polishEnabled: llmExplanationPolish.value,
+  polishAvailable: llmApiKeySet.value && llmExplanationPolish.value,
+}))
 
 async function loadPlanResources() {
   if (!projectId.value || !planStore.currentPlan?.id) {
@@ -239,14 +270,16 @@ async function loadPlanResources() {
 }
 
 async function loadPath() {
-  if (!projectId.value) return
   loadError.value = ''
-  planStore.currentPlan = null
-  explanation.value = null
   planResources.value = null
+  selectedStageName.value = ''
+  planStore.currentPlan = null
+  explanationState.clear()
+  if (!projectId.value) return
   try {
+    await settingsStore.refreshServerStatus().catch(() => undefined)
     await planStore.loadLatest(projectId.value)
-    explanation.value = await planApi.getExplanation(projectId.value)
+    await explanationState.load(llmExplanationPolish.value)
     await loadPlanResources()
   } catch (e: any) {
     if (e?.response?.status !== 404) {
@@ -256,14 +289,15 @@ async function loadPath() {
 }
 
 async function reloadExplanation(polish: boolean) {
-  if (!projectId.value) return
-  try {
-    explanation.value = await planApi.getExplanation(projectId.value, polish)
-  } catch (e: any) {
-    if (e?.response?.status !== 404) {
-      loadError.value = e?.response?.data?.error || '加载解释失败'
-    }
-  }
+  await explanationState.load(polish)
+}
+
+async function retryExplanation() {
+  await explanationState.load()
+}
+
+async function askExplanationQuestion(payload: ExplanationAskRequest) {
+  await explanationState.ask(payload)
 }
 
 onMounted(() => loadPath())
@@ -274,7 +308,10 @@ async function handleReplan(mode: string) {
   if (!projectId.value) return
   try {
     await planStore.replan(projectId.value, mode as 'progress_aware' | 'profile_update')
-    await loadPlanResources()
+    await Promise.all([
+      explanationState.load(),
+      loadPlanResources(),
+    ])
     activeTab.value = 'diff'
     ElMessage.success('重规划完成')
   } catch (e: any) {

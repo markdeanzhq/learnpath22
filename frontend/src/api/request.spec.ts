@@ -51,7 +51,7 @@ describe('request interceptor', () => {
       }),
     ).rejects.toBeTruthy()
 
-    expect(errorMock).toHaveBeenCalledWith('EMPTY_CANDIDATES：目标文本命中了排除词，请改写描述后重试（negative_patterns_excluded_all）')
+    expect(errorMock).toHaveBeenCalledWith('未找到可确认的目标候选：目标文本命中了排除词，请改写描述后重试（追溯：目标文本被排除规则过滤）')
   })
 
   it('falls back to backend reason when reason_text is absent', async () => {
@@ -68,7 +68,7 @@ describe('request interceptor', () => {
       }),
     ).rejects.toBeTruthy()
 
-    expect(errorMock).toHaveBeenCalledWith('GOAL_DEFAULT_TARGETS_UNAVAILABLE：No effective target nodes available for goal_type=domain after applying pack default policy')
+    expect(errorMock).toHaveBeenCalledWith('默认目标节点不可用：No effective target nodes available for goal_type=domain after applying pack default policy')
   })
 
   it('falls back to backend error when neither reason_text nor reason is present', async () => {
@@ -84,6 +84,14 @@ describe('request interceptor', () => {
       }),
     ).rejects.toBeTruthy()
 
-    expect(errorMock).toHaveBeenCalledWith('INVALID_DOMAIN')
+    expect(errorMock).toHaveBeenCalledWith('当前仅支持默认机器学习领域')
+  })
+
+  it('does not show canceled request errors', async () => {
+    const canceled = { code: 'ERR_CANCELED', name: 'CanceledError', message: 'canceled' }
+
+    await expect(errorHandlerRef.current?.(canceled)).rejects.toBe(canceled)
+
+    expect(errorMock).not.toHaveBeenCalled()
   })
 })

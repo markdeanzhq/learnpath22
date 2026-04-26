@@ -75,6 +75,31 @@ def _ensure_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _node_name(node_id: str, nodes_by_id: dict[str, dict[str, object]]) -> str:
+    node = nodes_by_id.get(node_id)
+    name = node.get("name") if isinstance(node, dict) else None
+    return str(name) if isinstance(name, str) and name.strip() else node_id
+
+
+def _enrich_candidate_nodes(
+    candidates: list[dict[str, object]],
+    nodes_by_id: dict[str, dict[str, object]],
+) -> list[dict[str, object]]:
+    enriched: list[dict[str, object]] = []
+    for candidate in candidates:
+        target_node_ids = [str(node_id) for node_id in candidate.get("target_node_ids", [])]
+        target_nodes = [
+            {"node_id": node_id, "node_name": _node_name(node_id, nodes_by_id)}
+            for node_id in target_node_ids
+        ]
+        enriched.append({
+            **candidate,
+            "target_node_names": [node["node_name"] for node in target_nodes],
+            "target_nodes": target_nodes,
+        })
+    return enriched
+
+
 async def create_goal_resolution_preview(
     db: AsyncSession,
     *,
@@ -101,7 +126,7 @@ async def create_goal_resolution_preview(
     except UnsupportedGoalTypeError as exc:
         raise AppError(code=422, message="INVALID_GOAL_TYPE") from exc
 
-    candidates = list(result.get("candidates") or [])[:5]
+    candidates = _enrich_candidate_nodes(list(result.get("candidates") or [])[:5], pack.nodes_by_id)
     if not candidates:
         raise AppError(
             code=422,

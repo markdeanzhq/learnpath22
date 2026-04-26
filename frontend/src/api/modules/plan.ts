@@ -104,6 +104,121 @@ export interface DependencyChainExplanation {
   reason: string
 }
 
+export interface ExplanationProvenance {
+  truth_source: 'plan_audit_snapshot'
+  fallback_used: boolean
+  fallback_reasons: string[]
+  live_pack_fields: string[]
+}
+
+export interface PolishMeta {
+  requested: boolean
+  applied: boolean
+  scope: string[]
+  fallback_reason?: string | null
+}
+
+export interface OverviewSummary {
+  headline: string
+  goal_names: string[]
+  node_count: number
+  total_hours?: number | null
+  budget_status?: string | null
+  path_mode?: string | null
+  notes: string[]
+}
+
+export interface GoalResolutionSummary {
+  final_goal_text?: string | null
+  goal_type?: string | null
+  mode?: string | null
+  resolve_source?: string | null
+  target_node_ids: string[]
+  target_node_names: string[]
+  source_breakdown: Record<string, unknown>
+  warnings: string[]
+}
+
+export interface GenerationStep {
+  step_id: string
+  title: string
+  summary: string
+  evidence_items: string[]
+  node_ids: string[]
+}
+
+export type ExplanationNodeGroupId = 'target' | 'prerequisite' | 'reinforced'
+
+export interface NodeGroupSummary {
+  group_id: ExplanationNodeGroupId
+  title: string
+  summary: string
+  node_ids: string[]
+  nodes: Array<Record<string, unknown>>
+}
+
+export interface OrderingSummary {
+  summary: string
+  mode?: string | null
+  ordered_node_ids: string[]
+  key_factors: string[]
+}
+
+export interface StageSummary {
+  summary: string
+  stage_count: number
+  stages: Array<Record<string, unknown>>
+}
+
+export interface ReadableBudgetSummary {
+  summary: string
+  total_hours?: number | null
+  weekly_hours?: number | null
+  estimated_weeks?: number | null
+  status?: string | null
+  path_mode?: string | null
+  compressed_dependency_note?: string | null
+}
+
+export interface TraceSummary {
+  pack_version?: string | null
+  project_graph_hash?: string | null
+  overlay_node_count: number
+  overlay_edge_count: number
+  overlay_lineage_items: Array<Record<string, unknown>>
+  fallback_used: boolean
+  fallback_reasons: string[]
+  live_pack_fields: string[]
+}
+
+export interface AuditHighlight {
+  key: string
+  title: string
+  summary: string
+  value?: unknown
+  source?: string | null
+}
+
+export interface ExplanationReadability {
+  overview_summary: OverviewSummary
+  goal_resolution_summary: GoalResolutionSummary
+  generation_steps: GenerationStep[]
+  node_groups: NodeGroupSummary[]
+  ordering_summary: OrderingSummary
+  stage_summary: StageSummary
+  budget_summary?: ReadableBudgetSummary | null
+  trace_summary: TraceSummary
+  audit_highlights: AuditHighlight[]
+}
+
+export interface ExplanationMeta {
+  plan_version?: number | null
+  pack_version?: string | null
+  project_graph_hash?: string | null
+  provenance: ExplanationProvenance
+  polish: PolishMeta
+}
+
 export interface ExplanationResponse {
   node_explanations: NodeExplanation[]
   ordering_explanations: OrderExplanation[]
@@ -111,6 +226,36 @@ export interface ExplanationResponse {
   budget_explanation: BudgetExplanation | null
   reinforcement_explanations: ReinforcementExplanation[]
   dependency_chain_explanations: DependencyChainExplanation[]
+  readability?: ExplanationReadability | null
+  meta?: ExplanationMeta | null
+}
+
+export type ExplanationQuestionId =
+  | 'why_path_order'
+  | 'why_include_node'
+  | 'why_stage_assignment'
+  | 'budget_feasibility'
+  | 'what_if_time_limited'
+
+export interface EvidenceRef {
+  source: string
+  key?: string | null
+  node_id?: string | null
+  summary?: string | null
+}
+
+export interface ExplanationAskRequest {
+  question_id: ExplanationQuestionId
+  node_id?: string | null
+}
+
+export interface ExplanationAskResponse {
+  question_id: ExplanationQuestionId
+  answer: string
+  evidence_refs: EvidenceRef[]
+  limitations: string[]
+  ai_used: boolean
+  fallback_reason?: string | null
 }
 
 export interface LearningPlan {
@@ -157,8 +302,10 @@ export const planApi = {
     request.post(`/projects/${projectId}/plans`),
   getLatest: (projectId: string): Promise<LearningPlan> =>
     request.get(`/projects/${projectId}/plans/latest`),
-  getExplanation: (projectId: string, polish = false): Promise<ExplanationResponse> =>
-    request.get(`/projects/${projectId}/explanation`, { params: { polish } }),
+  getExplanation: (projectId: string, polish = false, signal?: AbortSignal): Promise<ExplanationResponse> =>
+    request.get(`/projects/${projectId}/explanation`, { params: { polish }, signal }),
+  askExplanation: (projectId: string, payload: ExplanationAskRequest): Promise<ExplanationAskResponse> =>
+    request.post(`/projects/${projectId}/explanation/ask`, payload),
   replan: (projectId: string, mode: string, reason?: string): Promise<ReplanResult> =>
     request.post(`/projects/${projectId}/replans`, {
       mode,

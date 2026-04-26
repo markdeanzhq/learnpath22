@@ -52,6 +52,14 @@
             <el-button @click="refreshReadiness" :loading="readinessLoading">
               检查演示主链路
             </el-button>
+            <el-button
+              v-if="canRepairGraphSync"
+              type="warning"
+              @click="repairGraphSync"
+              :loading="graphSyncRepairing"
+            >
+              重新同步图谱
+            </el-button>
             <el-button @click="clearLocalSavedConfig">清空本地保存</el-button>
           </el-space>
         </el-form-item>
@@ -101,7 +109,7 @@
               <el-tag size="small" :type="serviceTagType(service.status)">
                 {{ serviceStatusText(String(key), service) }}
               </el-tag>
-              <span class="readiness-reason">{{ service.reason || serviceDetail(String(key), service) }}</span>
+              <span class="readiness-reason">{{ serviceReasonText(String(key), service) }}</span>
             </div>
           </template>
           <template v-else>
@@ -121,8 +129,11 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { healthApi, type ReadinessResponse, type ReadinessServiceStatus } from '@/api/modules/health'
+import { graphApi } from '@/api/modules/graph'
 import { useSettingsStore } from '@/stores/settings'
+import { formatServiceReason } from '@/utils/displayLabels'
 
 const settingsStore = useSettingsStore()
 const createEmptyForm = () => ({
@@ -141,6 +152,7 @@ const searchApiKeyPlaceholder = ref('未配置')
 const saving = ref(false)
 const testingLlm = ref(false)
 const readinessLoading = ref(false)
+const graphSyncRepairing = ref(false)
 const saveMsg = ref('')
 const llmTestMsg = ref('')
 const readiness = ref<ReadinessResponse | null>(null)
@@ -157,6 +169,10 @@ const readinessTitle = computed(() => {
     return '论文主链暂不可演示'
   }
   return readinessError.value || '演示主链路检查未通过'
+})
+const canRepairGraphSync = computed(() => {
+  const graphSync = readiness.value?.services.graph_sync
+  return graphSync?.reason === 'seed_metadata_stale' || graphSync?.status === 'stale'
 })
 
 onMounted(async () => {
@@ -253,6 +269,19 @@ async function refreshReadiness() {
   }
 }
 
+async function repairGraphSync() {
+  graphSyncRepairing.value = true
+  try {
+    await graphApi.seedGraph()
+    ElMessage.success('图谱已重新同步，请重新检查演示主链路')
+    await refreshReadiness()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.error || error?.message || '图谱重新同步失败')
+  } finally {
+    graphSyncRepairing.value = false
+  }
+}
+
 function serviceLabel(key: string) {
   if (key === 'sqlite') return 'SQLite'
   if (key === 'neo4j') return 'Neo4j'
@@ -275,8 +304,14 @@ function serviceStatusText(key: string, service: ReadinessServiceStatus) {
   if (service.status === 'skipped') return key === 'llm' || key === 'search' ? '在线增强未配置' : '待配置'
   if (service.status === 'blocked') return key === 'graph_sync' ? '受阻' : '受限'
   if (service.status === 'missing') return '缺失'
+  if (service.status === 'stale') return '需同步'
+  if (service.status === 'drifted') return '有漂移'
   if (service.status === 'unknown') return '待确认'
   return '异常'
+}
+
+function serviceReasonText(key: string, service: ReadinessServiceStatus) {
+  return formatServiceReason(service.reason) || serviceDetail(key, service)
 }
 
 function serviceDetail(key: string, service: ReadinessServiceStatus) {

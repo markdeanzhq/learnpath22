@@ -8,10 +8,17 @@ export interface GoalResolutionPreviewRequestDto {
   requested_goal_type?: GoalType
 }
 
+export interface GoalResolutionNodeRef {
+  node_id: string
+  node_name: string
+}
+
 export interface GoalResolutionCandidate {
   candidate_id: string
   goal_type: GoalType
   target_node_ids: string[]
+  target_node_names?: string[]
+  target_nodes?: GoalResolutionNodeRef[]
   mode: string
   description: string
   template_id?: string | null

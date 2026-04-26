@@ -251,6 +251,7 @@ def plan_with_profile(
         budget_status=budget_summary["status"],
         included_nodes=included_nodes,
         excluded_nodes=excluded_nodes,
+        scoring_config=scoring_config,
     )
 
     # 10. 文本渲染

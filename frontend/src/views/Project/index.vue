@@ -29,8 +29,8 @@
             </el-table-column>
             <el-table-column prop="status" label="状态" width="80">
               <template #default="{ row }">
-                <el-tag :type="row.status === 'completed' ? 'success' : 'info'" size="small">
-                  {{ row.status }}
+                <el-tag :type="projectStatusMeta(row.status).tagType" size="small" :title="projectStatusMeta(row.status).detail">
+                  {{ projectStatusMeta(row.status).label }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -113,6 +113,7 @@ import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useTrackingStore } from '@/stores/tracking'
 import type { Project } from '@/api/modules/project'
+import { projectStatusMeta } from '@/utils/displayLabels'
 import GoalForm from './components/GoalForm.vue'
 import ProfileQuestionnaire from './components/ProfileQuestionnaire.vue'
 

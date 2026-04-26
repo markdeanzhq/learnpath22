@@ -16,10 +16,18 @@ from app.repositories.plan_repository import (
 )
 from app.repositories.profile_repository import get_latest_profile
 from app.repositories.project_repository import get_project
-from app.schemas.explanation import ExplanationResponse
+from app.schemas.explanation import (
+    ExplanationAskRequest,
+    ExplanationAskResponse,
+    ExplanationResponse,
+)
 from app.schemas.project import validate_path_mode
 from app.services.domain_pack_service import get_domain_pack_service
-from app.services.explanation_service import build_explanation, polish_explanation
+from app.services.explanation_service import (
+    answer_explanation_question,
+    build_explanation,
+    polish_explanation,
+)
 from app.services.goal_service import UnsupportedGoalTypeError
 from app.services.planner_service import plan_with_profile
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
@@ -49,6 +57,65 @@ def _dict_stages_to_list(stage_dict: dict) -> list[dict]:
             "estimated_hours": sum(t.get("estimated_hours", 0) for t in tasks),
         })
     return result
+
+
+def _load_plan_stages(plan_json: str | None) -> list[dict[str, Any]]:
+    raw_stages = json.loads(plan_json) if plan_json else {}
+    if isinstance(raw_stages, dict):
+        return _dict_stages_to_list(raw_stages)
+    return raw_stages if isinstance(raw_stages, list) else []
+
+
+def _build_explanation_nodes_by_id(
+    pack,
+    audit: dict[str, Any],
+    stages: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    nodes_by_id = dict(pack.nodes_by_id)
+    fallback_reasons: list[str] = []
+    live_pack_fields: list[str] = []
+    planned_node_ids: set[str] = set()
+
+    for stage in stages:
+        for task in stage.get("tasks", []):
+            if not isinstance(task, dict) or not task.get("node_id"):
+                continue
+            node_id = task["node_id"]
+            planned_node_ids.add(node_id)
+            snapshot_node = dict(nodes_by_id.get(node_id, {"id": node_id}))
+            if task.get("name"):
+                snapshot_node["name"] = task["name"]
+            if task.get("difficulty") is not None:
+                snapshot_node["difficulty_final"] = task["difficulty"]
+            if task.get("importance") is not None:
+                snapshot_node["importance_final"] = task["importance"]
+            if task.get("estimated_hours") is not None:
+                snapshot_node["estimated_hours"] = task["estimated_hours"]
+            nodes_by_id[node_id] = snapshot_node
+
+    for node_id in audit.get("ordering_logs", {}):
+        if node_id not in planned_node_ids:
+            fallback_reasons.append(f"node_snapshot_missing:{node_id}")
+            live_pack_fields.append("nodes_by_id")
+
+    overlay_lineage = audit.get("overlay_lineage")
+    overlay_nodes = (
+        overlay_lineage.get("nodes")
+        if isinstance(overlay_lineage, dict) and isinstance(overlay_lineage.get("nodes"), dict)
+        else {}
+    )
+    for node_id, lineage in overlay_nodes.items():
+        node_snapshot = lineage.get("node_snapshot") if isinstance(lineage, dict) else None
+        if isinstance(node_snapshot, dict):
+            nodes_by_id[node_id] = dict(node_snapshot)
+
+    if not isinstance(overlay_lineage, dict):
+        fallback_reasons.append("overlay_lineage_missing")
+
+    return nodes_by_id, {
+        "fallback_reasons": fallback_reasons,
+        "live_pack_fields": live_pack_fields,
+    }
 
 
 def _load_json_list(raw_value: str | None) -> list[str]:
@@ -182,14 +249,8 @@ async def get_latest_plan_endpoint(
     if not path:
         raise NotFoundError("暂无学习路径")
 
-    raw_stages = json.loads(path.plan_json) if path.plan_json else {}
+    stages = _load_plan_stages(path.plan_json)
     audit = json.loads(path.audit_json) if path.audit_json else None
-
-    # raw_stages 可能是 dict 或 list，统一为 list
-    if isinstance(raw_stages, dict):
-        stages = _dict_stages_to_list(raw_stages)
-    else:
-        stages = raw_stages
 
     return {
         "id": path.id,
@@ -203,13 +264,12 @@ async def get_latest_plan_endpoint(
     }
 
 
-@router.get("/projects/{project_id}/explanation", response_model=ExplanationResponse)
-async def get_explanation(
+async def _build_latest_explanation_response(
     project_id: str,
+    db: AsyncSession,
+    *,
     polish: bool = False,
-    db: AsyncSession = Depends(get_db),
-):
-    """获取最新路径的结构化解释。`polish=true` 时启用可选 LLM 自然语言润色。"""
+) -> tuple[ExplanationResponse, set[str]]:
     project = await get_project(db, project_id)
     if not project:
         raise NotFoundError("项目不存在")
@@ -223,17 +283,65 @@ async def get_explanation(
         raise NotFoundError("暂无审计数据")
 
     pack = get_domain_pack_service(project.domain)
-    nodes_by_id = dict(pack.nodes_by_id)
-    for node_id, lineage in (audit.get("overlay_lineage") or {}).get("nodes", {}).items():
-        node_snapshot = lineage.get("node_snapshot") if isinstance(lineage, dict) else None
-        if isinstance(node_snapshot, dict):
-            nodes_by_id[node_id] = node_snapshot
+    stages = _load_plan_stages(path.plan_json)
+    nodes_by_id, context = _build_explanation_nodes_by_id(pack, audit, stages)
+    pack_version = audit.get("pack_version") or pack.manifest.get("version")
+    context.update(
+        {
+            "plan_version": path.version,
+            "stages": stages,
+            "total_hours": path.total_hours,
+            "budget_status": path.budget_status,
+            "path_mode": audit.get("path_mode") or getattr(project, "path_mode", None) or "standard",
+            "pack_version": str(pack_version) if pack_version is not None else None,
+            "pack_version_source": "audit" if audit.get("pack_version") else "live_pack",
+            "project_graph_hash": audit.get("project_graph_hash"),
+            "project_graph_hash_source": "audit" if audit.get("project_graph_hash") else "missing",
+        }
+    )
+    scoring_config = audit.get("scoring_config") if isinstance(audit.get("scoring_config"), dict) else pack.scoring_config
+    if "scoring_config" not in audit:
+        context.setdefault("fallback_reasons", []).append("scoring_config_missing")
+        context.setdefault("live_pack_fields", []).append("scoring_config")
     response = build_explanation(
         audit,
         nodes_by_id,
-        audit.get("filtered_requires_rev_adj") or pack.requires_rev_adj,
-        pack.scoring_config,
+        pack.requires_rev_adj,
+        scoring_config,
+        context=context,
     )
-    if polish:
-        response = polish_explanation(response)
+    latest_plan_node_ids = {
+        task.get("node_id")
+        for stage in stages
+        for task in stage.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("node_id"), str)
+    }
+    return polish_explanation(response, requested=polish), latest_plan_node_ids
+
+
+@router.get("/projects/{project_id}/explanation", response_model=ExplanationResponse)
+async def get_explanation(
+    project_id: str,
+    polish: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取最新路径的结构化解释。`polish=true` 时只启用可选 LLM 自然语言润色。"""
+    response, _latest_plan_node_ids = await _build_latest_explanation_response(project_id, db, polish=polish)
     return response
+
+
+@router.post(
+    "/projects/{project_id}/explanation/ask",
+    response_model=ExplanationAskResponse,
+)
+async def ask_explanation(
+    project_id: str,
+    req: ExplanationAskRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    response, latest_plan_node_ids = await _build_latest_explanation_response(project_id, db, polish=False)
+    return answer_explanation_question(
+        response,
+        req,
+        latest_plan_node_ids=latest_plan_node_ids,
+    )

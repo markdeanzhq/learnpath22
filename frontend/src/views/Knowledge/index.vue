@@ -69,7 +69,7 @@
           :type="projectionAlertType"
           :closable="false"
           show-icon
-          :title="`Overlay projection: ${projectionStatus.status}${projectionStatus.reason ? ' / ' + projectionStatus.reason : ''}`"
+          :title="projectionStatusTitle"
         />
         <el-alert
           v-if="graphState === 'ready' && lastRefreshError"
@@ -138,7 +138,7 @@
           type="info"
           :closable="false"
           show-icon
-          title="扩展草稿会先进入项目级 overlay，确认审核与规划开关后才会参与路径规划。"
+          title="扩展草稿会先进入项目扩展区，确认审核与规划开关后才会参与路径规划。"
         />
 
         <el-form label-position="top">
@@ -226,36 +226,38 @@
           <div class="section-header">
             <div>
               <h3>抽取结果</h3>
-              <p>{{ lastOverlaySession.session.session_id }}</p>
+              <p>追溯编号：{{ lastOverlaySession.session.session_id }}</p>
             </div>
-            <el-tag :type="getOverlaySessionTagType(lastOverlaySession.session.session_status)">
-              {{ lastOverlaySession.session.session_status }}
+            <el-tag :type="sessionStatusMeta(lastOverlaySession.session.session_status).tagType" :title="lastOverlaySession.session.session_status">
+              {{ sessionStatusMeta(lastOverlaySession.session.session_status).label }}
             </el-tag>
           </div>
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="节点候选">{{ lastOverlaySession.nodes.length }}</el-descriptions-item>
-            <el-descriptions-item label="关系候选">{{ lastOverlaySession.edges.length }}</el-descriptions-item>
-            <el-descriptions-item label="资源候选">{{ lastOverlaySession.resources.length }}</el-descriptions-item>
-            <el-descriptions-item label="来源数">{{ lastOverlaySession.sources.length }}</el-descriptions-item>
+            <el-descriptions-item label="节点候选">{{ lastOverlaySession.nodes?.length || 0 }}</el-descriptions-item>
+            <el-descriptions-item label="关系候选">{{ lastOverlaySession.edges?.length || 0 }}</el-descriptions-item>
+            <el-descriptions-item label="资源候选">{{ lastOverlaySession.resources?.length || 0 }}</el-descriptions-item>
+            <el-descriptions-item label="来源数">{{ lastOverlaySession.sources?.length || 0 }}</el-descriptions-item>
           </el-descriptions>
 
-          <section v-if="lastOverlaySession.resources.length" class="overlay-subsection">
+          <section v-if="lastOverlaySession.resources?.length" class="overlay-subsection">
             <h4>资源候选</h4>
-            <article v-for="resource in lastOverlaySession.resources" :key="resource.resource_id" class="resource-candidate">
+            <article v-for="resource in lastOverlaySession.resources || []" :key="resource.resource_id" class="resource-candidate">
               <div class="resource-title">{{ resource.title }}</div>
               <p>{{ resource.summary || '暂无摘要' }}</p>
-              <el-tag size="small" type="info">{{ resource.resource_type || 'resource' }}</el-tag>
+              <el-tag size="small" :type="resourceTypeMeta(resource.resource_type || 'resource').tagType" :title="resource.resource_type || 'resource'">
+                {{ resourceTypeMeta(resource.resource_type || 'resource').label }}
+              </el-tag>
               <el-tag size="small" type="success">绑定 {{ resource.binding_summary?.count || 0 }}</el-tag>
             </article>
           </section>
 
-          <section v-if="lastOverlaySession.resources.length" class="overlay-subsection">
+          <section v-if="lastOverlaySession.resources?.length" class="overlay-subsection">
             <h4>资源绑定</h4>
             <el-form label-position="top">
               <el-form-item label="资源">
                 <el-select v-model="resourceBinding.resourceId" placeholder="选择资源候选" style="width: 100%">
                   <el-option
-                    v-for="resource in lastOverlaySession.resources"
+                    v-for="resource in lastOverlaySession.resources || []"
                     :key="resource.resource_id"
                     :label="resource.title"
                     :value="resource.resource_id"
@@ -265,26 +267,43 @@
               <el-form-item label="绑定目标类型">
                 <el-radio-group v-model="resourceBinding.targetType">
                   <el-radio-button value="project_node">项目节点</el-radio-button>
-                  <el-radio-button value="path_stage">稳定阶段</el-radio-button>
                 </el-radio-group>
               </el-form-item>
-              <el-form-item label="目标 ID">
-                <el-input v-model="resourceBinding.targetId" placeholder="如 ml_c01 或 stage_foundation" />
+              <el-form-item label="绑定目标">
+                <el-select v-model="resourceBinding.targetId" filterable placeholder="选择知识点或阶段" style="width: 100%">
+                  <el-option
+                    v-for="option in resourceTargetOptions"
+                    :key="option.id"
+                    :label="option.label"
+                    :value="option.id"
+                  >
+                    <span>{{ option.label }}</span>
+                    <span class="option-trace-id">{{ option.id }}</span>
+                  </el-option>
+                </el-select>
               </el-form-item>
               <el-button size="small" type="primary" plain @click="bindOverlayResource">绑定资源</el-button>
             </el-form>
           </section>
 
           <section class="overlay-subsection">
-            <h4>Promotion</h4>
-            <el-button size="small" :loading="promotionLoading" @click="previewPromotion">Promotion preview（不写入）</el-button>
+            <h4>推广到领域包</h4>
+            <el-button size="small" :loading="promotionLoading" @click="previewPromotion">预览推广结果（不写入）</el-button>
             <el-descriptions v-if="promotionPreview" class="promotion-summary" :column="1" border size="small">
-              <el-descriptions-item label="状态">{{ promotionPreview.status }}</el-descriptions-item>
+              <el-descriptions-item label="状态">
+                <el-tag
+                  size="small"
+                  :type="promotionPreviewStatusMeta(promotionPreview.status).tagType"
+                  :title="promotionPreviewStatusMeta(promotionPreview.status).detail || promotionPreview.status"
+                >
+                  {{ promotionPreviewStatusMeta(promotionPreview.status).label }}
+                </el-tag>
+              </el-descriptions-item>
               <el-descriptions-item label="候选数">{{ promotionPreview.candidate_count }}</el-descriptions-item>
-              <el-descriptions-item label="baseline hash">{{ promotionPreview.baseline_pack_hash }}</el-descriptions-item>
-              <el-descriptions-item label="resulting hash">{{ promotionPreview.resulting_pack_hash }}</el-descriptions-item>
+              <el-descriptions-item label="原领域包指纹">{{ promotionPreview.baseline_pack_hash }}</el-descriptions-item>
+              <el-descriptions-item label="推广后指纹">{{ promotionPreview.resulting_pack_hash }}</el-descriptions-item>
               <el-descriptions-item label="资源明细">{{ promotionPreview.resources?.length || 0 }}</el-descriptions-item>
-              <el-descriptions-item label="no-write">preview 只校验，不写 pack、Neo4j 或候选状态。</el-descriptions-item>
+              <el-descriptions-item label="写入说明">预览只校验，不写入领域包、Neo4j 或候选状态。</el-descriptions-item>
             </el-descriptions>
             <el-alert
               v-if="promotionPreview?.errors?.length"
@@ -299,9 +318,9 @@
               class="promotion-secret"
               type="password"
               show-password
-              placeholder="输入 admin secret 后 commit"
+              placeholder="输入管理员密钥后确认推广"
             />
-            <el-button size="small" type="danger" :loading="promotionLoading" @click="commitPromotion">Commit promotion</el-button>
+            <el-button size="small" type="danger" :loading="promotionLoading" @click="commitPromotion">确认推广</el-button>
             <el-alert
               v-if="promotionResult"
               class="overlay-alert"
@@ -354,6 +373,12 @@ import GraphToolbar from '@/components/Graph/GraphToolbar.vue'
 import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph/graphMeta'
 import { searchApi, type PersistedSearchResult } from '@/api/modules/search'
 import { resourceApi } from '@/api/modules/resource'
+import {
+  formatServiceReason,
+  promotionPreviewStatusMeta,
+  resourceTypeMeta,
+  sessionStatusMeta,
+} from '@/utils/displayLabels'
 
 type GraphState = 'loading' | 'ready' | 'empty' | 'error'
 type GraphLayout = 'cose' | 'breadthfirst'
@@ -444,15 +469,25 @@ const requestedNodeId = computed<string | null>(() => normalizeRouteNodeId(route
 const requestedSessionId = computed<string | null>(() => normalizeRouteSessionId(route.query.sessionId))
 const emptyDescription = computed(() =>
   emptyReason.value === PROJECT_LATEST_PLAN_MISSING
-    ? '当前项目尚未生成学习路径，暂时无法展示路径子图；项目图谱仍可显示 baseline 与 overlay 草稿。'
-    : '当前范围暂无图谱数据，可刷新或先同步 Domain Pack 到 Neo4j',
+    ? '当前项目尚未生成学习路径，暂时无法展示路径子图；项目图谱仍可显示领域基线与项目扩展草稿。'
+    : '当前范围暂无图谱数据，可刷新或先同步领域知识包到 Neo4j',
 )
 const promotionStatusMessage = computed(() => {
   if (!promotionResult.value) return ''
-  if (promotionResult.value.reason === 'promoted') return 'promotion commit 成功，候选已归档隐藏。'
-  return promotionResult.value.reason || promotionResult.value.status || 'promotion 状态已更新'
+  if (promotionResult.value.reason === 'promoted') return '推广成功，候选已归档隐藏。'
+  return formatServiceReason(promotionResult.value.reason) || promotionPreviewStatusMeta(promotionResult.value.status).label || '推广状态已更新'
 })
 const projectionAlertType = computed(() => projectionStatus.value?.status === 'ok' ? 'success' : 'warning')
+const projectionStatusTitle = computed(() => {
+  if (!projectionStatus.value) return ''
+  const status = projectionStatus.value.status === 'ok' ? '项目扩展投影已同步' : '项目扩展投影需关注'
+  const reason = formatServiceReason(projectionStatus.value.reason)
+  return reason ? `${status}：${reason}` : status
+})
+const resourceTargetOptions = computed(() => nodes.value.map((node) => ({
+  id: node.id,
+  label: node.label || node.id,
+})))
 const graphQuery = computed(() => buildGraphQuery({
   scope: scope.value,
   path_id: requestedPathId.value,
@@ -946,7 +981,7 @@ async function resolveOverlaySourceIds() {
       return null
     }
     const bridged = await searchApi.bridgeOverlaySources(projectId.value, form.selectedResultIds)
-    overlayBridgeMessage.value = `已解析 ${bridged.source_ids.length} 个 overlay source，${bridged.results.filter((item) => item.reused).length} 个复用。`
+    overlayBridgeMessage.value = `已解析 ${bridged.source_ids.length} 个项目扩展来源，${bridged.results.filter((item) => item.reused).length} 个复用。`
     return bridged.source_ids
   }
 
@@ -959,14 +994,14 @@ async function resolveOverlaySourceIds() {
 function getOverlayErrorMessage(error: any) {
   const code = error?.response?.data?.error
   if (code === SEARCH_NOT_READY) {
-    return '搜索服务尚未就绪，自定义扩展暂不可用；baseline 图谱浏览不受影响。'
+    return '搜索服务尚未就绪，自定义扩展暂不可用；领域基线图谱浏览不受影响。'
   }
   return code || error?.message || '扩展草稿创建失败'
 }
 
 async function bindOverlayResource() {
   if (!projectId.value || !resourceBinding.value.resourceId || !resourceBinding.value.targetId.trim()) {
-    overlayError.value = '请选择资源并填写稳定目标 ID'
+    overlayError.value = '请选择资源和绑定目标'
     return
   }
   try {
@@ -993,7 +1028,7 @@ async function previewPromotion() {
   try {
     promotionPreview.value = await graphApi.previewOverlayPromotion(projectId.value)
   } catch (error: any) {
-    overlayError.value = error?.response?.data?.error || 'promotion preview 失败'
+    overlayError.value = formatServiceReason(error?.response?.data?.error) || '推广预览失败'
   } finally {
     promotionLoading.value = false
   }
@@ -1019,7 +1054,7 @@ async function commitPromotion() {
     }
   } catch (error: any) {
     const code = error?.response?.data?.error
-    overlayError.value = code || 'promotion commit 失败'
+    overlayError.value = formatServiceReason(code) || '确认推广失败'
     promotionResult.value = error?.response?.data?.details?.preview || error?.response?.data?.details || null
   } finally {
     promotionLoading.value = false
@@ -1051,13 +1086,6 @@ async function submitOverlayDraft() {
   } finally {
     overlaySubmitting.value = false
   }
-}
-
-function getOverlaySessionTagType(status?: string) {
-  if (status === 'failed') return 'danger'
-  if (status === 'reviewed' || status === 'promoted') return 'success'
-  if (status === 'validated') return 'warning'
-  return 'info'
 }
 
 async function onShowEntities() {
@@ -1231,6 +1259,12 @@ function toggleFullscreen() {
 .resource-title {
   font-weight: 600;
   color: #303133;
+}
+.option-trace-id {
+  float: right;
+  margin-left: 12px;
+  color: #c0c4cc;
+  font-size: 12px;
 }
 .promotion-summary,
 .promotion-secret {

@@ -2,8 +2,8 @@
   <div class="graph-toolbar">
     <el-space wrap>
       <el-radio-group :model-value="scope" size="small" @change="handleScopeChange">
-        <el-radio-button value="project">项目全图</el-radio-button>
         <el-radio-button value="path">路径子图</el-radio-button>
+        <el-radio-button value="project">项目全图</el-radio-button>
         <el-radio-button value="domain">完整领域图</el-radio-button>
       </el-radio-group>
 

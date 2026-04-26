@@ -1,5 +1,8 @@
 """ExplanationService 单元测试"""
+import pytest
+
 from app.services.domain_pack_service import get_domain_pack_service
+from app.services import explanation_service
 from app.services.explanation_service import build_explanation
 
 
@@ -295,6 +298,8 @@ def test_build_explanation_prefers_filtered_snapshot_over_legacy_graph():
     assert len(result.dependency_chain_explanations) == 1
     chain = result.dependency_chain_explanations[0].chain_node_ids
     assert chain == ["ml_c05"]
+    assert result.meta is not None
+    assert result.meta.provenance.fallback_used is False
 
 
 def test_build_explanation_uses_legacy_graph_when_snapshot_missing():
@@ -321,3 +326,462 @@ def test_build_explanation_uses_legacy_graph_when_snapshot_missing():
     chain = result.dependency_chain_explanations[0].chain_node_ids
     assert "ml_a04" in chain
     assert chain[-1] == "ml_c05"
+    assert result.meta is not None
+    assert result.meta.provenance.fallback_used is True
+    assert "filtered_requires_rev_adj_null" in result.meta.provenance.fallback_reasons
+    assert "requires_rev_adj" in result.meta.provenance.live_pack_fields
+
+
+def test_build_explanation_distinguishes_empty_snapshot_from_fallback():
+    pack = get_domain_pack_service(force_reload=True)
+    audit = _make_audit(
+        target_ids=["ml_c05"],
+        ordering_logs={
+            "ml_c05": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0.1},
+                "reasons": [],
+            },
+        },
+        filtered_requires_rev_adj={},
+    )
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+    assert result.meta is not None
+    assert result.meta.provenance.fallback_used is False
+    assert result.dependency_chain_explanations[0].chain_node_ids == ["ml_c05"]
+
+
+@pytest.mark.parametrize(
+    "snapshot_marker,expected_reason,expected_fallback,expected_chain",
+    [
+        ("missing", "filtered_requires_rev_adj_missing", True, ["ml_a04", "ml_c05"]),
+        (None, "filtered_requires_rev_adj_null", True, ["ml_a04", "ml_c05"]),
+        ({}, None, False, ["ml_c05"]),
+        ({"ml_c05": []}, None, False, ["ml_c05"]),
+    ],
+)
+def test_build_explanation_distinguishes_requires_snapshot_states(
+    snapshot_marker,
+    expected_reason,
+    expected_fallback,
+    expected_chain,
+):
+    pack = get_domain_pack_service(force_reload=True)
+    audit = _make_audit(
+        target_ids=["ml_c05"],
+        ordering_logs={
+            "ml_a04": {
+                "priority_score": 0.4,
+                "goal_relevance": 0.3,
+                "gap": {"gap_total": 0.2},
+                "reasons": [],
+            },
+            "ml_c05": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0.1},
+                "reasons": [],
+            },
+        },
+        filtered_requires_rev_adj=snapshot_marker,
+    )
+    if snapshot_marker == "missing":
+        audit.pop("filtered_requires_rev_adj")
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+
+    assert result.meta is not None
+    assert result.meta.provenance.fallback_used is expected_fallback
+    assert result.dependency_chain_explanations[0].chain_node_ids == expected_chain
+    if expected_reason is None:
+        assert result.meta.provenance.fallback_reasons == []
+        assert result.meta.provenance.live_pack_fields == []
+    else:
+        assert expected_reason in result.meta.provenance.fallback_reasons
+        assert "requires_rev_adj" in result.meta.provenance.live_pack_fields
+
+
+def test_build_explanation_populates_phase1_meta_context():
+    pack = get_domain_pack_service(force_reload=True)
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        ordering_logs={
+            "ml_c09": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0.5},
+                "reasons": [],
+            },
+        },
+        filtered_requires_rev_adj={"ml_c09": []},
+    )
+
+    result = build_explanation(
+        audit,
+        pack.nodes_by_id,
+        pack.requires_rev_adj,
+        pack.scoring_config,
+        context={
+            "plan_version": 3,
+            "pack_version": "1.3.0",
+            "pack_version_source": "live_pack",
+            "project_graph_hash": "graph-hash-1",
+        },
+    )
+
+    assert result.meta is not None
+    assert result.meta.plan_version == 3
+    assert result.meta.pack_version == "1.3.0"
+    assert result.meta.project_graph_hash == "graph-hash-1"
+    assert result.meta.polish.requested is False
+    assert "pack_version" in result.meta.provenance.live_pack_fields
+
+
+def test_readability_overlay_lineage_uses_audit_snapshot_not_live_pack():
+    pack = get_domain_pack_service(force_reload=True)
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        ordering_logs={
+            "ml_c09": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0.1},
+                "reasons": [],
+            },
+        },
+        stage_logs={
+            "ml_c09": {"assigned_stage": "核心掌握", "reasons": ["category=algorithm"]},
+        },
+        filtered_requires_rev_adj={"ml_c09": []},
+    )
+    audit["overlay_lineage"] = {
+        "nodes": {
+            "ml_c09": {
+                "node_snapshot": {"id": "ml_c09", "name": "审计快照节点名"},
+                "source_ids": ["snapshot-source"],
+            }
+        },
+        "edges": {},
+    }
+
+    live_nodes = {
+        node_id: dict(node)
+        for node_id, node in pack.nodes_by_id.items()
+    }
+    live_nodes["ml_c09"]["name"] = "live pack 漂移节点名"
+    snapshot_nodes = dict(live_nodes)
+    snapshot_nodes["ml_c09"] = {
+        **snapshot_nodes["ml_c09"],
+        "name": "审计快照节点名",
+    }
+
+    result = build_explanation(audit, snapshot_nodes, pack.requires_rev_adj, pack.scoring_config)
+
+    assert result.readability is not None
+    assert result.node_explanations[0].node_name == "审计快照节点名"
+    assert result.readability.overview_summary.goal_names == ["审计快照节点名"]
+    assert result.readability.trace_summary.overlay_lineage_items == [
+        {
+            "kind": "node",
+            "id": "ml_c09",
+            "name": "审计快照节点名",
+            "source_ids": ["snapshot-source"],
+            "validation_status": None,
+            "review_status": None,
+            "promotion_status": None,
+            "confidence": None,
+        }
+    ]
+
+
+def test_build_explanation_populates_phase2_readability():
+    pack = get_domain_pack_service(force_reload=True)
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        ordering_logs={
+            "ml_a04": {
+                "priority_score": 0.4,
+                "goal_relevance": 0.2,
+                "gap": {"gap_total": 0.1},
+                "reasons": ["依赖优先"],
+            },
+            "ml_c01": {
+                "priority_score": 0.7,
+                "goal_relevance": 0.4,
+                "gap": {"gap_total": 0.3, "gap_math": 0.1, "gap_code": 0.1, "gap_ml": 0.1},
+                "reasons": ["画像补强优先"],
+            },
+            "ml_c09": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0.2, "gap_math": 0.1, "gap_code": 0.0, "gap_ml": 0.1},
+                "reasons": ["目标优先"],
+            },
+        },
+        stage_logs={
+            "ml_a04": {"assigned_stage": "基础准备", "reasons": ["category=foundation"]},
+            "ml_c01": {"assigned_stage": "基础准备", "reasons": ["category=ml_core"]},
+            "ml_c09": {"assigned_stage": "核心掌握", "reasons": ["category=algorithm"]},
+        },
+        budget_summary={
+            "total_hours": 24,
+            "weekly_hours": 8,
+            "estimated_weeks": 3,
+            "status": "tight",
+            "suggestion": "时间较紧，建议后续提供压缩版路径",
+            "path_mode": "compressed",
+        },
+        reinforcement_logs={
+            "ml_c01": {
+                "gap": {"gap_total": 0.3, "gap_math": 0.1, "gap_code": 0.1, "gap_ml": 0.1},
+                "reinforce_score": 0.6,
+                "reasons": ["补齐基础薄弱项"],
+            }
+        },
+        filtered_requires_rev_adj={
+            "ml_c09": ["ml_c01"],
+            "ml_c01": ["ml_a04"],
+            "ml_a04": [],
+        },
+    )
+    audit["goal_result"].update(
+        {
+            "goal_text": "理解梯度下降",
+            "goal_type": "concept",
+            "description": "理解梯度下降核心机制",
+            "resolve_source": "template",
+            "source_breakdown": {"template": 1.0, "lexical": 0.0, "llm": 0.0},
+            "warnings": ["llm_unavailable"],
+            "candidate_id": "template:ml-gradient",
+            "recommended_candidate_id": "llm:other-candidate",
+        }
+    )
+    audit["path_mode"] = "compressed"
+    audit["budget_status"] = "tight"
+    audit["closure_ids"] = ["ml_a04", "ml_c01"]
+    audit["reinforced_ids"] = ["ml_c01"]
+    audit["final_ids"] = ["ml_a04", "ml_c01", "ml_c09"]
+    audit["excluded_nodes"] = [
+        {"node_id": "ml_d08", "exclusion_reason": "compressed_optional_reinforcement"}
+    ]
+    audit["pack_version"] = "2026.04"
+    audit["project_graph_hash"] = "graph-hash-phase2"
+    audit["overlay_lineage"] = {
+        "nodes": {
+            "ml_c09": {"node_snapshot": {"id": "ml_c09", "name": pack.nodes_by_id["ml_c09"]["name"]}},
+            "ml_c01": {"node_snapshot": {"id": "ml_c01", "name": pack.nodes_by_id["ml_c01"]["name"]}},
+        },
+        "edges": {
+            "ml_c01->ml_c09::REQUIRES": {"source": "snapshot"},
+        },
+    }
+
+    result = build_explanation(
+        audit,
+        pack.nodes_by_id,
+        pack.requires_rev_adj,
+        pack.scoring_config,
+        context={
+            "plan_version": 7,
+            "stages": [
+                {
+                    "stage_index": 0,
+                    "stage_name": "基础准备",
+                    "tasks": [
+                        {"node_id": "ml_a04", "name": pack.nodes_by_id["ml_a04"]["name"], "estimated_hours": 8},
+                        {"node_id": "ml_c01", "name": pack.nodes_by_id["ml_c01"]["name"], "estimated_hours": 8},
+                    ],
+                    "estimated_hours": 16,
+                },
+                {
+                    "stage_index": 1,
+                    "stage_name": "核心掌握",
+                    "tasks": [
+                        {"node_id": "ml_c09", "name": pack.nodes_by_id["ml_c09"]["name"], "estimated_hours": 8},
+                    ],
+                    "estimated_hours": 8,
+                },
+            ],
+            "total_hours": 24,
+            "budget_status": "tight",
+            "path_mode": "compressed",
+        },
+    )
+
+    assert result.readability is not None
+    readability = result.readability
+
+    assert readability.overview_summary.node_count == 3
+    assert readability.overview_summary.path_mode == "compressed"
+    assert readability.overview_summary.goal_names == [pack.nodes_by_id["ml_c09"]["name"]]
+    assert any("不会裁剪硬前置依赖" in note for note in readability.overview_summary.notes)
+
+    assert readability.goal_resolution_summary.final_goal_text == "理解梯度下降核心机制"
+    assert readability.goal_resolution_summary.resolve_source == "template"
+    assert readability.goal_resolution_summary.target_node_ids == ["ml_c09"]
+    assert readability.goal_resolution_summary.target_node_names == [pack.nodes_by_id["ml_c09"]["name"]]
+    assert readability.goal_resolution_summary.source_breakdown == {
+        "template": 1.0,
+        "lexical": 0.0,
+        "llm": 0.0,
+    }
+
+    assert [step.step_id for step in readability.generation_steps] == [
+        "goal_resolution",
+        "prerequisite_closure",
+        "profile_reinforcement",
+        "topological_ordering",
+        "stage_assignment",
+        "time_budget",
+    ]
+
+    assert [group.group_id for group in readability.node_groups] == [
+        "target",
+        "reinforced",
+        "prerequisite",
+    ]
+    groups = {group.group_id: group for group in readability.node_groups}
+    assert groups["target"].node_ids == ["ml_c09"]
+    assert groups["reinforced"].node_ids == ["ml_c01"]
+    assert groups["prerequisite"].node_ids == ["ml_a04"]
+
+    assert readability.ordering_summary.ordered_node_ids == ["ml_a04", "ml_c01", "ml_c09"]
+    assert readability.stage_summary.stage_count == 2
+    assert readability.budget_summary is not None
+    assert "不会裁剪硬前置依赖" in readability.budget_summary.compressed_dependency_note
+    assert readability.trace_summary.pack_version == "2026.04"
+    assert readability.trace_summary.project_graph_hash == "graph-hash-phase2"
+    assert readability.trace_summary.overlay_node_count == 2
+    assert readability.trace_summary.overlay_edge_count == 1
+    assert {item["kind"] for item in readability.trace_summary.overlay_lineage_items} == {"node", "edge"}
+
+    highlights = {item.key: item for item in readability.audit_highlights}
+    assert highlights["dependency_closure"].source == "audit.closure_ids"
+    assert highlights["dependency_closure"].value["closure_ids"] == ["ml_a04", "ml_c01"]
+    assert highlights["overlay_lineage"].value["lineage_items"] == readability.trace_summary.overlay_lineage_items
+
+    highlight_keys = [item.key for item in readability.audit_highlights]
+    assert highlight_keys == [
+        "goal_resolution",
+        "dependency_closure",
+        "profile_reinforcement",
+        "ordering",
+        "stage_assignment",
+        "budget",
+        "overlay_lineage",
+        "fallback_status",
+    ]
+
+
+def test_readability_dependency_highlight_uses_chain_when_closure_ids_missing():
+    pack = get_domain_pack_service(force_reload=True)
+    audit = _make_audit(
+        target_ids=["ml_c05"],
+        ordering_logs={
+            "ml_a04": {
+                "priority_score": 0.4,
+                "goal_relevance": 0.3,
+                "gap": {"gap_total": 0.2},
+                "reasons": [],
+            },
+            "ml_c01": {
+                "priority_score": 0.6,
+                "goal_relevance": 0.4,
+                "gap": {"gap_total": 0.5, "gap_math": 0.2, "gap_code": 0.1, "gap_ml": 0.2},
+                "reasons": [],
+            },
+            "ml_c05": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0.1},
+                "reasons": [],
+            },
+        },
+        reinforcement_logs={
+            "ml_c01": {
+                "gap": {"gap_total": 0.5, "gap_math": 0.2, "gap_code": 0.1, "gap_ml": 0.2},
+                "reinforce_score": 0.7,
+                "reasons": ["补齐基础薄弱项"],
+            }
+        },
+        filtered_requires_rev_adj={"ml_c05": ["ml_a04"], "ml_a04": [], "ml_c01": []},
+    )
+    audit["goal_result"].update({"goal_type": "concept", "resolve_source": "template"})
+    audit["closure_ids"] = []
+    audit["reinforced_ids"] = ["ml_c01"]
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+
+    assert result.readability is not None
+    highlights = {item.key: item for item in result.readability.audit_highlights}
+    assert highlights["dependency_closure"].source == "dependency_chain_explanations"
+    assert highlights["dependency_closure"].value["closure_ids"] == ["ml_a04"]
+
+
+def test_build_explanation_readability_failure_falls_back_to_legacy_blocks(monkeypatch: pytest.MonkeyPatch):
+    pack = get_domain_pack_service(force_reload=True)
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        ordering_logs={
+            "ml_c01": {
+                "priority_score": 0.7,
+                "goal_relevance": 0.4,
+                "gap": {"gap_total": 0.3, "gap_math": 0.1, "gap_code": 0.1, "gap_ml": 0.1},
+                "reasons": [],
+            },
+            "ml_c09": {
+                "priority_score": 0.9,
+                "goal_relevance": 1.0,
+                "gap": {"gap_total": 0.1},
+                "reasons": [],
+            },
+        },
+        stage_logs={
+            "ml_c01": {"assigned_stage": "基础准备", "reasons": ["category=ml_core"]},
+            "ml_c09": {"assigned_stage": "核心掌握", "reasons": ["category=algorithm"]},
+        },
+        budget_summary={
+            "total_hours": 8,
+            "weekly_hours": 8,
+            "estimated_weeks": 1,
+            "status": "feasible",
+            "suggestion": "当前时间预算可支持完整路径",
+        },
+        reinforcement_logs={
+            "ml_c01": {
+                "gap": {"gap_total": 0.3, "gap_math": 0.1, "gap_code": 0.1, "gap_ml": 0.1},
+                "reinforce_score": 0.6,
+                "reasons": ["补齐基础薄弱项"],
+            }
+        },
+        filtered_requires_rev_adj={"ml_c09": ["ml_c01"], "ml_c01": []},
+    )
+    audit["goal_result"].update(
+        {
+            "goal_text": "理解梯度下降",
+            "goal_type": "concept",
+            "description": "理解梯度下降",
+            "resolve_source": "template",
+            "source_breakdown": {"template": 1.0},
+            "warnings": [],
+        }
+    )
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("readability exploded")
+
+    monkeypatch.setattr(explanation_service, "_build_explanation_readability", _boom)
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+
+    assert len(result.node_explanations) == 2
+    assert len(result.ordering_explanations) == 2
+    assert len(result.stage_explanations) == 2
+    assert result.budget_explanation is not None
+    assert len(result.reinforcement_explanations) == 1
+    assert len(result.dependency_chain_explanations) == 1
+    assert result.readability is None
+    assert result.meta is not None
+    assert result.meta.provenance.fallback_used is True
+    assert "readability_build_failed" in result.meta.provenance.fallback_reasons
