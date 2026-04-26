@@ -122,6 +122,22 @@ class PathTask(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
 
 
+class PlanExplanationCache(Base):
+    __tablename__ = "plan_explanation_cache"
+    __table_args__ = (
+        UniqueConstraint("path_id", "polish_requested", name="uq_plan_explanation_cache_path_polish"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    path_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_paths.id"))
+    plan_version: Mapped[int] = mapped_column(Integer)
+    polish_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    explanation_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class TrackingEvent(Base):
     __tablename__ = "tracking_events"
 

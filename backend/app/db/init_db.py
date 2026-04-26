@@ -95,6 +95,11 @@ _OVERLAY_INDEXES = [
     ("idx_persisted_search_results_result_id", "persisted_search_results", "result_id"),
 ]
 
+_EXPLANATION_CACHE_INDEXES = [
+    ("idx_plan_explanation_cache_project_id", "plan_explanation_cache", "project_id"),
+    ("idx_plan_explanation_cache_path_id", "plan_explanation_cache", "path_id"),
+]
+
 
 async def upgrade_learning_projects_schema(conn: AsyncConnection) -> None:
     for col_name, col_type in _RESOLUTION_COLUMNS:
@@ -155,6 +160,16 @@ async def upgrade_project_overlay_schema(conn: AsyncConnection) -> None:
 
 async def create_project_overlay_indexes(conn: AsyncConnection) -> None:
     for index_name, table_name, column_name in _OVERLAY_INDEXES:
+        await conn.execute(
+            text(
+                f"CREATE INDEX IF NOT EXISTS {index_name} "
+                f"ON {table_name} ({column_name})"
+            )
+        )
+
+
+async def create_explanation_cache_indexes(conn: AsyncConnection) -> None:
+    for index_name, table_name, column_name in _EXPLANATION_CACHE_INDEXES:
         await conn.execute(
             text(
                 f"CREATE INDEX IF NOT EXISTS {index_name} "
@@ -265,6 +280,7 @@ async def init_sqlite():
         await upgrade_goal_resolution_sessions_schema(conn)
         await upgrade_project_overlay_schema(conn)
         await create_project_overlay_indexes(conn)
+        await create_explanation_cache_indexes(conn)
 
     async with async_session() as db:
         await cleanup_expired_sessions(db)

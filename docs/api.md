@@ -332,21 +332,22 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 - selected search result 可持久化为 project 级 source，刷新页面后仍可恢复 title、snippet、summary、quality、binding state
 - saved-search bridge 复用 `search_url` source type；同一 `(project_id, result_id)` 单调映射到稳定 `source_id`，重复点击或 replay 不创建重复 source，跨项目 result/source ID 会被拒绝
 - extraction session request 只接受 `source_ids[]`，不接受 `result_ids[]` 或混合字段；Knowledge drawer 会先把已保存搜索结果桥接为 `source_ids[]` 再创建 extraction session
-- 搜索结果可在前端路径页中进一步手动绑定到指定阶段
+- 搜索结果可在前端路径页中进一步手动绑定到当前路径中的指定知识点
 
 ## 路径资源增强
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | /projects/{id}/plans/{path_id}/resources | 获取当前路径的阶段资源列表（静态保底 + 已绑定动态资源） |
-| POST | /projects/{id}/plans/{path_id}/resources/recommend | 按阶段自动补充 Tavily 候选资源 |
-| POST | /projects/{id}/plans/{path_id}/resources/bind | 手动把搜索结果绑定到指定阶段或节点 |
+| GET | /projects/{id}/plans/{path_id}/resources | 获取当前路径的阶段总览资源与知识点资源列表（静态保底 + 已绑定动态资源） |
+| POST | /projects/{id}/plans/{path_id}/resources/recommend | 按当前路径知识点自动补充 Tavily 候选资源 |
+| POST | /projects/{id}/plans/{path_id}/resources/bind | 手动把搜索结果绑定到指定阶段或知识点 |
 | POST | /projects/{id}/resources/bindings | 绑定项目级资源到 project node 或 path stage |
 
 **手动绑定请求体示例：**
 ```json
 {
   "stage_name": "核心掌握",
+  "node_id": "ml_c05",
   "title": "逻辑回归核心讲义",
   "url": "https://example.com/logreg",
   "snippet": "覆盖逻辑回归、梯度下降和分类原理。"
@@ -354,8 +355,8 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 ```
 
 说明：
-- 当前版本优先支持阶段级资源增强
-- 静态资源来自 Domain Pack，作为离线保底
+- 当前版本优先支持知识点级资源增强，阶段资源作为总览保底
+- 静态资源来自 Domain Pack，并优先通过 `node_ids` 挂载到知识点
 - 动态绑定结果写入 SQLite，不直接回写知识包
 
 ## 图谱审核

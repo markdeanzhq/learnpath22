@@ -9,6 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.exceptions import AppError, NotFoundError
+from app.repositories.explanation_cache_repository import (
+    get_explanation_cache,
+    upsert_explanation_cache,
+)
 from app.repositories.plan_repository import (
     get_latest_plan,
     get_plan_version_count,
@@ -264,11 +268,18 @@ async def get_latest_plan_endpoint(
     }
 
 
+def _should_cache_explanation(response: ExplanationResponse, *, polish: bool) -> bool:
+    if not polish:
+        return True
+    return response.meta is not None and response.meta.polish.applied
+
+
 async def _build_latest_explanation_response(
     project_id: str,
     db: AsyncSession,
     *,
     polish: bool = False,
+    use_cache: bool = True,
 ) -> tuple[ExplanationResponse, set[str]]:
     project = await get_project(db, project_id)
     if not project:
@@ -282,8 +293,19 @@ async def _build_latest_explanation_response(
     if not audit:
         raise NotFoundError("暂无审计数据")
 
-    pack = get_domain_pack_service(project.domain)
     stages = _load_plan_stages(path.plan_json)
+    latest_plan_node_ids = {
+        task.get("node_id")
+        for stage in stages
+        for task in stage.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("node_id"), str)
+    }
+    if use_cache:
+        cached = await get_explanation_cache(db, path_id=path.id, polish_requested=polish)
+        if cached is not None:
+            return ExplanationResponse.model_validate_json(cached.explanation_json), latest_plan_node_ids
+
+    pack = get_domain_pack_service(project.domain)
     nodes_by_id, context = _build_explanation_nodes_by_id(pack, audit, stages)
     pack_version = audit.get("pack_version") or pack.manifest.get("version")
     context.update(
@@ -310,13 +332,17 @@ async def _build_latest_explanation_response(
         scoring_config,
         context=context,
     )
-    latest_plan_node_ids = {
-        task.get("node_id")
-        for stage in stages
-        for task in stage.get("tasks", [])
-        if isinstance(task, dict) and isinstance(task.get("node_id"), str)
-    }
-    return polish_explanation(response, requested=polish), latest_plan_node_ids
+    response = polish_explanation(response, requested=polish)
+    if _should_cache_explanation(response, polish=polish):
+        await upsert_explanation_cache(
+            db,
+            project_id=project_id,
+            path_id=path.id,
+            plan_version=path.version,
+            polish_requested=polish,
+            explanation_json=response.model_dump_json(),
+        )
+    return response, latest_plan_node_ids
 
 
 @router.get("/projects/{project_id}/explanation", response_model=ExplanationResponse)

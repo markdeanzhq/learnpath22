@@ -52,13 +52,13 @@
           <div class="resources-section">
             <div class="resources-actions">
               <el-alert
-                title="路径生成后可按阶段自动补充候选资源；静态资源用于离线保底，Tavily 结果属于在线增强。"
+                title="资源优先绑定到知识点；阶段资源仅作为总览保底，Tavily 结果属于在线增强。"
                 type="info"
                 :closable="false"
                 show-icon
               />
               <el-button type="primary" @click="recommendResources" :loading="recommendLoading">
-                自动补充阶段资源
+                自动补充知识点资源
               </el-button>
             </div>
             <div v-loading="resourcesLoading" element-loading-text="正在加载推荐资源...">
@@ -67,21 +67,39 @@
                   <el-collapse-item
                     v-for="stage in planResources.stages"
                     :key="stage.stage_name"
-                    :title="`${stage.stage_name}（${stage.resources.length} 条）`"
+                    :title="`${stage.stage_name}（${countStageResources(stage)} 条）`"
                     :name="stage.stage_name"
                   >
-                    <el-empty v-if="!stage.resources.length" description="当前阶段暂无资源，可点击上方按钮自动补充" />
-                    <el-card v-for="item in stage.resources" :key="item.id" shadow="never" class="resource-card">
-                      <div class="resource-card__header">
-                        <a v-if="item.url" :href="item.url" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
-                        <span v-else class="resource-title">{{ item.title }}</span>
-                        <el-tag size="small" :type="item.source_type === 'static' ? 'info' : item.source_type === 'manual' ? 'success' : 'warning'">
-                          {{ item.source_type === 'static' ? '静态保底' : item.source_type === 'manual' ? '手动绑定' : '在线增强' }}
-                        </el-tag>
-                      </div>
-                      <div class="resource-snippet">{{ item.snippet || '暂无摘要' }}</div>
-                      <div class="resource-meta" v-if="item.score != null">相关度：{{ (item.score * 100).toFixed(0) }}%</div>
-                    </el-card>
+                    <el-empty v-if="!countStageResources(stage)" description="当前阶段暂无资源，可点击上方按钮自动补充" />
+                    <section v-if="stage.stage_resources.length" class="stage-resource-block">
+                      <div class="resource-group-title">阶段总览资源</div>
+                      <el-card v-for="item in stage.stage_resources" :key="item.id" shadow="never" class="resource-card">
+                        <div class="resource-card__header">
+                          <a v-if="item.url" :href="item.url" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
+                          <span v-else class="resource-title">{{ item.title }}</span>
+                          <el-tag size="small" :type="resourceTagType(item.source_type)">
+                            {{ resourceSourceLabel(item.source_type) }}
+                          </el-tag>
+                        </div>
+                        <div class="resource-snippet">{{ item.snippet || '暂无摘要' }}</div>
+                        <div class="resource-meta" v-if="item.score != null">相关度：{{ (item.score * 100).toFixed(0) }}%</div>
+                      </el-card>
+                    </section>
+                    <section v-for="node in stage.nodes" :key="node.node_id" class="node-resource-block">
+                      <div class="resource-group-title">{{ node.node_name }}</div>
+                      <el-empty v-if="!node.resources.length" description="该知识点暂无资源" />
+                      <el-card v-for="item in node.resources" :key="item.id" shadow="never" class="resource-card">
+                        <div class="resource-card__header">
+                          <a v-if="item.url" :href="item.url" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
+                          <span v-else class="resource-title">{{ item.title }}</span>
+                          <el-tag size="small" :type="resourceTagType(item.source_type)">
+                            {{ resourceSourceLabel(item.source_type) }}
+                          </el-tag>
+                        </div>
+                        <div class="resource-snippet">{{ item.snippet || '暂无摘要' }}</div>
+                        <div class="resource-meta" v-if="item.score != null">相关度：{{ (item.score * 100).toFixed(0) }}%</div>
+                      </el-card>
+                    </section>
                   </el-collapse-item>
                 </el-collapse>
               </template>
@@ -132,12 +150,20 @@
                   <el-button @click="doSearch" :loading="searching">搜索</el-button>
                 </template>
               </el-input>
-              <el-select v-model="selectedStageName" placeholder="选择绑定阶段" style="width: 220px">
+              <el-select v-model="selectedStageName" placeholder="选择阶段" style="width: 220px">
                 <el-option
                   v-for="stage in stageOptions"
                   :key="stage.stage_name"
                   :label="stage.stage_name"
                   :value="stage.stage_name"
+                />
+              </el-select>
+              <el-select v-model="selectedNodeId" placeholder="选择知识点" style="width: 240px">
+                <el-option
+                  v-for="task in selectedStageTasks"
+                  :key="task.node_id"
+                  :label="task.name"
+                  :value="task.node_id"
                 />
               </el-select>
             </div>
@@ -153,8 +179,8 @@
               </el-table-column>
               <el-table-column label="操作" width="130">
                 <template #default="{ row }">
-                  <el-button link type="primary" :loading="bindLoading" @click="bindSearchResultToStage(row)">
-                    绑定到阶段
+                  <el-button link type="primary" :loading="bindLoading" @click="bindSearchResultToNode(row)">
+                    绑定到知识点
                   </el-button>
                 </template>
               </el-table-column>
@@ -212,7 +238,7 @@ import { usePlanStore } from '@/stores/plan'
 import { useSettingsStore } from '@/stores/settings'
 import type { ExplanationAskRequest } from '@/api/modules/plan'
 import { searchApi, type SearchResultItem } from '@/api/modules/search'
-import { resourceApi, type PlanResourcesResponse } from '@/api/modules/resource'
+import { resourceApi, type PlanResourcesResponse, type StageResourceGroup } from '@/api/modules/resource'
 import StageTimeline from './components/StageTimeline.vue'
 import Explanation from './Explanation.vue'
 import { useExplanationState } from './useExplanationState'
@@ -235,7 +261,9 @@ const resourcesLoading = ref(false)
 const recommendLoading = ref(false)
 const bindLoading = ref(false)
 const selectedStageName = ref('')
-const explanationState = useExplanationState(projectId)
+const selectedNodeId = ref('')
+const currentPlanId = computed(() => planStore.currentPlan?.id)
+const explanationState = useExplanationState(projectId, currentPlanId)
 const {
   explanation,
   polishRequested,
@@ -262,8 +290,14 @@ async function loadPlanResources() {
     if (!selectedStageName.value) {
       selectedStageName.value = planStore.currentPlan.stages[0]?.stage_name || ''
     }
-  } catch {
-    planResources.value = null
+    if (!selectedNodeId.value) {
+      selectedNodeId.value = selectedStageTasks.value[0]?.node_id || ''
+    }
+  } catch (e: any) {
+    if (!planResources.value) {
+      planResources.value = null
+    }
+    ElMessage.error(e?.response?.data?.error || '加载推荐资源失败')
   } finally {
     resourcesLoading.value = false
   }
@@ -271,17 +305,29 @@ async function loadPlanResources() {
 
 async function loadPath() {
   loadError.value = ''
-  planResources.value = null
+  const previousProjectId = projectId.value
+  const previousPlanId = planStore.currentPlan?.id
   selectedStageName.value = ''
-  planStore.currentPlan = null
-  explanationState.clear()
-  if (!projectId.value) return
+  selectedNodeId.value = ''
+  if (!projectId.value) {
+    planResources.value = null
+    planStore.currentPlan = null
+    explanationState.clear()
+    return
+  }
   try {
     await settingsStore.refreshServerStatus().catch(() => undefined)
     await planStore.loadLatest(projectId.value)
+    if (projectId.value !== previousProjectId || planStore.currentPlan?.id !== previousPlanId) {
+      planResources.value = null
+      explanationState.clear()
+    }
     await explanationState.load(llmExplanationPolish.value)
     await loadPlanResources()
   } catch (e: any) {
+    planResources.value = null
+    planStore.currentPlan = null
+    explanationState.clear()
     if (e?.response?.status !== 404) {
       loadError.value = e?.response?.data?.error || '加载路径失败'
     }
@@ -336,7 +382,7 @@ async function recommendResources() {
   try {
     planResources.value = await resourceApi.recommendPlanResources(projectId.value, planStore.currentPlan.id)
     activeTab.value = 'resources'
-    ElMessage.success('已为当前路径补充阶段资源')
+    ElMessage.success('已为当前路径补充知识点资源')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '自动补充资源失败')
   } finally {
@@ -359,22 +405,23 @@ async function doSearch() {
   }
 }
 
-async function bindSearchResultToStage(row: SearchResultItem) {
-  if (!projectId.value || !planStore.currentPlan?.id || !selectedStageName.value) {
-    ElMessage.warning('请先选择目标阶段')
+async function bindSearchResultToNode(row: SearchResultItem) {
+  if (!projectId.value || !planStore.currentPlan?.id || !selectedStageName.value || !selectedNodeId.value) {
+    ElMessage.warning('请先选择目标知识点')
     return
   }
   bindLoading.value = true
   try {
     await resourceApi.bindManualResource(projectId.value, planStore.currentPlan.id, {
       stage_name: selectedStageName.value,
+      node_id: selectedNodeId.value,
       title: row.title,
       url: row.url,
       snippet: row.snippet,
     })
     await loadPlanResources()
     activeTab.value = 'resources'
-    ElMessage.success('已绑定到当前阶段')
+    ElMessage.success('已绑定到当前知识点')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '绑定资源失败')
   } finally {
@@ -400,6 +447,29 @@ const budgetLabel = computed(() => {
 })
 
 const stageOptions = computed(() => planStore.currentPlan?.stages ?? [])
+const selectedStageTasks = computed(() => (
+  stageOptions.value.find((stage) => stage.stage_name === selectedStageName.value)?.tasks ?? []
+))
+
+watch(selectedStageName, () => {
+  selectedNodeId.value = selectedStageTasks.value[0]?.node_id || ''
+})
+
+function countStageResources(stage: StageResourceGroup) {
+  return stage.stage_resources.length + stage.nodes.reduce((sum, node) => sum + node.resources.length, 0)
+}
+
+function resourceTagType(sourceType: string) {
+  if (sourceType === 'static') return 'info'
+  if (sourceType === 'manual') return 'success'
+  return 'warning'
+}
+
+function resourceSourceLabel(sourceType: string) {
+  if (sourceType === 'static') return '静态保底'
+  if (sourceType === 'manual') return '手动绑定'
+  return '在线增强'
+}
 </script>
 
 <style scoped>
@@ -427,6 +497,16 @@ const stageOptions = computed(() => planStore.currentPlan?.stages ?? [])
   align-items: center;
   margin-bottom: 16px;
   flex-wrap: wrap;
+}
+.stage-resource-block,
+.node-resource-block {
+  margin-bottom: 16px;
+}
+.resource-group-title {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px;
 }
 .resource-card {
   margin-bottom: 12px;

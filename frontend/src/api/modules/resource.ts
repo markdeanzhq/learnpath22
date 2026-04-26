@@ -12,9 +12,16 @@ export interface ResourceItem {
   created_at?: string | null
 }
 
+export interface NodeResourceGroup {
+  node_id: string
+  node_name: string
+  resources: ResourceItem[]
+}
+
 export interface StageResourceGroup {
   stage_name: string
-  resources: ResourceItem[]
+  stage_resources: ResourceItem[]
+  nodes: NodeResourceGroup[]
 }
 
 export interface PlanResourcesResponse {

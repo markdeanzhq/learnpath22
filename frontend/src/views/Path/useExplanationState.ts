@@ -12,6 +12,29 @@ export interface ExplanationAiAvailability {
   polishAvailable: boolean
 }
 
+const MAX_EXPLANATION_MEMORY_CACHE_SIZE = 12
+const explanationMemoryCache = new Map<string, ExplanationResponse>()
+
+function rememberExplanation(cacheKey: string, data: ExplanationResponse) {
+  if (!cacheKey) return
+  explanationMemoryCache.delete(cacheKey)
+  explanationMemoryCache.set(cacheKey, data)
+  while (explanationMemoryCache.size > MAX_EXPLANATION_MEMORY_CACHE_SIZE) {
+    const oldestKey = explanationMemoryCache.keys().next().value
+    if (!oldestKey) break
+    explanationMemoryCache.delete(oldestKey)
+  }
+}
+
+function buildExplanationCacheKey(
+  projectId: string | undefined,
+  scopeId: string | undefined,
+  polish: boolean,
+) {
+  if (!projectId || !scopeId) return ''
+  return `${projectId}:${scopeId}:${polish ? 'polished' : 'rule'}`
+}
+
 function isCanceledRequest(error: unknown) {
   if (!error || typeof error !== 'object') {
     return false
@@ -20,7 +43,7 @@ function isCanceledRequest(error: unknown) {
   return maybeError.code === 'ERR_CANCELED' || maybeError.name === 'CanceledError' || maybeError.name === 'AbortError'
 }
 
-export function useExplanationState(projectId: Ref<string | undefined>) {
+export function useExplanationState(projectId: Ref<string | undefined>, scopeId?: Ref<string | undefined>) {
   const explanation = ref<ExplanationResponse | null>(null)
   const polishRequested = ref(false)
   const loading = ref(false)
@@ -63,6 +86,13 @@ export function useExplanationState(projectId: Ref<string | undefined>) {
       return
     }
 
+    const cacheKey = buildExplanationCacheKey(projectId.value, scopeId?.value, polish)
+    const cached = cacheKey ? explanationMemoryCache.get(cacheKey) : null
+    if (cached) {
+      explanation.value = cached
+      error.value = ''
+    }
+
     const nextRequestId = requestId.value + 1
     requestId.value = nextRequestId
     abortCurrentRequest()
@@ -78,6 +108,9 @@ export function useExplanationState(projectId: Ref<string | undefined>) {
         return
       }
       explanation.value = data
+      if (cacheKey) {
+        rememberExplanation(cacheKey, data)
+      }
     } catch (e: any) {
       if (requestId.value !== nextRequestId || isCanceledRequest(e)) {
         return

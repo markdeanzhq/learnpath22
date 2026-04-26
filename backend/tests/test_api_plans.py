@@ -2,10 +2,11 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app.models.sqlite_models import GoalResolutionSession, LearningProject
+from app.models.sqlite_models import GoalResolutionSession, LearningProject, PlanExplanationCache
 from app.services.domain_pack_service import get_domain_pack_service
 
 
@@ -199,6 +200,81 @@ async def test_get_explanation(client, project, plan):
     assert data["meta"]["provenance"]["truth_source"] == "plan_audit_snapshot"
     assert data["meta"]["polish"]["requested"] is False
     assert data["meta"]["polish"]["applied"] is False
+
+
+async def test_get_explanation_uses_cached_rule_response(client, db_session, project, plan):
+    first_resp = await client.get(f"/api/v1/projects/{project['id']}/explanation")
+    assert first_resp.status_code == 200
+    first_data = first_resp.json()
+
+    result = await db_session.execute(
+        select(PlanExplanationCache).where(
+            PlanExplanationCache.path_id == plan["id"],
+            PlanExplanationCache.polish_requested.is_(False),
+        )
+    )
+    assert result.scalar_one().plan_version == plan["version"]
+
+    with patch("app.api.v1.plans.build_explanation") as build_mock:
+        second_resp = await client.get(f"/api/v1/projects/{project['id']}/explanation")
+
+    assert second_resp.status_code == 200
+    assert second_resp.json() == first_data
+    build_mock.assert_not_called()
+
+
+async def test_get_explanation_uses_cached_successful_polish(client, db_session, project, plan):
+    from app.schemas.explanation import PolishMeta
+
+    def fake_polish(response, *, requested=True):
+        meta = response.meta.model_copy(
+            update={"polish": PolishMeta(requested=requested, applied=True, scope=["test"])}
+        )
+        return response.model_copy(update={"meta": meta})
+
+    with patch("app.api.v1.plans.polish_explanation", side_effect=fake_polish) as polish_mock:
+        first_resp = await client.get(f"/api/v1/projects/{project['id']}/explanation?polish=true")
+
+    assert first_resp.status_code == 200
+    assert first_resp.json()["meta"]["polish"]["applied"] is True
+    assert polish_mock.call_count == 1
+
+    result = await db_session.execute(
+        select(PlanExplanationCache).where(
+            PlanExplanationCache.path_id == plan["id"],
+            PlanExplanationCache.polish_requested.is_(True),
+        )
+    )
+    assert result.scalar_one().plan_version == plan["version"]
+
+    with patch("app.api.v1.plans.polish_explanation") as second_polish_mock:
+        second_resp = await client.get(f"/api/v1/projects/{project['id']}/explanation?polish=true")
+
+    assert second_resp.status_code == 200
+    assert second_resp.json() == first_resp.json()
+    second_polish_mock.assert_not_called()
+
+
+async def test_get_explanation_does_not_cache_failed_polish(client, db_session, project, plan, monkeypatch):
+    from app.core.config import get_settings, replace_runtime_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("LLM_EXPLANATION_POLISH", "true")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    get_settings.cache_clear()
+    replace_runtime_settings({"llm_api_key": "", "llm_explanation_polish": "true"})
+
+    resp = await client.get(f"/api/v1/projects/{project['id']}/explanation?polish=true")
+    assert resp.status_code == 200
+    assert resp.json()["meta"]["polish"]["fallback_reason"] == "missing_api_key"
+
+    result = await db_session.execute(
+        select(PlanExplanationCache).where(
+            PlanExplanationCache.path_id == plan["id"],
+            PlanExplanationCache.polish_requested.is_(True),
+        )
+    )
+    assert result.scalar_one_or_none() is None
 
 
 async def test_get_explanation_polish_metadata_reports_disabled(client, project, plan, monkeypatch):

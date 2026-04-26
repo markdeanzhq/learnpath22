@@ -12,6 +12,7 @@ const {
   resourceGetPlanResourcesMock,
   resourceRecommendMock,
   searchMock,
+  elMessageErrorMock,
   currentProjectState,
   currentPlanState,
   lastReplanResultState,
@@ -26,6 +27,7 @@ const {
   resourceGetPlanResourcesMock: vi.fn(),
   resourceRecommendMock: vi.fn(),
   searchMock: vi.fn(),
+  elMessageErrorMock: vi.fn(),
   currentProjectState: {
     value: {
       id: 'project-001',
@@ -44,7 +46,7 @@ const {
       version: 1,
       budget_status: 'feasible',
       total_hours: 12,
-      stages: [],
+      stages: [] as any[],
     },
   },
   lastReplanResultState: {
@@ -72,7 +74,7 @@ vi.mock('pinia', () => ({
 vi.mock('element-plus', () => ({
   ElMessage: {
     success: vi.fn(),
-    error: vi.fn(),
+    error: elMessageErrorMock,
     warning: vi.fn(),
   },
 }))
@@ -180,6 +182,32 @@ function mountPathIndex() {
   })
 }
 
+function createResourceResponse(title: string) {
+  return {
+    path_id: 'plan-001',
+    stages: [
+      {
+        stage_name: '基础准备',
+        stage_resources: [],
+        nodes: [
+          {
+            node_id: 'ml-a01',
+            node_name: '机器学习导论',
+            resources: [
+              {
+                id: `resource-${title}`,
+                title,
+                url: 'https://example.com/resource',
+                source_type: 'tavily_auto',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+}
+
 function createExplanationResponse(overrides: Record<string, any> = {}) {
   return {
     node_explanations: [],
@@ -228,7 +256,14 @@ describe('Path page goal reconfirm flow', () => {
       version: 1,
       budget_status: 'feasible',
       total_hours: 12,
-      stages: [],
+      stages: [
+        {
+          stage_index: 0,
+          stage_name: '基础准备',
+          tasks: [{ node_id: 'ml-a01', name: '机器学习导论' }],
+          estimated_hours: 2,
+        },
+      ],
     }
     lastReplanResultState.value = null
     llmApiKeySetState.value = true
@@ -240,11 +275,18 @@ describe('Path page goal reconfirm flow', () => {
         version: 1,
         budget_status: 'feasible',
         total_hours: 12,
-        stages: [],
+        stages: [
+          {
+            stage_index: 0,
+            stage_name: '基础准备',
+            tasks: [{ node_id: 'ml-a01', name: '机器学习导论' }],
+            estimated_hours: 2,
+          },
+        ],
       }
     })
     planApiGetExplanationMock.mockResolvedValue(createExplanationResponse())
-    resourceGetPlanResourcesMock.mockResolvedValue({ plan_id: 'plan-001', stages: [] })
+    resourceGetPlanResourcesMock.mockResolvedValue({ path_id: 'plan-001', stages: [] })
   })
 
   it('uses llmExplanationPolish from settings store on initial explanation load', async () => {
@@ -301,6 +343,50 @@ describe('Path page goal reconfirm flow', () => {
     expect(vm.explanation.node_explanations[0].node_id).toBe('node-b')
     expect(vm.explanationError).toBe('')
     expect(vm.explanationLoading).toBe(false)
+  })
+
+  it('shows cached explanation while reloading the same plan', async () => {
+    planApiGetExplanationMock.mockResolvedValueOnce(createExplanationResponse({
+      node_explanations: [{ node_id: 'node-cached', node_name: '缓存节点', reason: 'cached', decision_type: 'target' }],
+    }))
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const request = createDeferred<any>()
+    planApiGetExplanationMock.mockImplementationOnce(() => request.promise)
+
+    const vm = wrapper.vm as any
+    const reload = vm.reloadExplanation(false)
+    await flushPromises()
+
+    expect(vm.explanation.node_explanations[0].node_id).toBe('node-cached')
+    expect(vm.explanationLoading).toBe(true)
+
+    request.resolve(createExplanationResponse({
+      node_explanations: [{ node_id: 'node-fresh', node_name: '新节点', reason: 'fresh', decision_type: 'target' }],
+    }))
+    await reload
+    await flushPromises()
+
+    expect(vm.explanation.node_explanations[0].node_id).toBe('node-fresh')
+  })
+
+  it('keeps existing resources when refresh fails', async () => {
+    resourceGetPlanResourcesMock.mockResolvedValueOnce(createResourceResponse('已保存推荐资源'))
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.planResources.stages[0].nodes[0].resources[0].title).toBe('已保存推荐资源')
+
+    resourceGetPlanResourcesMock.mockRejectedValueOnce({ response: { data: { error: '资源读取失败' } } })
+    await vm.loadPlanResources()
+    await flushPromises()
+
+    expect(vm.planResources.stages[0].nodes[0].resources[0].title).toBe('已保存推荐资源')
+    expect(elMessageErrorMock).toHaveBeenCalledWith('资源读取失败')
   })
 
   it('redirects to project-level reconfirm when replan hits GOAL_TARGETS_REMOVED', async () => {

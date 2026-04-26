@@ -18,9 +18,16 @@ class ResourceItem(BaseModel):
     created_at: datetime | None = None
 
 
+class NodeResourceGroup(BaseModel):
+    node_id: str
+    node_name: str
+    resources: list[ResourceItem] = Field(default_factory=list)
+
+
 class StageResourceGroup(BaseModel):
     stage_name: str
-    resources: list[ResourceItem]
+    stage_resources: list[ResourceItem] = Field(default_factory=list)
+    nodes: list[NodeResourceGroup] = Field(default_factory=list)
 
 
 class PlanResourcesResponse(BaseModel):
