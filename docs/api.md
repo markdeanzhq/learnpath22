@@ -13,17 +13,23 @@ Base URL: `/api/v1`
 | GET | /projects | 列出所有项目 |
 | DELETE | /projects/{id} | 永久删除项目及其关联数据 |
 
-### 项目创建真实流程
+### 项目创建与目标理解真实流程
 
-当前项目创建不是直接提交 `goal_type/domain` 后立即落库，而是采用三步确认流程：
+当前项目创建不是直接提交 `goal_type/domain` 后立即落库，而是先通过 GoalFrame 与 Coverage Router 形成显式业务状态，再由用户执行分支确认：
 
 ```text
-preview -> select candidate -> create
+goal preview -> branch-specific UI -> create / reconfirm / answer clarification / extension draft
 ```
 
-1. 调用 `POST /goal-resolution/preview`，提交学习目标文本与可选目标类型。
-2. 后端返回候选目标列表、推荐候选与 `session_id`。
-3. 前端展示候选，用户选择 `selected_candidate_id` 后调用 `POST /projects` 创建项目。
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /goal-resolution/preview | 新项目目标理解预览 |
+| POST | /goal-resolution/clarifications/{clarification_session_id}/answers | 回答新项目澄清问题 |
+| POST | /projects | 使用已确认候选创建项目 |
+| POST | /projects/{id}/goal-resolution/preview | 已有项目目标重新确认预览 |
+| POST | /projects/{id}/goal-resolution/clarifications/{clarification_session_id}/answers | 回答已有项目澄清问题 |
+| PUT | /projects/{id}/goal-resolution | 使用已确认候选更新项目目标 |
+| POST | /projects/{id}/goal-resolution/extension-drafts | 为 in-domain uncovered 目标显式创建 overlay 草稿 |
 
 **目标预览请求体:**
 ```json
@@ -36,17 +42,94 @@ preview -> select candidate -> create
 说明：
 - `requested_goal_type` 可选；省略时由后端自动识别
 - 当前公开目标类型稳定为 `domain`、`concept`、`problem`
-- `domain` 是兼容字段，公共创建流程不依赖前端传入 `domain`
 - 当前版本为机器学习基础单领域原型，不开放多领域选择入口
+- preview 对合法业务状态返回 `200` discriminated union；非法转换、未知枚举、过期/漂移会话返回 `4xx` 且不写入正式路径数据
 
-**目标预览成功响应:**
+**目标预览公共字段:**
+
+所有 `200` 预览响应都包含 `result_type`、`coverage_status`、`goal_understanding`、`goal_frame` 与 `pack_hash`。`goal_understanding` 来自 LLM 在线目标理解，表达主领域、机器学习相关性、边界判断、目标概念、置信度与证据；它不直接决定正式节点 ID。`project_graph_hash` 只在项目绑定预览中有意义：新建项目尚未产生项目级图谱快照，因此该字段为 `null`；已有项目目标重确认会返回当前项目图谱快照。`audit_trace` 只在创建了可追溯 session 的响应中返回，`boundary_reject` 等不写入后续会话的分支可为空。
+
 ```json
 {
+  "result_type": "select_candidate",
+  "coverage_status": "covered",
+  "goal_understanding": {
+    "schema_version": "v1",
+    "raw_text": "我想系统学习机器学习基础",
+    "domain_decision": "in_domain",
+    "primary_domain": "machine_learning",
+    "ml_relevance": "core",
+    "goal_type": "domain",
+    "target_concepts": ["机器学习基础"],
+    "constraints": {},
+    "preferences": {},
+    "uncertainties": [],
+    "clarification_question": null,
+    "confidence": 0.94,
+    "evidence": [
+      {"span": "机器学习基础", "label": "supported_domain", "reason": "明确属于当前支持的机器学习基础领域"}
+    ],
+    "prompt_version": "goal-understanding-v1",
+    "model": "<llm_model>",
+    "warnings": []
+  },
+  "goal_frame": {
+    "schema_version": "v1",
+    "raw_text": "我想系统学习机器学习基础",
+    "domain": "machine_learning",
+    "goal_type": "domain",
+    "target_concepts": ["机器学习基础"],
+    "target_node_ids": ["ml_c09"],
+    "constraints": {},
+    "preferences": {},
+    "planner_parameters": {
+      "path_mode": "standard",
+      "theory_weight": 0.5,
+      "practice_weight": 0.5,
+      "weekly_hours": 10,
+      "deadline_weeks": 8,
+      "explanation_focus": []
+    },
+    "uncertainties": [],
+    "confidence": 0.9,
+    "sources": [{"source": "rules", "evidence": "rules_first_goal_frame", "confidence": 0.9}]
+  },
+  "pack_hash": "<pack_hash>",
+  "project_graph_hash": "<project_graph_hash_or_null>",
+  "audit_trace": {
+    "trace_type": "goal_resolution",
+    "trace_id": "<session_or_trace_id>",
+    "pack_hash": "<pack_hash>",
+    "project_graph_hash": "<project_graph_hash_or_null>"
+  }
+}
+```
+
+`GoalFrame.target_node_ids` 只是候选提示；正式规划目标只能来自用户确认的候选或显式接受的 partial covered targets。GoalFrame 只能影响受控 planner 参数：`path_mode`、理论/实践权重、时间预算提示与解释关注点，不能覆盖 `confirmed_target_node_ids`，也不能删除硬 `REQUIRES` 前置依赖。
+
+**Coverage discriminated union:**
+
+| `result_type` | `coverage_status` | 关键字段 | 合法下一步 |
+|---|---|---|---|
+| `select_candidate` | `covered` / `adjacent_domain` | `session_id`、`expires_at`、`recommended_candidate_id`、`candidates[]` | 选择候选后创建项目或更新项目目标 |
+| `confirm_partial` | `partial` | `session_id`、`covered_target_node_ids[]`、`missing_concepts[]`、`candidates[]` | 勾选 partial acceptance 后只规划 covered targets |
+| `answer_clarification` | `ambiguous` / `cross_domain` | `clarification_session_id`、`turn_count`、`max_turns`、`questions[]` | 调用 clarification answer 端点，直到 resolved 后获得新的 coverage response |
+| `review_extension_draft` | `in_domain_uncovered` | `missing_concepts[]`、`draft_entry`、可选 `session_id` | 用户显式请求创建项目级 overlay 草稿 |
+| `boundary_reject` | `out_of_domain` / `adjacent_domain` | `reason_code`、`reason_text`、`rewrite_suggestions[]` | 展示边界说明，不调用 planner，不写正式路径 |
+
+**候选选择响应示例:**
+```json
+{
+  "result_type": "select_candidate",
+  "coverage_status": "covered",
   "session_id": "<resolution_session_id>",
   "expires_at": "2026-04-24T12:00:00",
   "auto_detected_goal_type": "domain",
   "effective_goal_type": "domain",
   "recommended_candidate_id": "template:domain_ml_full",
+  "pack_hash": "<pack_hash>",
+  "project_graph_hash": "<project_graph_hash>",
+  "goal_frame": {"schema_version": "v1", "raw_text": "我想系统学习机器学习基础"},
   "candidates": [
     {
       "candidate_id": "template:domain_ml_full",
@@ -59,28 +142,42 @@ preview -> select candidate -> create
       "source_breakdown": {"template": 1.0, "lexical": 0.0, "llm": 0.0},
       "score": 0.86,
       "score_breakdown": {"final_score": 0.86},
-      "explanation": "template 候选",
+      "explanation": "推荐学习完整机器学习主干。",
       "warnings": []
+    }
+  ],
+  "warnings": []
+}
+```
+
+**Partial 响应示例:**
+```json
+{
+  "result_type": "confirm_partial",
+  "coverage_status": "partial",
+  "session_id": "<resolution_session_id>",
+  "expires_at": "2026-04-24T12:00:00",
+  "covered_target_node_ids": ["ml_c09"],
+  "missing_concepts": ["深度学习"],
+  "goal_frame": {"schema_version": "v1", "raw_text": "我想学习机器学习和深度学习"},
+  "candidates": []
+}
+```
+
+**澄清回答请求体:**
+```json
+{
+  "answers": [
+    {
+      "question_id": "goal_type",
+      "selected_option_id": "domain",
+      "free_text": null
     }
   ]
 }
 ```
 
-**目标预览零候选响应:**
-```json
-{
-  "error": "EMPTY_CANDIDATES",
-  "code": 422,
-  "reason_code": "negative_patterns_excluded_all",
-  "reason_text": "当前目标文本命中了候选模板，但这些模板都被排除词命中，请改写目标描述后重试。"
-}
-```
-
-说明：
-- 零候选严格返回 `422 EMPTY_CANDIDATES`
-- `reason_code` 为稳定机器可读枚举
-- `reason_text` 为面向用户的单句说明，前端会优先展示它并带出 `reason_code`
-- preview 不会回退到默认目标策略
+澄清响应为 `ClarificationSessionResponse`：`status` 为 `active|resolved|rejected|expired|stale`，并携带 `turn_count`、`max_turns`、`questions[]`、可选 `goal_frame` 与可选 `coverage_response`。自由文本答案会先解析为受控 delta，不能直接变成 planner 输入。
 
 **创建项目请求体:**
 ```json
@@ -88,29 +185,50 @@ preview -> select candidate -> create
   "title": "机器学习入门",
   "goal_text": "我想系统学习机器学习基础",
   "resolution_session_id": "<resolution_session_id>",
-  "selected_candidate_id": "template:domain_ml_full"
+  "selected_candidate_id": "template:domain_ml_full",
+  "accept_partial": false
 }
 ```
 
 说明：
-- 创建时必须复用 preview 返回的 `resolution_session_id` 与候选 ID
-- 后端会校验目标文本 hash、domain、pack hash 与候选归属，避免使用过期或漂移的预览会话
+- 创建或 reconfirm 时必须复用 preview 返回的 `resolution_session_id` 与候选 ID
+- `confirm_partial` 分支必须提交 `accept_partial=true`，正式 audit 会记录 `partial_accepted` 与 `missing_concepts`
+- 后端会校验目标文本 hash、domain、`pack_hash`、`project_graph_hash`、候选归属与会话状态
 - `goal_type` 与 `domain` 仅保留兼容语义，不是公共创建流程的事实源
 
-### 项目目标重新确认流程
-
-当已确认目标节点被图谱审核全部移除，或需要重新确认项目目标时，使用项目级流程：
-
-```text
-project preview -> select candidate -> reconfirm
+**目标重新确认请求体:**
+```json
+{
+  "goal_text": "我想系统学习机器学习基础",
+  "resolution_session_id": "<resolution_session_id>",
+  "selected_candidate_id": "template:domain_ml_full",
+  "accept_partial": false
+}
 ```
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | /projects/{id}/goal-resolution/preview | 为已有项目创建目标候选预览 |
-| PUT | /projects/{id}/goal-resolution | 使用选择的候选更新项目目标 |
+项目级 reconfirm 会额外校验 `project_id` 与当前项目图谱 hash，避免图谱审核状态变化后复用旧候选。
 
-项目级 reconfirm 会额外校验 `project_id` 与当前项目图谱 `graph_hash`，避免图谱审核状态变化后复用旧候选。
+**Extension draft 创建请求体:**
+```json
+{
+  "resolution_session_id": "<resolution_session_id>"
+}
+```
+
+该端点只为 `coverage_status=in_domain_uncovered` 的已保存目标解析会话创建项目级 overlay source/session/candidate 草稿；打开 Knowledge 深链本身不会创建草稿、不会改变 review/planning 状态，也不会写入 Domain Pack。
+
+**目标理解相关错误码:**
+
+| HTTP | `error` / `reason_code` | 说明 |
+|---|---|---|
+| 409 | `STALE_RESOLUTION_SESSION` | 目标解析会话过期、已确认、跨项目或已失效 |
+| 409 | `STALE_CLARIFICATION_SESSION` | 澄清会话过期、超过最大轮次、跨项目或已失效 |
+| 409 | `PROJECT_GRAPH_DRIFT` | 当前 project graph hash 与会话快照不一致 |
+| 409 | `PACK_HASH_DRIFT` | 当前 Domain Pack hash 与会话快照不一致 |
+| 422 | `EMPTY_CANDIDATES` | 无法形成任何安全候选，且不属于 partial / uncovered / boundary / clarification 分支 |
+| 422 | `INVALID_GOAL_TYPE` / `INVALID_TRANSITION` | 请求字段或状态转换不合法 |
+
+说明：`partial`、`in_domain_uncovered`、`out_of_domain`、`ambiguous` 都是合法业务状态，使用 `200` 的显式分支响应，不再依赖“零候选”错误来表达下一步。
 
 **删除项目响应示例:**
 ```json
@@ -150,7 +268,12 @@ project preview -> select candidate -> reconfirm
 |------|------|------|
 | POST | /projects/{id}/plans | 生成学习路径 |
 | GET | /projects/{id}/plans/latest | 获取最新路径 |
-| POST | /projects/{id}/replans | 触发重规划 |
+| POST | /projects/{id}/replans | 触发传统进度/画像重规划 |
+| POST | /projects/{id}/plans/variants/preview | 生成路径变体 TTL 预览，不写正式路径 |
+| POST | /projects/{id}/plans/variants/{preview_id}/confirm | 确认一个变体并保存为正式最新路径版本 |
+| POST | /projects/{id}/replans/feedback/preview | 解析自然语言反馈并返回 replan 预览，不写正式路径 |
+| POST | /projects/{id}/replans/feedback/known-node-drafts/{draft_id}/confirm | 确认 `mark_known_nodes` 候选草稿 |
+| POST | /projects/{id}/replans/feedback/{feedback_preview_id}/confirm | 确认反馈预览并保存正式路径版本 |
 
 路径请求支持 `path_mode`：
 - `standard`：默认完整路径
@@ -232,6 +355,111 @@ project preview -> select candidate -> reconfirm
 - `mode` 支持 `progress_aware` 与 `profile_update`
 - `diff` 提供节点 ID 级差异
 - `diff_details` 提供面向前端展示的可读名称，避免页面直接暴露节点 ID
+
+### 路径变体 preview/confirm
+
+**变体预览请求体:**
+```json
+{
+  "path_modes": ["standard", "compressed", "theory_first", "practice_first"]
+}
+```
+
+`path_modes` 可省略；省略时后端返回当前支持的标准变体集合。预览会保存 TTL session，但不会创建 draft `LearningPath`，也不会改写 latest plan、tracking、resources、explanation cache 或项目目标确认。
+
+**变体预览响应:**
+```json
+{
+  "variant_preview_id": "<variant_preview_id>",
+  "project_id": "<project_id>",
+  "status": "active",
+  "expires_at": "2026-04-24T12:00:00",
+  "pack_hash": "<pack_hash>",
+  "project_graph_hash": "<project_graph_hash>",
+  "profile_hash": "<profile_hash>",
+  "parameter_hash": "<parameter_hash>",
+  "variants": [
+    {
+      "variant_id": "standard:<parameter_hash>",
+      "path_mode": "standard",
+      "budget_summary": {"status": "feasible", "total_hours": 80},
+      "included_node_ids": ["ml_a01", "ml_c09"],
+      "excluded_node_ids": [],
+      "audit_summary": {"path_mode": "standard"}
+    }
+  ]
+}
+```
+
+**确认变体请求体:**
+```json
+{
+  "variant_id": "standard:<parameter_hash>"
+}
+```
+
+确认时后端校验 preview 状态、TTL、项目归属、`pack_hash`、`project_graph_hash`、`profile_hash` 与 `parameter_hash`。同一个有效确认只写入一个正式 `LearningPath` 版本；过期、漂移、已确认或跨项目 preview 会返回 `4xx`，不保存路径。
+
+### 自然语言 feedback replan preview/confirm
+
+**反馈预览请求体:**
+```json
+{
+  "feedback_text": "太长了，希望压缩一点"
+}
+```
+
+V1 仅支持以下受控意图：`compress_time`、`increase_practice`、`increase_theory`、`adjust_deadline`、`mark_known_nodes`。要求改变目标、跳过硬前置、调整 overlay 可见性、跨领域扩展或低置信度反馈，会返回 clarification/refusal 型预览，不写正式路径。
+
+**反馈预览响应:**
+```json
+{
+  "feedback_preview_id": "<feedback_preview_id>",
+  "project_id": "<project_id>",
+  "intent_type": "compress_time",
+  "confidence": 0.86,
+  "controlled_parameters": {"path_mode": "compressed"},
+  "diff": {"removed_optional_node_ids": ["ml_r01"]},
+  "budget_delta": {"total_hours_delta": -12},
+  "blocked_actions": [],
+  "requires_confirmation": true,
+  "requires_second_confirm": false,
+  "variant_preview_id": "<variant_preview_id>",
+  "known_node_draft": null,
+  "status": "active",
+  "expires_at": "2026-04-24T12:00:00",
+  "pack_hash": "<pack_hash>",
+  "project_graph_hash": "<project_graph_hash>"
+}
+```
+
+`mark_known_nodes` 会返回 `requires_second_confirm=true` 与 `known_node_draft`：
+
+```json
+{
+  "draft_id": "<draft_id>",
+  "feedback_preview_id": "<feedback_preview_id>",
+  "project_id": "<project_id>",
+  "node_ids": ["ml_a01"],
+  "evidence": [{"source": "feedback_text", "text": "我已经会线性代数"}],
+  "status": "draft",
+  "expires_at": "2026-04-24T12:00:00"
+}
+```
+
+调用 known-node draft confirm 后，draft 状态变为 `confirmed`，前端才允许确认 feedback preview。确认 feedback preview 会保存一个正式路径版本并在 audit 中记录 intent、diff、blocked actions、相关 variant 或受控参数；预览本身始终 no-write。
+
+**路径预览相关错误码:**
+
+| HTTP | `error` / `reason_code` | 说明 |
+|---|---|---|
+| 409 | `STALE_VARIANT_PREVIEW` | 变体预览过期、已确认、跨项目或状态失效 |
+| 409 | `STALE_FEEDBACK_PREVIEW` | 反馈预览过期、已确认、跨项目或状态失效 |
+| 409 | `PROJECT_GRAPH_DRIFT` | 当前 project graph hash 与 preview 快照不一致 |
+| 409 | `PACK_HASH_DRIFT` | 当前 Domain Pack hash 与 preview 快照不一致 |
+| 409 | `PROFILE_DRIFT` | 当前画像 hash 与变体 preview 快照不一致 |
+| 409 | `PARAMETER_DRIFT` | 当前 planner 参数 hash 与变体 preview 快照不一致 |
+| 422 | `UNSUPPORTED_FEEDBACK_INTENT` | 反馈意图不在 V1 白名单或置信度不足 |
 
 ## 结构化解释
 

@@ -65,6 +65,9 @@ def _normalize_node_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     evidence_spans = candidate.get("evidence_spans", [])
     if not isinstance(evidence_spans, list):
         evidence_spans = []
+    provenance = candidate.get("provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
     return {
         "name": _normalized_string(candidate.get("name")),
         "group": _normalized_string(candidate.get("group")),
@@ -81,6 +84,7 @@ def _normalize_node_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "legality_rationale": _normalized_string(candidate.get("legality_rationale")),
         "summary": _normalized_string(candidate.get("summary")),
         "evidence_spans": evidence_spans,
+        "provenance": provenance,
     }
 
 
@@ -252,6 +256,7 @@ def _node_candidate_to_fields(
 ) -> tuple[dict[str, Any], list[str]]:
     errors = _node_validation_errors(candidate)
     provenance = {
+        **(candidate.get("provenance") if isinstance(candidate.get("provenance"), dict) else {}),
         "source_ids": source_ids,
         "summary": candidate.get("summary"),
         "evidence_spans": candidate.get("evidence_spans", []),
@@ -347,6 +352,7 @@ async def create_extraction_session_from_sources(
     mode: str = "default",
     extraction_payload: Any | None = None,
     domain: str | None = None,
+    session_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     mode = _normalize_extraction_mode(mode)
     _ensure_search_ready_for_mode(mode)
@@ -374,6 +380,7 @@ async def create_extraction_session_from_sources(
         source_ids_json=_canonical_json(source_ids),
         mode=mode,
         warnings_json=_canonical_json(payload["warnings"]),
+        provenance_json=_canonical_json(session_provenance or {}),
         commit=False,
     )
     pack = get_domain_pack_service(domain)

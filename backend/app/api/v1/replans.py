@@ -2,17 +2,31 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.v1.plans import _dict_stages_to_list
 from app.core.exceptions import AppError, NotFoundError
 from app.repositories.project_repository import get_project
+from app.schemas.goal_resolution import (
+    FeedbackPreviewSessionResponse,
+    KnownNodeConfirmationDraftResponse,
+)
 from app.schemas.tracking import ReplanRequest
 from app.services.domain_pack_service import get_domain_pack_service
+from app.services.feedback_replan_service import (
+    confirm_feedback_replan,
+    confirm_known_node_draft,
+    preview_feedback_replan,
+)
 from app.services.replan_service import replan
 
 router = APIRouter()
+
+
+class FeedbackPreviewRequest(BaseModel):
+    feedback_text: str = Field(min_length=1)
 
 
 def _build_node_name_map(stage_plan: dict[str, list[dict]]) -> dict[str, str]:
@@ -86,3 +100,36 @@ async def trigger_replan(
         "diff_details": _build_diff_details(diff, node_name_map, snapshot_node_names),
         "reason": req.reason,
     }
+
+
+@router.post(
+    "/projects/{project_id}/replans/feedback/preview",
+    response_model=FeedbackPreviewSessionResponse,
+)
+async def preview_feedback_replan_endpoint(
+    project_id: str,
+    req: FeedbackPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await preview_feedback_replan(db, project_id=project_id, feedback_text=req.feedback_text)
+
+
+@router.post(
+    "/projects/{project_id}/replans/feedback/known-node-drafts/{draft_id}/confirm",
+    response_model=KnownNodeConfirmationDraftResponse,
+)
+async def confirm_known_node_draft_endpoint(
+    project_id: str,
+    draft_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    return await confirm_known_node_draft(db, project_id=project_id, draft_id=draft_id)
+
+
+@router.post("/projects/{project_id}/replans/feedback/{feedback_preview_id}/confirm")
+async def confirm_feedback_replan_endpoint(
+    project_id: str,
+    feedback_preview_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    return await confirm_feedback_replan(db, project_id=project_id, feedback_preview_id=feedback_preview_id)

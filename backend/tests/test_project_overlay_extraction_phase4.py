@@ -463,6 +463,63 @@ async def test_missing_fields_node_is_invalid_and_not_planner_visible(project, d
     assert planner_visible == []
 
 
+async def test_invalid_weights_make_node_invalid_and_hidden(project, db_session):
+    source = await _create_overlay_source(db_session, project["id"])
+    invalid_node = _valid_node("权重非法节点")
+    invalid_node["theory_weight"] = 0.8
+    invalid_node["practice_weight"] = 0.8
+
+    result = await create_extraction_session_from_sources(
+        db_session,
+        project_id=project["id"],
+        source_ids=[source.source_id],
+        extraction_payload={"nodes": [invalid_node], "edges": [], "resources": [], "warnings": []},
+    )
+
+    node = result["nodes"][0]
+    assert node.validation_status == "invalid"
+    assert "invalid_weight_sum" in json.loads(node.validation_errors_json)
+
+    await update_review_status(
+        db_session,
+        project_id=project["id"],
+        element_type="node",
+        element_id=node.node_id,
+        review_status="confirmed",
+    )
+    assert await list_planner_visible_nodes(db_session, project["id"]) == []
+
+
+async def test_self_loop_and_invalid_relation_edges_are_invalid(project, db_session):
+    source = await _create_overlay_source(db_session, project["id"])
+
+    result = await create_extraction_session_from_sources(
+        db_session,
+        project_id=project["id"],
+        source_ids=[source.source_id],
+        extraction_payload={
+            "nodes": [_valid_node("自环节点")],
+            "edges": [
+                {
+                    "source_name_or_id": "自环节点",
+                    "target_name_or_id": "自环节点",
+                    "relation_type": "DEPENDS_ON",
+                    "confidence": 0.8,
+                    "legality_rationale": "非法关系和自环都必须被拒绝",
+                }
+            ],
+            "resources": [],
+            "warnings": [],
+        },
+    )
+
+    edge = result["edges"][0]
+    errors = json.loads(edge.validation_errors_json)
+    assert edge.validation_status == "invalid"
+    assert "self_loop" in errors
+    assert "invalid_relation_type" in errors
+
+
 async def test_requires_cycle_marks_edges_invalid(project, db_session):
     source = await _create_overlay_source(db_session, project["id"])
 

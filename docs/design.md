@@ -42,27 +42,47 @@
 
 当前版本在产品口径与接口层均收敛为 `machine_learning` 单领域；轻量 registry/contract 只用于把默认领域、支持的目标类型、默认策略和 pack hash 收口为统一框架边界，不表示多领域产品入口已经开放。`KnowledgeNode` 是规划主链事实源，`Stage` 与 `Resource` 主要承担展示与说明职责。
 
-### 3.2 目标解析与画像采集
+### 3.2 目标理解、Coverage Router 与画像采集
 
-位置：`backend/app/services/goal_service.py`、`backend/app/services/profile_collector_service.py`
+位置：`backend/app/services/goal_service.py`、`backend/app/services/goal_resolution_service.py`、`backend/app/services/coverage_router.py`、`backend/app/services/profile_collector_service.py`
+
+目标理解链路被拆成受控状态机：
+
+```text
+用户自然语言
+→ LLM GoalUnderstanding v1（主领域 / ML 相关性 / 边界判断 / 证据）
+→ Domain Admission Policy
+→ GoalFrame v1 + Coverage Router
+→ candidate / partial / clarification / extension draft / boundary
+→ user confirm
+→ rule planner
+```
+
+LLM 在线时只承担开放语义理解，不直接生成正式学习路径，不直接确认 `target_node_ids`，也不写入图谱。系统准入策略根据 `domain_decision = in_domain | cross_domain | out_of_domain | ambiguous` 决定是否进入知识图谱节点校验、受控澄清或边界拒绝。
 
 已实现能力：
-- 学习目标支持 `domain`、`concept`、`problem` 三类输入，三类公开目标类型由当前 Domain Pack manifest 声明并在运行时校验
-- 项目创建采用 `preview -> select candidate -> create` 流程；项目目标重新确认采用 `project preview -> select candidate -> reconfirm` 流程
-- preview 零候选严格返回 `422 EMPTY_CANDIDATES`，并携带稳定 `reason_code` 与面向用户的 `reason_text`
-- 目标解析采用规则候选、词面召回与可选 LLM 补充的候选融合策略；候选排序使用确定性 tie-break，preview 不回退默认目标策略
-- 画像采集支持两条链路：
-  - LLM 在线生成结构化澄清问题
-  - 静态五题问卷兜底
-- 问卷答案会被确定性映射为画像参数并落库
+- 学习目标支持 `domain`、`concept`、`problem` 三类公开输入，三类目标类型由当前 Domain Pack manifest 声明并在运行时校验
+- 目标解析采用 LLM GoalUnderstanding 先行与 rules-first GoalFrame 抽取组合；LLM 缺失、失败、超时、非法 JSON、低置信度或策略不安全输出会 fail-closed 为受控澄清或安全拒绝，不会直接降级为可创建候选
+- Coverage Router 使用封闭枚举：`covered`、`partial`、`in_domain_uncovered`、`adjacent_domain`、`cross_domain`、`out_of_domain`、`ambiguous`
+- `cross_domain` 表示外部应用领域中包含机器学习方法意图，必须先澄清是否只按机器学习基础范围创建路径
+- 目标预览对合法业务状态返回 `200` discriminated union，核心字段为 `goal_understanding`、`result_type` 与 `coverage_status`；非法转换、未知枚举、过期会话与 hash drift 返回 `4xx` 且没有写副作用
+- 项目创建采用 `goal preview -> select candidate / accept partial -> create` 流程；项目目标重新确认采用同样的 project-scoped preview/confirm 流程
+- `partial` 目标必须显式接受后才能规划，正式 audit 记录 `partial_accepted` 与 `missing_concepts`
+- `ambiguous` 目标进入有 TTL、`turn_count/max_turns`、`pack_hash` 与 `project_graph_hash` 的 REST clarification session；自由文本答案必须先解析为受控 delta
+- `in_domain_uncovered` 只提供显式 overlay 草稿入口，草稿复用 project overlay lifecycle，默认 planner-invisible
+- `out_of_domain` 不调用 planner，不创建正式路径；`adjacent_domain` 只能映射到当前机器学习图谱内已有的前置/支撑节点
 
-核心画像维度包括：
-- `math_level`
-- `coding_level`
-- `ml_level`
-- `theory_weight`
-- `weekly_hours`
-- `deadline_weeks`
+GoalFrame 的权威边界：
+- 可以影响的 planner-compatible 参数只有 `path_mode`、`theory_weight/practice_weight`、`weekly_hours/deadline_weeks` 与 `explanation_focus`
+- `target_node_ids` 只是候选提示，不能覆盖用户确认的 `confirmed_target_node_ids`
+- 不能删除硬 `REQUIRES` ancestors，不能把 overlay 草稿节点标记为正式目标，不能直接写 `LearningPath`
+- 正式 planner 的目标事实源始终是用户确认候选或显式接受 partial 后的 covered target set
+
+画像采集支持两条链路：
+- LLM 在线生成 schema-constrained 澄清问题
+- 静态五题问卷兜底
+
+问卷答案会被确定性映射为画像参数并落库。核心画像维度包括：`math_level`、`coding_level`、`ml_level`、`theory_weight`、`practice_weight`、`weekly_hours`、`deadline_weeks`。
 
 `path_mode_preference`、`persona_label`、`persona_summary`、`persona_evidence` 属于展示与解释字段，仅进入 audit/report 快照，不作为 planner numeric scoring 的事实源。
 
@@ -88,9 +108,12 @@
 - 阶段化学习路径生成
 - `standard`、`compressed`、`theory_first`、`practice_first` 路径模式
 - compressed mode 保留目标与全部硬依赖 ancestors，不裁剪 mandatory closure
+- 路径变体使用 TTL preview session 展示 `standard`、`compressed`、`theory_first`、`practice_first` 多种方案；preview 不写最新路径、跟踪状态、资源绑定或解释缓存，确认一个 variant 才写入一个正式 `LearningPath` 版本
+- 自然语言反馈重规划使用 V1 intent preview/confirm：`compress_time`、`increase_practice`、`increase_theory`、`adjust_deadline`、`mark_known_nodes`；unsupported/low-confidence 反馈只澄清或拒绝，不改变正式路径
+- `mark_known_nodes` 先创建 known-node confirmation draft，二次确认后才可影响反馈 replan，不会删除硬依赖
 - 节点解释、排序解释、阶段解释、依赖链解释、预算解释
-- audit 记录 included/excluded nodes、exclusion_reason、path_mode、budget_status 与 overlay lineage
-- `progress_aware` / `profile_update` 两种重规划模式，并与普通规划消费同一 ProjectGraphSnapshot
+- audit 记录 GoalFrame snapshot、derived planner parameters、coverage decision、selected candidate、confirmed targets、partial acceptance、missing concepts、clarification trace、overlay lineage、variant/feedback intent、authority labels、decision chain、included/excluded nodes、exclusion_reason、path_mode 与 budget_status
+- `progress_aware` / `profile_update` 两种传统重规划模式，并与普通规划消费同一 ProjectGraphSnapshot
 
 `ProjectGraphSnapshot` 是规划入口使用的项目图谱快照：它把 Domain Pack baseline、项目级 `removed` 审核状态和 planner-visible overlay 合成为 pack-compatible 结构。`project_graph_hash` 由 pack hash、removed baseline 集合和 planner-visible node/edge overlay 的 canonical 内容共同决定；review/planning 变化会影响 hash，纯 UI metadata 与 resource-only 变化不影响 hash。
 
@@ -223,9 +246,9 @@ Neo4j 用于图谱展示与审核视图，存储对象包含 baseline `Knowledge
 
 | 页面 | 路由 | 当前实现功能 |
 |------|------|-------------|
-| 项目创建 | `/project` | 目标录入、候选预览、选择候选后创建项目、画像问卷采集入口；空候选错误展示 `reason_text` 与 `reason_code` |
-| 知识图谱 | `/knowledge` | 图谱可视化、领域图/项目全图切换、overlay draft 入口、节点/边审核、planning toggle、按路由 `nodeId` / `sessionId` 恢复上下文 |
-| 学习路径 | `/path` | 阶段化路径展示、解释面板、按知识点自动补充推荐资源、路径页内搜索、搜索结果绑定到知识点、从任务卡片跳转到 Knowledge 定位节点 |
+| 项目创建 | `/project` | 目标录入、GoalFrame/coverage 理解面板、候选选择、partial acceptance、clarification、boundary rejection、extension draft deep link、选择候选后创建项目、画像问卷采集入口；stale/hash drift 会清理不安全预览状态 |
+| 知识图谱 | `/knowledge` | 图谱可视化、领域图/项目全图切换、overlay draft 入口、节点/边审核、planning toggle、按路由 `nodeId` / `sessionId` / `goalDraft` 恢复上下文；打开 deep link 不创建草稿、不改变 review/planning 状态 |
+| 学习路径 | `/path` | 阶段化路径展示、解释面板、路径 variant preview、feedback replan preview、known-node draft 二次确认、confirm 后保存正式新版本、按知识点自动补充推荐资源、路径页内搜索、搜索结果绑定到知识点、从任务卡片跳转到 Knowledge 定位节点 |
 | 资料搜索 | `/search` | 独立搜索页、配置缺失提示、结果列表 |
 | 学习进度 | `/dashboard` | 进度统计、事件提交、状态概览、从进度列表跳转到 Knowledge 定位节点 |
 | 设置 | `/settings` | 运行时配置录入、配置状态查看、LLM 连通性测试、双层 readiness 预检展示 |

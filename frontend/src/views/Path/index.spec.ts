@@ -9,6 +9,11 @@ const {
   loadLatestMock,
   refreshServerStatusMock,
   planApiGetExplanationMock,
+  planApiPreviewVariantsMock,
+  planApiConfirmVariantMock,
+  planApiPreviewFeedbackMock,
+  planApiConfirmKnownNodeDraftMock,
+  planApiConfirmFeedbackMock,
   resourceGetPlanResourcesMock,
   resourceRecommendMock,
   searchMock,
@@ -24,6 +29,11 @@ const {
   loadLatestMock: vi.fn(),
   refreshServerStatusMock: vi.fn(),
   planApiGetExplanationMock: vi.fn(),
+  planApiPreviewVariantsMock: vi.fn(),
+  planApiConfirmVariantMock: vi.fn(),
+  planApiPreviewFeedbackMock: vi.fn(),
+  planApiConfirmKnownNodeDraftMock: vi.fn(),
+  planApiConfirmFeedbackMock: vi.fn(),
   resourceGetPlanResourcesMock: vi.fn(),
   resourceRecommendMock: vi.fn(),
   searchMock: vi.fn(),
@@ -128,6 +138,11 @@ vi.mock('@/stores/settings', () => ({
 vi.mock('@/api/modules/plan', () => ({
   planApi: {
     getExplanation: planApiGetExplanationMock,
+    previewVariants: planApiPreviewVariantsMock,
+    confirmVariant: planApiConfirmVariantMock,
+    previewFeedback: planApiPreviewFeedbackMock,
+    confirmKnownNodeDraft: planApiConfirmKnownNodeDraftMock,
+    confirmFeedback: planApiConfirmFeedbackMock,
   },
 }))
 
@@ -173,6 +188,8 @@ function mountPathIndex() {
         ElResult: slotStub('div'),
         ElIcon: slotStub('i'),
         ElInput: slotStub('div'),
+        ElRadioGroup: slotStub('div'),
+        ElRadio: slotStub('label'),
         ElSelect: slotStub('div'),
         ElOption: slotStub('div'),
         ElTable: slotStub('div'),
@@ -224,6 +241,98 @@ function createExplanationResponse(overrides: Record<string, any> = {}) {
         fallback_reason: null,
       },
     },
+    ...overrides,
+  }
+}
+
+function createVariantPreviewResponse(overrides: Record<string, any> = {}) {
+  return {
+    variant_preview_id: 'variant-preview-001',
+    project_id: 'project-001',
+    status: 'active',
+    expires_at: '2026-04-22T10:00:00Z',
+    pack_hash: 'pack-hash-001',
+    project_graph_hash: 'graph-hash-001',
+    profile_hash: 'profile-hash-001',
+    parameter_hash: 'parameter-hash-001',
+    variants: [
+      {
+        variant_id: 'variant-standard',
+        path_mode: 'standard',
+        budget_summary: {
+          status: 'feasible',
+          total_hours: 12,
+          estimated_weeks: 4,
+        },
+        included_node_ids: ['ml-a01', 'ml-a02'],
+        excluded_node_ids: [],
+        audit_summary: {
+          tradeoff: '保持标准顺序',
+        },
+      },
+      {
+        variant_id: 'variant-compressed',
+        path_mode: 'compressed',
+        budget_summary: {
+          status: 'tight',
+          total_hours: 8,
+          estimated_weeks: 3,
+        },
+        included_node_ids: ['ml-a01'],
+        excluded_node_ids: ['ml-a02'],
+        audit_summary: {
+          tradeoff: '压缩低优先级节点',
+        },
+      },
+    ],
+    ...overrides,
+  }
+}
+
+function createFeedbackPreviewResponse(overrides: Record<string, any> = {}) {
+  return {
+    feedback_preview_id: 'feedback-preview-001',
+    project_id: 'project-001',
+    intent_type: 'increase_practice',
+    confidence: 0.92,
+    controlled_parameters: {
+      practice_weight: 0.7,
+    },
+    diff: {
+      added: ['ml-practice-01'],
+      removed: [],
+    },
+    budget_delta: {
+      total_hours_delta: 2,
+    },
+    blocked_actions: [],
+    requires_confirmation: true,
+    requires_second_confirm: false,
+    status: 'active',
+    expires_at: '2026-04-22T10:00:00Z',
+    pack_hash: 'pack-hash-001',
+    project_graph_hash: 'graph-hash-001',
+    ...overrides,
+  }
+}
+
+function createReplanResult(overrides: Record<string, any> = {}) {
+  return {
+    id: 'plan-002',
+    project_id: 'project-001',
+    version: 2,
+    mode: 'variant_confirm',
+    stages: [
+      {
+        stage_index: 0,
+        stage_name: '基础准备',
+        tasks: [{ node_id: 'ml-a01', name: '机器学习导论' }],
+        estimated_hours: 2,
+      },
+    ],
+    budget_status: 'feasible',
+    total_hours: 12,
+    diff: null,
     ...overrides,
   }
 }
@@ -286,6 +395,19 @@ describe('Path page goal reconfirm flow', () => {
       }
     })
     planApiGetExplanationMock.mockResolvedValue(createExplanationResponse())
+    planApiPreviewVariantsMock.mockResolvedValue(createVariantPreviewResponse())
+    planApiConfirmVariantMock.mockResolvedValue(createReplanResult())
+    planApiPreviewFeedbackMock.mockResolvedValue(createFeedbackPreviewResponse())
+    planApiConfirmKnownNodeDraftMock.mockResolvedValue({
+      draft_id: 'known-draft-001',
+      feedback_preview_id: 'feedback-preview-001',
+      project_id: 'project-001',
+      node_ids: ['ml-a01'],
+      evidence: [],
+      status: 'confirmed',
+      expires_at: '2026-04-22T10:00:00Z',
+    })
+    planApiConfirmFeedbackMock.mockResolvedValue(createReplanResult({ mode: 'feedback_confirm' }))
     resourceGetPlanResourcesMock.mockResolvedValue({ path_id: 'plan-001', stages: [] })
   })
 
@@ -412,5 +534,175 @@ describe('Path page goal reconfirm flow', () => {
         reason: 'goal-targets-removed',
       },
     })
+  })
+
+  it('previews variants without mutating the saved latest plan', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewVariants()
+    await flushPromises()
+
+    expect(planApiPreviewVariantsMock).toHaveBeenCalledWith('project-001')
+    expect(vm.variantPreview.variant_preview_id).toBe('variant-preview-001')
+    expect(vm.selectedVariantId).toBe('variant-standard')
+    expect(vm.activeTab).toBe('previews')
+    expect(currentPlanState.value.id).toBe('plan-001')
+    expect(loadLatestMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('confirms the selected variant then clears previews and reloads latest plan', async () => {
+    loadLatestMock.mockImplementation(async () => {
+      currentPlanState.value = {
+        id: 'plan-002',
+        version: 2,
+        budget_status: 'feasible',
+        total_hours: 10,
+        stages: [],
+      }
+    })
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewVariants()
+    await flushPromises()
+    vm.selectedVariantId = 'variant-compressed'
+
+    await vm.confirmSelectedVariant()
+    await flushPromises()
+
+    expect(planApiConfirmVariantMock).toHaveBeenCalledWith('project-001', 'variant-preview-001', 'variant-compressed')
+    expect(vm.variantPreview).toBeNull()
+    expect(vm.feedbackPreview).toBeNull()
+    expect(vm.previewUnsafeMessage).toBe('')
+    expect(currentPlanState.value.id).toBe('plan-002')
+    expect(vm.activeTab).toBe('timeline')
+  })
+
+  it('renders feedback preview state without applying it as a saved plan', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    vm.feedbackText = '我想增加实践内容'
+    await vm.previewFeedback()
+    await flushPromises()
+
+    expect(planApiPreviewFeedbackMock).toHaveBeenCalledWith('project-001', '我想增加实践内容')
+    expect(vm.feedbackPreview.feedback_preview_id).toBe('feedback-preview-001')
+    expect(vm.feedbackDiffEntries).toEqual([{ key: 'added', values: ['ml-practice-01'] }])
+    expect(vm.canConfirmFeedback).toBe(true)
+    expect(currentPlanState.value.id).toBe('plan-001')
+  })
+
+  it('requires known-node draft confirmation before applying mark-known feedback', async () => {
+    planApiPreviewFeedbackMock.mockResolvedValueOnce(createFeedbackPreviewResponse({
+      intent_type: 'mark_known_nodes',
+      requires_second_confirm: true,
+      known_node_draft: {
+        draft_id: 'known-draft-001',
+        feedback_preview_id: 'feedback-preview-001',
+        project_id: 'project-001',
+        node_ids: ['ml-a01'],
+        evidence: [],
+        status: 'draft',
+        expires_at: '2026-04-22T10:00:00Z',
+      },
+    }))
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    vm.feedbackText = '机器学习导论我已经会了'
+    await vm.previewFeedback()
+    await flushPromises()
+
+    expect(vm.canConfirmFeedback).toBe(false)
+
+    await vm.confirmKnownNodeDraft()
+    await flushPromises()
+
+    expect(planApiConfirmKnownNodeDraftMock).toHaveBeenCalledWith('project-001', 'known-draft-001')
+    expect(vm.feedbackPreview.known_node_draft.status).toBe('confirmed')
+    expect(vm.canConfirmFeedback).toBe(true)
+
+    await vm.confirmFeedbackPreview()
+    await flushPromises()
+
+    expect(planApiConfirmFeedbackMock).toHaveBeenCalledWith('project-001', 'feedback-preview-001')
+    expect(vm.feedbackPreview).toBeNull()
+    expect(vm.activeTab).toBe('timeline')
+  })
+
+  it('clears unsafe preview state when backend reports stale preview drift', async () => {
+    planApiPreviewVariantsMock.mockRejectedValueOnce({
+      response: {
+        data: {
+          error: 'STALE_VARIANT_PREVIEW',
+        },
+      },
+    })
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewVariants()
+    await flushPromises()
+
+    expect(vm.variantPreview).toBeNull()
+    expect(vm.feedbackPreview).toBeNull()
+    expect(vm.previewUnsafeMessage).toBe('预览已过期或路径依赖的画像/图谱/知识包已变化，请重新生成预览。')
+  })
+
+  it('ignores duplicate preview and confirm requests while path previews are in flight', async () => {
+    const previewDeferred = createDeferred<any>()
+    planApiPreviewVariantsMock.mockReturnValueOnce(previewDeferred.promise)
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    const firstPreview = vm.previewVariants()
+    const secondPreview = vm.previewVariants()
+    await flushPromises()
+
+    expect(planApiPreviewVariantsMock).toHaveBeenCalledTimes(1)
+    previewDeferred.resolve(createVariantPreviewResponse())
+    await firstPreview
+    await secondPreview
+    await flushPromises()
+
+    const confirmDeferred = createDeferred<any>()
+    planApiConfirmVariantMock.mockReturnValueOnce(confirmDeferred.promise)
+    const firstConfirm = vm.confirmSelectedVariant()
+    const secondConfirm = vm.confirmSelectedVariant()
+    await flushPromises()
+
+    expect(planApiConfirmVariantMock).toHaveBeenCalledTimes(1)
+    confirmDeferred.resolve(createReplanResult())
+    await firstConfirm
+    await secondConfirm
+    await flushPromises()
+  })
+
+  it('clears previews when the path context is reloaded', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewVariants()
+    await flushPromises()
+    expect(vm.variantPreview).not.toBeNull()
+
+    await vm.loadPath()
+    await flushPromises()
+
+    expect(vm.variantPreview).toBeNull()
+    expect(vm.feedbackPreview).toBeNull()
+    expect(vm.previewUnsafeMessage).toBe('')
   })
 })

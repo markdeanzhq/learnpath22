@@ -30,6 +30,8 @@ function sanitizeGoalResolution(input: unknown): ProjectGoalResolutionSummary | 
     auto_detected_goal_type: isGoalType(raw.auto_detected_goal_type) ? raw.auto_detected_goal_type : null,
     selected_candidate_id: raw.selected_candidate_id,
     confirmed_target_node_ids: raw.confirmed_target_node_ids.filter((item): item is string => typeof item === 'string'),
+    partial_accepted: raw.partial_accepted === true,
+    missing_concepts: Array.isArray(raw.missing_concepts) ? raw.missing_concepts.filter((item): item is string => typeof item === 'string') : [],
   }
 }
 

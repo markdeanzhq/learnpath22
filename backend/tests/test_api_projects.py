@@ -171,7 +171,11 @@ async def test_create_project_rejects_pack_hash_drift(client, db_session):
     )
 
     assert resp.status_code == 409
-    assert resp.json() == {"error": "STALE_RESOLUTION_SESSION", "code": 409}
+    assert resp.json() == {
+        "error": "STALE_RESOLUTION_SESSION",
+        "code": 409,
+        "reason_code": "PACK_HASH_DRIFT",
+    }
 
 
 async def test_create_project_invalid_legacy_goal_type_payload(client):
@@ -607,4 +611,55 @@ async def test_project_goal_resolution_confirm_rejects_graph_hash_drift(client, 
     )
 
     assert confirm_resp.status_code == 409
-    assert confirm_resp.json() == {"error": "STALE_RESOLUTION_SESSION", "code": 409}
+    assert confirm_resp.json() == {
+        "error": "STALE_RESOLUTION_SESSION",
+        "code": 409,
+        "reason_code": "PROJECT_GRAPH_DRIFT",
+    }
+
+
+async def test_project_goal_resolution_confirm_rejects_missing_graph_hash(client, db_session):
+    project_preview = await _create_preview_session(client, goal_text="理解梯度下降", requested_goal_type="concept")
+    create_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "概念学习",
+            "goal_text": "理解梯度下降",
+            "resolution_session_id": project_preview["session_id"],
+            "selected_candidate_id": project_preview["recommended_candidate_id"],
+        },
+    )
+    assert create_resp.status_code == 200
+    created_project = create_resp.json()
+
+    reconfirm_preview = await client.post(
+        f"/api/v1/projects/{created_project['id']}/goal-resolution/preview",
+        json={
+            "goal_text": "我想系统学习机器学习基础",
+            "requested_goal_type": "domain",
+        },
+    )
+    assert reconfirm_preview.status_code == 200
+    preview_data = reconfirm_preview.json()
+
+    session = await db_session.get(GoalResolutionSession, preview_data["session_id"])
+    assert session is not None
+    session.graph_hash = None
+    session.project_graph_hash = None
+    await db_session.commit()
+
+    confirm_resp = await client.put(
+        f"/api/v1/projects/{created_project['id']}/goal-resolution",
+        json={
+            "goal_text": "我想系统学习机器学习基础",
+            "resolution_session_id": preview_data["session_id"],
+            "selected_candidate_id": preview_data["recommended_candidate_id"],
+        },
+    )
+
+    assert confirm_resp.status_code == 409
+    assert confirm_resp.json() == {
+        "error": "STALE_RESOLUTION_SESSION",
+        "code": 409,
+        "reason_code": "PROJECT_GRAPH_DRIFT",
+    }

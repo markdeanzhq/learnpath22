@@ -22,6 +22,7 @@ export interface BudgetSummary {
   weekly_hours: number
   estimated_weeks: number
   suggestion: string
+  [key: string]: unknown
 }
 
 export interface PlanAudit {
@@ -52,6 +53,7 @@ export interface PlanAudit {
     assigned_stage: string
     reasons: string[]
   }>
+  [key: string]: any
 }
 
 export interface NodeExplanation {
@@ -189,6 +191,9 @@ export interface TraceSummary {
   fallback_used: boolean
   fallback_reasons: string[]
   live_pack_fields: string[]
+  decision_chain?: Array<Record<string, unknown>>
+  authority_labels?: Array<Record<string, unknown>>
+  llm_fallback_status?: Record<string, unknown>
 }
 
 export interface AuditHighlight {
@@ -269,6 +274,7 @@ export interface LearningPlan {
   node_count?: number
   reinforced_ids?: string[]
   text_output?: string
+  path_mode?: PathMode | string | null
 }
 
 export interface ReplanDiff {
@@ -287,14 +293,73 @@ export interface ReplanDiffDetailItem {
 
 export interface ReplanResult {
   id: string
+  project_id?: string
   version: number
   mode: string
+  intent_type?: FeedbackIntentType
+  feedback_preview_id?: string
   stages: PathStage[]
   budget_status: string
+  path_mode?: PathMode | string | null
   total_hours: number
   diff: ReplanDiff | null
   diff_details?: Partial<Record<keyof ReplanDiff, ReplanDiffDetailItem[]>> | null
-  reason: string
+  budget_delta?: Record<string, unknown>
+  reason?: string
+  idempotent?: boolean
+}
+
+export type PathMode = 'standard' | 'compressed' | 'theory_first' | 'practice_first'
+export type FeedbackIntentType = 'compress_time' | 'increase_practice' | 'increase_theory' | 'adjust_deadline' | 'mark_known_nodes'
+
+export interface VariantSummary {
+  variant_id: string
+  path_mode: PathMode
+  budget_summary: Record<string, unknown>
+  included_node_ids: string[]
+  excluded_node_ids: string[]
+  audit_summary: Record<string, unknown>
+}
+
+export interface VariantPreviewSessionResponse {
+  variant_preview_id: string
+  project_id: string
+  status: 'active' | 'confirmed' | 'expired' | 'stale'
+  expires_at: string
+  pack_hash?: string | null
+  project_graph_hash?: string | null
+  profile_hash?: string | null
+  parameter_hash?: string | null
+  variants: VariantSummary[]
+}
+
+export interface KnownNodeConfirmationDraftResponse {
+  draft_id: string
+  feedback_preview_id: string
+  project_id: string
+  node_ids: string[]
+  evidence: Array<Record<string, unknown>>
+  status: 'draft' | 'confirmed' | 'rejected' | 'expired' | 'stale'
+  expires_at: string
+}
+
+export interface FeedbackPreviewSessionResponse {
+  feedback_preview_id: string
+  project_id: string
+  intent_type: FeedbackIntentType
+  confidence?: number | null
+  controlled_parameters: Record<string, unknown>
+  diff: Record<string, unknown>
+  budget_delta: Record<string, unknown>
+  blocked_actions: string[]
+  requires_confirmation: boolean
+  requires_second_confirm: boolean
+  variant_preview_id?: string | null
+  known_node_draft?: KnownNodeConfirmationDraftResponse | null
+  status: 'active' | 'confirmed' | 'expired' | 'stale' | 'rejected'
+  expires_at: string
+  pack_hash?: string | null
+  project_graph_hash?: string | null
 }
 
 export const planApi = {
@@ -311,4 +376,14 @@ export const planApi = {
       mode,
       reason: reason || (mode === 'progress_aware' ? '进度感知重规划' : '画像更新后重规划'),
     }),
+  previewVariants: (projectId: string, pathModes?: PathMode[]): Promise<VariantPreviewSessionResponse> =>
+    request.post(`/projects/${projectId}/plans/variants/preview`, pathModes?.length ? { path_modes: pathModes } : {}),
+  confirmVariant: (projectId: string, previewId: string, variantId: string): Promise<ReplanResult> =>
+    request.post(`/projects/${projectId}/plans/variants/${previewId}/confirm`, { variant_id: variantId }),
+  previewFeedback: (projectId: string, feedbackText: string): Promise<FeedbackPreviewSessionResponse> =>
+    request.post(`/projects/${projectId}/replans/feedback/preview`, { feedback_text: feedbackText }),
+  confirmKnownNodeDraft: (projectId: string, draftId: string): Promise<KnownNodeConfirmationDraftResponse> =>
+    request.post(`/projects/${projectId}/replans/feedback/known-node-drafts/${draftId}/confirm`),
+  confirmFeedback: (projectId: string, feedbackPreviewId: string): Promise<ReplanResult> =>
+    request.post(`/projects/${projectId}/replans/feedback/${feedbackPreviewId}/confirm`),
 }

@@ -20,6 +20,7 @@ from app.repositories.profile_repository import get_latest_profile
 from app.repositories.project_repository import get_project
 from app.repositories.tracking_repository import get_latest_event_per_node
 from app.schemas.project import validate_path_mode
+from app.services.formal_path_audit_service import enrich_formal_path_audit
 from app.services.goal_service import UnsupportedGoalTypeError
 from app.services.planner_service import build_filtered_graph, plan_with_profile
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
@@ -190,6 +191,7 @@ async def replan(
 
     if confirmed_goal_result and not result["plan_result"]["goal_result"]["target_node_ids"]:
         raise AppError(code=409, message="GOAL_TARGETS_REMOVED")
+    await enrich_formal_path_audit(db, project=project, plan_result=result["plan_result"])
 
     version = await get_plan_version_count(db, project_id) + 1
     path = await save_plan(db, project_id, result["plan_result"], version=version)

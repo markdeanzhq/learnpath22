@@ -46,6 +46,7 @@ from app.services.graph_service import (
     get_graph_entity_metadata,
     get_path_subgraph,
 )
+from app.services.project_goal_extension_draft_service import create_goal_extension_draft_from_resolution
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 from app.services.project_overlay_extraction_service import MAX_TEXT_CHARS, create_extraction_session_from_sources
 from app.services.project_overlay_projection_service import (
@@ -138,6 +139,10 @@ class OverlayExtractionSessionRequest(BaseModel):
     source_ids: list[str] = Field(min_length=1)
     mode: Literal["default", "custom_extension"] = "default"
     extraction_payload: Any | None = None
+
+
+class GoalExtensionDraftRequest(BaseModel):
+    resolution_session_id: str = Field(min_length=1)
 
 
 class OverlayPromotionPreviewRequest(BaseModel):
@@ -385,6 +390,7 @@ def _overlay_session_response(
             "session_status": session.session_status,
             "source_ids": _parse_json_field(session.source_ids_json, []),
             "warnings": warning_items,
+            "provenance": _parse_json_field(getattr(session, "provenance_json", None), {}),
             "error_message": session.error_message,
             "created_at": session.created_at,
             "updated_at": session.updated_at,
@@ -659,6 +665,35 @@ async def create_overlay_extraction_session(
         bindings=[],
         warnings=created["warnings"],
     )
+
+
+@router.post("/projects/{project_id}/goal-resolution/extension-drafts")
+async def create_goal_extension_draft(
+    project_id: str,
+    req: GoalExtensionDraftRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        created = await create_goal_extension_draft_from_resolution(
+            db,
+            project_id=project_id,
+            resolution_session_id=req.resolution_session_id,
+        )
+    except ValueError as exc:
+        raise AppError(code=422, message=str(exc)) from exc
+
+    response = _overlay_session_response(
+        session=created["session"],
+        sources=created["sources"],
+        nodes=created["nodes"],
+        edges=created["edges"],
+        resources=created["resources"],
+        bindings=[],
+        warnings=created["warnings"],
+    )
+    response["goal_trace"] = created["goal_trace"]
+    response["missing_concepts"] = created["missing_concepts"]
+    return response
 
 
 @router.get("/projects/{project_id}/graph/overlay/extraction-sessions/{session_id}")

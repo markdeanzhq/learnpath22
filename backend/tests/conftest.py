@@ -65,6 +65,35 @@ def reset_runtime_config_state():
     replace_runtime_settings({})
 
 
+@pytest.fixture(autouse=True)
+def mock_goal_resolution_llm(monkeypatch):
+    async def fake_interpret_goal_with_llm(*, goal_text, requested_goal_type, domain, supported_goal_types):
+        goal_type = requested_goal_type if requested_goal_type in supported_goal_types else None
+        return {
+            "schema_version": "v1",
+            "raw_text": goal_text,
+            "domain_decision": "in_domain",
+            "primary_domain": domain,
+            "ml_relevance": "core",
+            "goal_type": goal_type,
+            "target_concepts": [],
+            "constraints": {},
+            "preferences": {},
+            "uncertainties": [],
+            "clarification_question": None,
+            "confidence": 0.9,
+            "evidence": [{"span": domain, "label": "primary_domain", "reason": "test default LLM understanding"}],
+            "prompt_version": "goal-understanding-v1",
+            "model": "mock-llm",
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        "app.services.goal_resolution_service.interpret_goal_with_llm",
+        fake_interpret_goal_with_llm,
+    )
+
+
 @pytest.fixture
 async def client():
     """Provide an httpx async client backed by an in-memory test database."""

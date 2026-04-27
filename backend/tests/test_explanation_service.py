@@ -660,6 +660,8 @@ def test_build_explanation_populates_phase2_readability():
     assert highlights["dependency_closure"].source == "audit.closure_ids"
     assert highlights["dependency_closure"].value["closure_ids"] == ["ml_a04", "ml_c01"]
     assert highlights["overlay_lineage"].value["lineage_items"] == readability.trace_summary.overlay_lineage_items
+    assert "authority_labels" in highlights
+    assert "decision_chain" in highlights
 
     highlight_keys = [item.key for item in readability.audit_highlights]
     assert highlight_keys == [
@@ -671,6 +673,8 @@ def test_build_explanation_populates_phase2_readability():
         "budget",
         "overlay_lineage",
         "fallback_status",
+        "authority_labels",
+        "decision_chain",
     ]
 
 

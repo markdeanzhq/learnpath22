@@ -10,7 +10,12 @@ from app.repositories.project_repository import (
     list_projects,
 )
 from app.schemas.common import ErrorResponse
-from app.schemas.goal_resolution import GoalResolutionPreviewRequest, GoalResolutionPreviewResponse
+from app.schemas.goal_resolution import (
+    ClarificationAnswerRequest,
+    ClarificationSessionResponse,
+    CoveragePreviewResponse,
+    GoalResolutionPreviewRequest,
+)
 from app.schemas.project import (
     CreateProjectRequest,
     DeleteProjectResponse,
@@ -18,6 +23,7 @@ from app.schemas.project import (
     UpdateProjectGoalResolutionRequest,
 )
 from app.services.project_resolution_service import (
+    answer_project_goal_clarification,
     create_project_from_resolution_session,
     preview_project_goal_resolution,
     update_project_goal_resolution,
@@ -39,13 +45,14 @@ async def create_project_endpoint(
         resolution_session_id=req.resolution_session_id,
         selected_candidate_id=req.selected_candidate_id,
         path_mode=req.path_mode,
+        accept_partial=req.accept_partial,
     )
 
 
 @router.post(
     "/projects/{project_id}/goal-resolution/preview",
-    response_model=GoalResolutionPreviewResponse,
-    responses={422: {"model": ErrorResponse}},
+    response_model=CoveragePreviewResponse,
+    responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
 )
 async def preview_project_goal_resolution_endpoint(
     project_id: str,
@@ -58,6 +65,25 @@ async def preview_project_goal_resolution_endpoint(
         goal_text=req.goal_text,
         requested_goal_type=req.requested_goal_type,
         domain=req.domain,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/goal-resolution/clarifications/{clarification_session_id}/answers",
+    response_model=ClarificationSessionResponse,
+    responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+async def answer_project_goal_clarification_endpoint(
+    project_id: str,
+    clarification_session_id: str,
+    req: ClarificationAnswerRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await answer_project_goal_clarification(
+        db,
+        project_id=project_id,
+        clarification_session_id=clarification_session_id,
+        answers=[answer.model_dump() for answer in req.answers],
     )
 
 
@@ -75,6 +101,7 @@ async def update_project_goal_resolution_endpoint(
         resolution_session_id=req.resolution_session_id,
         selected_candidate_id=req.selected_candidate_id,
         path_mode=req.path_mode,
+        accept_partial=req.accept_partial,
     )
 
 

@@ -6,7 +6,15 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.db.sqlite import async_session, engine
-from app.models.sqlite_models import Base, GoalResolutionSession, LearningProject
+from app.models.sqlite_models import (
+    Base,
+    ClarificationSession,
+    FeedbackPreviewSession,
+    GoalResolutionSession,
+    KnownNodeConfirmationDraft,
+    LearningProject,
+    VariantPreviewSession,
+)
 from app.services.domain_pack_service import get_domain_pack_service
 from app.services.goal_service import identify_goal_type, resolve_goal
 
@@ -24,6 +32,8 @@ _RESOLUTION_COLUMNS = [
     ("confirmed_candidate_id", "VARCHAR(100)"),
     ("resolution_pack_version", "VARCHAR(20)"),
     ("resolution_confirmed_at", "DATETIME"),
+    ("partial_accepted", "BOOLEAN DEFAULT 0"),
+    ("missing_concepts_json", "TEXT"),
 ]
 
 _PROFILE_COLUMNS = [
@@ -37,11 +47,21 @@ _SESSION_COLUMNS = [
     ("domain", "VARCHAR(50)"),
     ("pack_hash", "VARCHAR(64)"),
     ("graph_hash", "VARCHAR(64)"),
+    ("project_graph_hash", "VARCHAR(64)"),
+    ("goal_frame_json", "TEXT"),
+    ("coverage_response_json", "TEXT"),
+    ("clarification_trace_json", "TEXT"),
+    ("decision_history_json", "TEXT"),
+    ("turn_count", "INTEGER DEFAULT 0"),
 ]
 
 _OVERLAY_SOURCE_COLUMNS = [
     ("summary", "TEXT"),
     ("quality_status", "VARCHAR(30)"),
+]
+
+_OVERLAY_SESSION_COLUMNS = [
+    ("provenance_json", "TEXT"),
 ]
 
 _OVERLAY_BINDING_COLUMNS = [
@@ -142,6 +162,13 @@ async def upgrade_project_overlay_schema(conn: AsyncConnection) -> None:
             column_name=col_name,
             column_type=col_type,
         )
+    for col_name, col_type in _OVERLAY_SESSION_COLUMNS:
+        await _add_column_if_missing(
+            conn,
+            table_name="project_overlay_extraction_sessions",
+            column_name=col_name,
+            column_type=col_type,
+        )
     for col_name, col_type in _OVERLAY_BINDING_COLUMNS:
         await _add_column_if_missing(
             conn,
@@ -179,15 +206,25 @@ async def create_explanation_cache_indexes(conn: AsyncConnection) -> None:
 
 
 async def cleanup_expired_sessions(db: AsyncSession) -> int:
-    """Delete GoalResolutionSession rows whose expires_at is in the past.
+    """Delete TTL preview/trace rows whose expires_at is in the past.
 
     Returns the number of rows deleted.
     """
     now = datetime.now(timezone.utc).replace(tzinfo=None)  # stored as naive UTC
+    deleted_count = 0
     result = await db.execute(
         delete(GoalResolutionSession).where(GoalResolutionSession.expires_at < now)
     )
-    return result.rowcount
+    deleted_count += result.rowcount or 0
+    for model in (
+        ClarificationSession,
+        VariantPreviewSession,
+        FeedbackPreviewSession,
+        KnownNodeConfirmationDraft,
+    ):
+        result = await db.execute(delete(model).where(model.expires_at < now))
+        deleted_count += result.rowcount or 0
+    return deleted_count
 
 
 def _naive_utc_now() -> datetime:

@@ -14,6 +14,8 @@ async def save_plan(
     project_id: str,
     plan_result: dict,
     version: int = 1,
+    *,
+    commit: bool = True,
 ) -> LearningPath:
     path = LearningPath(
         project_id=project_id,
@@ -52,8 +54,9 @@ async def save_plan(
             )
             db.add(task)
 
-    await db.commit()
-    await db.refresh(path)
+    if commit:
+        await db.commit()
+        await db.refresh(path)
     return path
 
 

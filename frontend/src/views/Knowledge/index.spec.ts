@@ -7,6 +7,7 @@ const {
   graphGetGraphMock,
   graphCreateOverlaySourceMock,
   graphCreateOverlayExtractionSessionMock,
+  graphCreateGoalExtensionDraftMock,
   graphSetOverlayPlanningMock,
   graphGetOverlayExtractionSessionMock,
   graphPreviewOverlayPromotionMock,
@@ -23,6 +24,7 @@ const {
   graphGetGraphMock: vi.fn(),
   graphCreateOverlaySourceMock: vi.fn(),
   graphCreateOverlayExtractionSessionMock: vi.fn(),
+  graphCreateGoalExtensionDraftMock: vi.fn(),
   graphSetOverlayPlanningMock: vi.fn(),
   graphGetOverlayExtractionSessionMock: vi.fn(),
   graphPreviewOverlayPromotionMock: vi.fn(),
@@ -101,6 +103,7 @@ vi.mock('@/api/modules/graph', () => {
     reviewEdge: vi.fn(),
     createOverlaySource: graphCreateOverlaySourceMock,
     createOverlayExtractionSession: graphCreateOverlayExtractionSessionMock,
+    createGoalExtensionDraft: graphCreateGoalExtensionDraftMock,
     setOverlayPlanning: graphSetOverlayPlanningMock,
     getOverlayExtractionSession: graphGetOverlayExtractionSessionMock,
     reviewOverlayElement: vi.fn(),
@@ -195,6 +198,7 @@ describe('Knowledge overlay entry', () => {
       warnings: [],
     }
     graphCreateOverlayExtractionSessionMock.mockResolvedValue(sessionResponse)
+    graphCreateGoalExtensionDraftMock.mockResolvedValue(sessionResponse)
     graphGetOverlayExtractionSessionMock.mockResolvedValue(sessionResponse)
     graphPreviewOverlayPromotionMock.mockResolvedValue({
       status: 'ready',
@@ -397,6 +401,34 @@ describe('Knowledge overlay entry', () => {
     expect(graphCreateOverlayExtractionSessionMock).not.toHaveBeenCalled()
     expect((wrapper.vm as any).overlayDrawerVisible).toBe(true)
     expect((wrapper.vm as any).lastOverlaySession.session.session_id).toBe('sess-001')
+  })
+
+  it('opens goal extension draft entry from route without writes until confirmation', async () => {
+    routeState.query = {
+      scope: 'project',
+      goalDraft: '1',
+      resolutionSessionId: 'resolution-001',
+    }
+
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    expect((wrapper.vm as any).overlayDrawerVisible).toBe(true)
+    expect(graphCreateGoalExtensionDraftMock).not.toHaveBeenCalled()
+    expect(graphCreateOverlayExtractionSessionMock).not.toHaveBeenCalled()
+
+    await (wrapper.vm as any).submitOverlayDraft()
+    await flushPromises()
+
+    expect(graphCreateGoalExtensionDraftMock).toHaveBeenCalledWith('project-001', 'resolution-001')
+    expect(graphCreateOverlayExtractionSessionMock).not.toHaveBeenCalled()
+    expect(replaceMock).toHaveBeenLastCalledWith({
+      name: 'Knowledge',
+      query: {
+        scope: 'project',
+        sessionId: 'sess-001',
+      },
+    })
   })
 
   it('keeps project graph usable when custom extension readiness is blocked', async () => {

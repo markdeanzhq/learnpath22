@@ -139,6 +139,9 @@ class TraceSummary(BaseModel):
     fallback_used: bool = False
     fallback_reasons: list[str] = Field(default_factory=list)
     live_pack_fields: list[str] = Field(default_factory=list)
+    decision_chain: list[dict[str, Any]] = Field(default_factory=list)
+    authority_labels: list[dict[str, Any]] = Field(default_factory=list)
+    llm_fallback_status: dict[str, Any] = Field(default_factory=dict)
 
 
 class AuditHighlight(BaseModel):

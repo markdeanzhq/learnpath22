@@ -49,6 +49,8 @@ class LearningProject(Base):
     confirmed_candidate_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     resolution_pack_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     resolution_confirmed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    partial_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    missing_concepts_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class LearnerProfile(Base):
@@ -215,6 +217,7 @@ class ProjectOverlayExtractionSession(Base):
     session_status: Mapped[str] = mapped_column(String(30), default="drafted")
     source_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     warnings_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provenance_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -455,8 +458,104 @@ class GoalResolutionSession(Base):
     pack_version: Mapped[str] = mapped_column(String(20))
     pack_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     graph_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # New code writes project_graph_hash; graph_hash is kept for old sessions.
+    project_graph_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    goal_frame_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    coverage_response_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    clarification_trace_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    decision_history_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    turn_count: Mapped[int] = mapped_column(Integer, default=0)
     candidates_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     recommended_candidate_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     expires_at: Mapped[datetime] = mapped_column(default=_default_expires_at)
     created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+
+
+class ClarificationSession(Base):
+    """Bounded goal clarification trace with TTL and immutable decision history."""
+    __tablename__ = "clarification_sessions"
+
+    clarification_session_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    goal_resolution_session_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text)
+    goal_text_hash: Mapped[str] = mapped_column(String(64))
+    domain: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    pack_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_graph_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    turn_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_turns: Mapped[int] = mapped_column(Integer, default=3)
+    controlled_questions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    controlled_answers_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    goal_frame_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    coverage_response_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    decision_history_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(default=_default_expires_at)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
+
+
+class VariantPreviewSession(Base):
+    """Short-lived path variant preview data; never creates draft LearningPath rows."""
+    __tablename__ = "variant_preview_sessions"
+
+    variant_preview_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    goal_resolution_session_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    path_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    pack_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_graph_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    profile_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    parameter_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    variants_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    decision_history_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(default=_default_expires_at)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
+
+
+class FeedbackPreviewSession(Base):
+    """Short-lived natural-language feedback preview before any formal write."""
+    __tablename__ = "feedback_preview_sessions"
+
+    feedback_preview_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    path_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    intent_type: Mapped[str] = mapped_column(String(30))
+    controlled_parameters_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    diff_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    budget_delta_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    blocked_actions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    requires_confirmation: Mapped[bool] = mapped_column(Boolean, default=True)
+    requires_second_confirm: Mapped[bool] = mapped_column(Boolean, default=False)
+    variant_preview_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    pack_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_graph_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    decision_history_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(default=_default_expires_at)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
+
+
+class KnownNodeConfirmationDraft(Base):
+    """Controlled draft for mark_known_nodes feedback before user confirmation."""
+    __tablename__ = "known_node_confirmation_drafts"
+
+    draft_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    feedback_preview_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))
+    node_ids_json: Mapped[str] = mapped_column(Text)
+    evidence_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    pack_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_graph_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    decision_history_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(default=_default_expires_at)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)

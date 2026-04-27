@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import copy
 import json
+from unittest.mock import patch
 
 from sqlalchemy import select
 
 from app.services import domain_pack_service as domain_pack_module
 
-from app.models.sqlite_models import GoalResolutionSession, LearningPath, LearningProject
+from app.models.sqlite_models import GoalResolutionSession, LearningPath, LearningProject, ProjectOverlayExtractionSession
 from app.repositories.graph_review_repository import upsert_review_status
-from app.repositories.project_overlay_repository import update_planning_enabled
+from app.repositories.project_overlay_repository import update_extraction_session_status, update_planning_enabled
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 
 
@@ -97,6 +98,97 @@ async def test_project_graph_snapshot_includes_confirmed_overlay_node(client, pr
     assert snapshot.project_graph_hash
 
 
+async def test_goal_created_overlay_draft_is_hidden_until_review_confirmed(client, project, db_session):
+    before = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    with patch(
+        "app.services.goal_resolution_service.resolve_goal_candidates",
+        return_value={
+            "auto_detected_goal_type": "concept",
+            "effective_goal_type": "concept",
+            "goal_type_source": "auto",
+            "recommended_candidate_id": None,
+            "candidates": [],
+            "warnings": [],
+        },
+    ):
+        preview_resp = await client.post(
+            f"/api/v1/projects/{project['id']}/goal-resolution/preview",
+            json={"goal_text": "我想学习随机森林"},
+        )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    assert preview["result_type"] == "review_extension_draft"
+
+    draft_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/goal-resolution/extension-drafts",
+        json={"resolution_session_id": preview["session_id"]},
+    )
+    assert draft_resp.status_code == 200
+    node = draft_resp.json()["nodes"][0]
+
+    pending_snapshot = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    assert node["node_id"] not in pending_snapshot.nodes_by_id
+    assert pending_snapshot.project_graph_hash == before.project_graph_hash
+
+    review_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node['node_id']}/review",
+        json={"review_status": "confirmed"},
+    )
+    assert review_resp.status_code == 200
+
+    confirmed_snapshot = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    assert node["node_id"] in confirmed_snapshot.nodes_by_id
+    assert confirmed_snapshot.overlay_lineage["nodes"][node["node_id"]]["provenance"]["origin"] == "goal_extension_draft"
+    assert confirmed_snapshot.project_graph_hash != before.project_graph_hash
+
+    refreshed_preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/goal-resolution/preview",
+        json={"goal_text": "我想学习随机森林", "requested_goal_type": "concept"},
+    )
+    assert refreshed_preview_resp.status_code == 200
+    refreshed_preview = refreshed_preview_resp.json()
+    assert refreshed_preview["result_type"] == "select_candidate"
+    assert refreshed_preview["coverage_status"] == "covered"
+    assert any(
+        node["node_id"] in candidate["target_node_ids"]
+        for candidate in refreshed_preview["candidates"]
+    )
+
+
+async def test_invalid_overlay_draft_stays_hidden_even_if_review_confirmed(client, project, db_session):
+    source_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/sources",
+        json={"source_type": "pasted_text", "raw_text": "非法草稿节点"},
+    )
+    assert source_resp.status_code == 200
+    source = source_resp.json()
+    create_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/extraction-sessions",
+        json={
+            "source_ids": [source["source_id"]],
+            "extraction_payload": {
+                "nodes": [{"name": "非法草稿节点", "summary": "缺少 planner 必填字段"}],
+                "edges": [],
+                "resources": [],
+                "warnings": [],
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    node = create_resp.json()["nodes"][0]
+    assert node["validation_status"] == "invalid"
+    assert any(error.startswith("missing_fields:") for error in node["validation_errors"])
+
+    review_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node['node_id']}/review",
+        json={"review_status": "confirmed"},
+    )
+    assert review_resp.status_code == 200
+
+    snapshot = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    assert node["node_id"] not in snapshot.nodes_by_id
+
+
 async def test_project_graph_hash_is_order_stable_and_ignores_non_planning_provenance(client, project, db_session):
     node_a = await _create_valid_overlay_target(client, project["id"], name="排序稳定节点A")
     node_b = await _create_valid_overlay_target(client, project["id"], name="排序稳定节点B")
@@ -148,6 +240,23 @@ async def test_project_graph_hash_changes_when_searchable_overlay_summary_change
 
     after = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
     assert after.nodes_by_id[node["node_id"]]["description"] == "摘要会进入 description 并参与目标召回"
+    assert after.project_graph_hash != before.project_graph_hash
+
+
+async def test_archived_overlay_session_is_not_planner_visible(client, project, db_session):
+    node = await _create_valid_overlay_target(client, project["id"], name="归档会话节点")
+    before = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    assert node["node_id"] in before.nodes_by_id
+
+    await update_extraction_session_status(
+        db_session,
+        project_id=project["id"],
+        session_id=node["session_id"],
+        session_status="archived",
+    )
+
+    after = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    assert node["node_id"] not in after.nodes_by_id
     assert after.project_graph_hash != before.project_graph_hash
 
 

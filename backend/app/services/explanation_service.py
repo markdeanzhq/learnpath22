@@ -932,6 +932,9 @@ def _build_trace_summary(
         fallback_used=meta.provenance.fallback_used,
         fallback_reasons=list(meta.provenance.fallback_reasons),
         live_pack_fields=list(meta.provenance.live_pack_fields),
+        decision_chain=audit.get("decision_chain") or [],
+        authority_labels=audit.get("authority_labels") or [],
+        llm_fallback_status=audit.get("llm_fallback_status") or {},
     )
 
 
@@ -1118,6 +1121,23 @@ def _build_audit_highlights(
                 "live_pack_fields": meta.provenance.live_pack_fields,
             },
             source="meta.provenance",
+        ),
+        AuditHighlight(
+            key="authority_labels",
+            title="规则权威与 AI 辅助边界",
+            summary="正式路径以规则和用户确认事实为权威，AI 只作为辅助理解或解释润色标签展示。",
+            value={
+                "labels": trace_summary.authority_labels,
+                "llm_fallback_status": trace_summary.llm_fallback_status,
+            },
+            source="audit.authority_labels",
+        ),
+        AuditHighlight(
+            key="decision_chain",
+            title="完整决策链",
+            summary=f"审计链记录 {len(trace_summary.decision_chain)} 个正式路径生成步骤，可不重跑 LLM 复原决策。",
+            value={"steps": trace_summary.decision_chain},
+            source="audit.decision_chain",
         ),
     ]
     return highlights

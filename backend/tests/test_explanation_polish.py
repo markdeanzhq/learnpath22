@@ -378,6 +378,32 @@ def test_polish_invalid_json_returns_metadata_fallback(monkeypatch):
     assert result.meta.polish.fallback_reason == "invalid_response"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "{}",
+        "[{\"key\":\"node:ml_c05\"}]",
+        "[{\"text\":\"缺少 key 的文本\"}]",
+    ],
+)
+def test_polish_schema_violation_returns_metadata_fallback(monkeypatch, payload):
+    get_settings.cache_clear()
+    monkeypatch.setenv("LLM_EXPLANATION_POLISH", "true")
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    get_settings.cache_clear()
+    _replace_runtime_settings({"llm_api_key": "sk-test", "llm_base_url": "https://api.openai.com/v1"})
+
+    original = _make_response()
+    result = polish_explanation(original, llm_client_factory=_mock_ask_factory(payload))
+
+    assert result.node_explanations == original.node_explanations
+    assert result.stage_explanations == original.stage_explanations
+    assert result.meta is not None
+    assert result.meta.polish.requested is True
+    assert result.meta.polish.applied is False
+    assert result.meta.polish.fallback_reason == "invalid_response"
+
+
 def test_polish_accepts_json_code_fence_response(monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setenv("LLM_EXPLANATION_POLISH", "true")

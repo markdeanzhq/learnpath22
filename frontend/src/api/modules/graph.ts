@@ -218,6 +218,11 @@ export interface CreateOverlayExtractionSessionRequest {
   extraction_payload?: unknown
 }
 
+export interface GoalExtensionDraftResponse extends OverlayExtractionSessionResponse {
+  goal_trace?: Record<string, unknown>
+  missing_concepts?: string[]
+}
+
 export interface OverlayStatusResponse {
   element_type: 'node' | 'edge' | 'resource' | string
   element_id: string
@@ -380,6 +385,10 @@ export const graphApi = {
     payload: CreateOverlayExtractionSessionRequest,
   ): Promise<OverlayExtractionSessionResponse> =>
     request.post(`/projects/${projectId}/graph/overlay/extraction-sessions`, payload),
+  createGoalExtensionDraft: (projectId: string, resolutionSessionId: string): Promise<GoalExtensionDraftResponse> =>
+    request.post(`/projects/${projectId}/goal-resolution/extension-drafts`, {
+      resolution_session_id: resolutionSessionId,
+    }),
   getOverlayExtractionSession: (
     projectId: string,
     sessionId: string,

@@ -140,6 +140,14 @@
           show-icon
           title="扩展草稿会先进入项目扩展区，确认审核与规划开关后才会参与路径规划。"
         />
+        <el-alert
+          v-if="goalDraftResolutionSessionId"
+          class="overlay-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="来自目标理解的领域内未覆盖概念。页面打开不会写入；点击“创建目标扩展草稿”后才会生成 overlay 草稿。"
+        />
 
         <el-form label-position="top">
           <el-form-item label="来源类型">
@@ -335,7 +343,7 @@
         <div class="drawer-actions">
           <el-button @click="overlayDrawerVisible = false">关闭</el-button>
           <el-button type="primary" :loading="overlaySubmitting" @click="submitOverlayDraft">
-            创建草稿
+            {{ goalDraftResolutionSessionId ? '创建目标扩展草稿' : '创建草稿' }}
           </el-button>
         </div>
       </div>
@@ -359,6 +367,7 @@ import {
   type GraphEntityMetadata,
   type GraphNodeData,
   type GraphScope,
+  type GoalExtensionDraftResponse,
   type OverlayProjectionStatusResponse,
   type OverlayElementGroup,
   type OverlayExtractionSessionResponse,
@@ -428,6 +437,11 @@ function normalizeRouteNodeId(value: unknown): string | null {
   return typeof nextValue === 'string' && nextValue.trim() ? nextValue.trim() : null
 }
 
+function normalizeGoalDraftFlag(value: unknown): boolean {
+  const nextValue = firstQueryValue(value)
+  return nextValue === '1' || nextValue === 'true'
+}
+
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
@@ -467,6 +481,9 @@ const requestedScope = computed<GraphScope>(() => normalizeGraphScope(route.quer
 const requestedPathId = computed<string | undefined>(() => normalizeGraphPathId(requestedScope.value, route.query.path_id))
 const requestedNodeId = computed<string | null>(() => normalizeRouteNodeId(route.query.nodeId))
 const requestedSessionId = computed<string | null>(() => normalizeRouteSessionId(route.query.sessionId))
+const goalDraftResolutionSessionId = computed<string | null>(() => (
+  normalizeGoalDraftFlag(route.query.goalDraft) ? normalizeRouteSessionId(route.query.resolutionSessionId) : null
+))
 const emptyDescription = computed(() =>
   emptyReason.value === PROJECT_LATEST_PLAN_MISSING
     ? '当前项目尚未生成学习路径，暂时无法展示路径子图；项目图谱仍可显示领域基线与项目扩展草稿。'
@@ -765,6 +782,7 @@ watch(
     await loadProjectionStatus()
     await loadPersistedSearchResults()
     await loadRequestedOverlaySession()
+    await openGoalDraftEntry()
     await focusRequestedNode()
   },
   { immediate: true },
@@ -796,6 +814,11 @@ async function syncRequestedOverlaySession(nextSessionId: string | null) {
 }
 
 watch(requestedSessionId, syncRequestedOverlaySession)
+watch(goalDraftResolutionSessionId, async (nextSessionId) => {
+  if (!nextSessionId) return
+  resetOverlayState()
+  await openGoalDraftEntry()
+})
 
 function onLayoutChange(newLayout: string) {
   layout.value = newLayout as GraphLayout
@@ -937,6 +960,15 @@ async function openOverlayDrawer() {
   await loadPersistedSearchResults()
 }
 
+async function openGoalDraftEntry() {
+  if (!goalDraftResolutionSessionId.value) return
+  overlayDrawerVisible.value = true
+  overlayError.value = ''
+  overlayBridgeMessage.value = ''
+  overlayForm.value = createOverlayForm()
+  await loadPersistedSearchResults()
+}
+
 function buildOverlaySourcePayload(): OverlaySourceRequest | null {
   const form = overlayForm.value
   if (form.sourceType === 'pasted_text') {
@@ -1069,12 +1101,19 @@ async function submitOverlayDraft() {
   overlayBridgeMessage.value = ''
 
   try {
-    const sourceIds = await resolveOverlaySourceIds()
-    if (!sourceIds) return
-    lastOverlaySession.value = await graphApi.createOverlayExtractionSession(projectId.value, {
-      source_ids: sourceIds,
-      mode: overlayForm.value.mode,
-    })
+    if (goalDraftResolutionSessionId.value) {
+      lastOverlaySession.value = await graphApi.createGoalExtensionDraft(
+        projectId.value,
+        goalDraftResolutionSessionId.value,
+      ) as GoalExtensionDraftResponse
+    } else {
+      const sourceIds = await resolveOverlaySourceIds()
+      if (!sourceIds) return
+      lastOverlaySession.value = await graphApi.createOverlayExtractionSession(projectId.value, {
+        source_ids: sourceIds,
+        mode: overlayForm.value.mode,
+      })
+    }
     overlayForm.value = createOverlayForm()
     ElMessage.success('扩展草稿已创建，请在项目图谱中审核候选节点和关系')
     scope.value = 'project'

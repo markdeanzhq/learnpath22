@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app.models.sqlite_models import GoalResolutionSession, LearningProject, PlanExplanationCache
+from app.models.sqlite_models import GoalResolutionSession, LearnerProfile, LearningPath, LearningProject, PlanExplanationCache, VariantPreviewSession
 from app.services.domain_pack_service import get_domain_pack_service
 
 
@@ -81,6 +81,222 @@ async def test_generate_plan_audit_includes_persona_snapshot(client, project):
 async def test_generate_plan_project_not_found(client):
     resp = await client.post("/api/v1/projects/nonexistent/plans")
     assert resp.status_code == 404
+
+
+async def test_variant_preview_creates_ttl_session_without_learning_path(client, db_session, project, profile):
+    before_count = (
+        await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
+    ).scalars().all()
+
+    resp = await client.post(f"/api/v1/projects/{project['id']}/plans/variants/preview")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "active"
+    assert {variant["path_mode"] for variant in data["variants"]} == {
+        "standard",
+        "compressed",
+        "theory_first",
+        "practice_first",
+    }
+    assert all(variant["included_node_ids"] for variant in data["variants"])
+    assert all(variant["audit_summary"]["project_graph_hash"] == data["project_graph_hash"] for variant in data["variants"])
+
+    after_count = (
+        await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
+    ).scalars().all()
+    assert len(after_count) == len(before_count)
+    session = await db_session.get(VariantPreviewSession, data["variant_preview_id"])
+    assert session is not None
+    assert session.path_id is None
+
+
+async def test_variant_preview_accepts_custom_modes_and_deduplicates(client, project, profile):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/preview",
+        json={"path_modes": ["compressed", "standard", "compressed"]},
+    )
+
+    assert resp.status_code == 200
+    assert [variant["path_mode"] for variant in resp.json()["variants"]] == ["compressed", "standard"]
+
+
+async def test_variant_preview_rejects_invalid_path_mode(client, project, profile):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/preview",
+        json={"path_modes": ["standard", "unknown"]},
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "INVALID_PATH_MODE"
+
+
+async def test_variant_confirm_writes_one_learning_path_and_is_idempotent(client, db_session, project, profile):
+    preview_resp = await client.post(f"/api/v1/projects/{project['id']}/plans/variants/preview")
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    variant_id = next(
+        variant["variant_id"]
+        for variant in preview["variants"]
+        if variant["path_mode"] == "compressed"
+    )
+
+    confirm_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": variant_id},
+    )
+    duplicate_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": variant_id},
+    )
+
+    assert confirm_resp.status_code == 200
+    assert duplicate_resp.status_code == 200
+    first = confirm_resp.json()
+    duplicate = duplicate_resp.json()
+    assert first["id"] == duplicate["id"]
+    assert first["version"] == duplicate["version"]
+    assert first["path_mode"] == "compressed"
+    assert duplicate["idempotent"] is True
+
+    paths = (
+        await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
+    ).scalars().all()
+    assert len(paths) == 1
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    latest = latest_resp.json()
+    assert latest["id"] == first["id"]
+    assert latest["audit"]["variant"]["variant_id"] == variant_id
+    assert latest["audit"]["audit_schema_version"] == "formal_path_audit_v2"
+    assert any(label["kind"] == "variant_preview" for label in latest["audit"]["authority_labels"])
+
+
+async def test_variant_confirm_rejects_different_variant_after_confirmation(client, project, profile):
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/preview",
+        json={"path_modes": ["standard", "compressed"]},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    first_variant = preview["variants"][0]["variant_id"]
+    second_variant = preview["variants"][1]["variant_id"]
+    assert (await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": first_variant},
+    )).status_code == 200
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": second_variant},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "STALE_VARIANT_PREVIEW"
+
+
+async def test_variant_confirm_rejects_expired_or_profile_drift(client, db_session, project, profile):
+    preview_resp = await client.post(f"/api/v1/projects/{project['id']}/plans/variants/preview")
+    preview = preview_resp.json()
+    variant_id = preview["variants"][0]["variant_id"]
+    session = await db_session.get(VariantPreviewSession, preview["variant_preview_id"])
+    assert session is not None
+    session.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    await db_session.commit()
+
+    expired_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": variant_id},
+    )
+    assert expired_resp.status_code == 409
+    assert expired_resp.json()["error"] == "STALE_VARIANT_PREVIEW"
+
+    fresh_preview_resp = await client.post(f"/api/v1/projects/{project['id']}/plans/variants/preview")
+    fresh_preview = fresh_preview_resp.json()
+    db_session.add(LearnerProfile(
+        project_id=project["id"],
+        math_level=5,
+        coding_level=5,
+        ml_level=5,
+        theory_weight=0.4,
+        practice_weight=0.6,
+        weekly_hours=12,
+        deadline_weeks=10,
+    ))
+    await db_session.commit()
+
+    drift_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{fresh_preview['variant_preview_id']}/confirm",
+        json={"variant_id": fresh_preview["variants"][0]["variant_id"]},
+    )
+    assert drift_resp.status_code == 409
+    assert drift_resp.json()["error"] == "STALE_VARIANT_PREVIEW"
+    assert drift_resp.json()["reason_code"] == "PROFILE_DRIFT"
+
+
+async def test_variant_confirm_rejects_project_graph_drift(client, project, profile):
+    preview_resp = await client.post(f"/api/v1/projects/{project['id']}/plans/variants/preview")
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+
+    review_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/nodes/ml_a01",
+        json={"status": "removed"},
+    )
+    assert review_resp.status_code == 200
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": preview["variants"][0]["variant_id"]},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "STALE_VARIANT_PREVIEW"
+    assert resp.json()["reason_code"] == "PROJECT_GRAPH_DRIFT"
+
+
+async def test_variant_confirm_rejects_cross_project_preview(client, project, profile):
+    preview_resp = await client.post(f"/api/v1/projects/{project['id']}/plans/variants/preview")
+    preview = preview_resp.json()
+
+    other_preview_resp = await client.post(
+        "/api/v1/goal-resolution/preview",
+        json={"goal_text": "理解梯度下降"},
+    )
+    assert other_preview_resp.status_code == 200
+    other_preview = other_preview_resp.json()
+    other_project_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "另一个项目",
+            "goal_text": "理解梯度下降",
+            "resolution_session_id": other_preview["session_id"],
+            "selected_candidate_id": other_preview["recommended_candidate_id"],
+        },
+    )
+    assert other_project_resp.status_code == 200
+    other_project = other_project_resp.json()
+    other_profile_resp = await client.post(
+        f"/api/v1/projects/{other_project['id']}/profiles",
+        json={
+            "math_level": 2,
+            "coding_level": 2,
+            "ml_level": 1,
+            "theory_weight": 0.6,
+            "practice_weight": 0.4,
+            "weekly_hours": 10,
+            "deadline_weeks": 12,
+        },
+    )
+    assert other_profile_resp.status_code == 200
+
+    resp = await client.post(
+        f"/api/v1/projects/{other_project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": preview["variants"][0]["variant_id"]},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "STALE_VARIANT_PREVIEW"
 
 
 async def test_get_latest_plan(client, project, plan):
@@ -169,6 +385,127 @@ async def test_generate_plan_passes_confirmed_resolution_to_planner(client, db_s
     assert captured["confirmed_goal_result"]["goal_type"] == project["goal_type"]
 
 
+async def test_generate_plan_audit_includes_formal_decision_chain(client, project, profile):
+    plan_resp = await client.post(f"/api/v1/projects/{project['id']}/plans")
+    assert plan_resp.status_code == 200
+
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    audit = latest_resp.json()["audit"]
+
+    assert audit["audit_schema_version"] == "formal_path_audit_v2"
+    assert audit["goal_frame"]["schema_version"] == "v1"
+    assert audit["coverage_decision"]["coverage_status"] == "covered"
+    assert audit["selected_candidate"]["candidate_id"] == project["goal_resolution"]["selected_candidate_id"]
+    assert audit["user_confirmation"]["confirmed_target_node_ids"] == project["goal_resolution"]["confirmed_target_node_ids"]
+    assert audit["planner_inputs"]["confirmed_target_node_ids"] == project["goal_resolution"]["confirmed_target_node_ids"]
+    assert audit["derived_planner_parameters"]["path_mode"] == audit["path_mode"]
+    assert audit["llm_fallback_status"]["authority"] == "rules_first"
+    assert any(label["kind"] == "rules_authority" for label in audit["authority_labels"])
+    assert [step["step"] for step in audit["decision_chain"]][:2] == ["goal_frame", "coverage_decision"]
+
+
+async def test_generate_plan_audit_includes_clarification_trace(client):
+    with patch(
+        "app.services.goal_resolution_service.resolve_goal_candidates",
+        return_value={
+            "auto_detected_goal_type": "domain",
+            "effective_goal_type": "domain",
+            "goal_type_source": "auto",
+            "recommended_candidate_id": None,
+            "candidates": [],
+            "warnings": [],
+        },
+    ):
+        preview_resp = await client.post("/api/v1/goal-resolution/preview", json={"goal_text": "AI"})
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+
+    answer_resp = await client.post(
+        f"/api/v1/goal-resolution/clarifications/{preview['clarification_session_id']}/answers",
+        json={"answers": [{"question_id": "goal_direction", "selected_option_id": "machine_learning_foundation"}]},
+    )
+    assert answer_resp.status_code == 200
+    coverage = answer_resp.json()["coverage_response"]
+
+    project_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "澄清审计",
+            "goal_text": coverage["goal_frame"]["raw_text"],
+            "resolution_session_id": coverage["session_id"],
+            "selected_candidate_id": coverage["recommended_candidate_id"],
+        },
+    )
+    assert project_resp.status_code == 200
+    project_data = project_resp.json()
+    profile_resp = await client.post(
+        f"/api/v1/projects/{project_data['id']}/profiles",
+        json={
+            "math_level": 2,
+            "coding_level": 2,
+            "ml_level": 1,
+            "theory_weight": 0.6,
+            "practice_weight": 0.4,
+            "weekly_hours": 10,
+            "deadline_weeks": 12,
+        },
+    )
+    assert profile_resp.status_code == 200
+
+    plan_resp = await client.post(f"/api/v1/projects/{project_data['id']}/plans")
+    assert plan_resp.status_code == 200
+    latest_resp = await client.get(f"/api/v1/projects/{project_data['id']}/plans/latest")
+    audit = latest_resp.json()["audit"]
+
+    assert audit["clarification_trace_ids"] == [preview["clarification_session_id"]]
+    assert audit["clarification_trace"]["status"] == "resolved"
+    assert any(step["step"] == "clarification" for step in audit["decision_chain"])
+
+
+async def test_generate_plan_audit_discloses_partial_acceptance(client):
+    preview_resp = await client.post("/api/v1/goal-resolution/preview", json={"goal_text": "随机森林和监督学习"})
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+
+    project_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "部分覆盖路径审计",
+            "goal_text": "随机森林和监督学习",
+            "resolution_session_id": preview["session_id"],
+            "selected_candidate_id": preview["candidates"][0]["candidate_id"],
+            "accept_partial": True,
+        },
+    )
+    assert project_resp.status_code == 200
+    project = project_resp.json()
+
+    profile_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/profiles",
+        json={
+            "math_level": 2,
+            "coding_level": 2,
+            "ml_level": 1,
+            "theory_weight": 0.6,
+            "practice_weight": 0.4,
+            "weekly_hours": 10,
+            "deadline_weeks": 12,
+        },
+    )
+    assert profile_resp.status_code == 200
+
+    plan_resp = await client.post(f"/api/v1/projects/{project['id']}/plans")
+    assert plan_resp.status_code == 200
+
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    goal_result = latest_resp.json()["audit"]["goal_result"]
+    assert goal_result["partial_accepted"] is True
+    assert "随机森林" in goal_result["missing_concepts"]
+    assert goal_result["target_node_ids"] == project["goal_resolution"]["confirmed_target_node_ids"]
+
+
 async def test_get_explanation(client, project, plan):
     resp = await client.get(
         f"/api/v1/projects/{project['id']}/explanation"
@@ -195,6 +532,14 @@ async def test_get_explanation(client, project, plan):
     assert isinstance(legacy_projection["stage_explanations"], list)
     assert "readability" not in legacy_projection
     assert "meta" not in legacy_projection
+
+    trace = data["readability"]["trace_summary"]
+    assert any(label["kind"] == "rules_authority" for label in trace["authority_labels"])
+    assert any(label["kind"] == "ai_assisted_understanding" for label in trace["authority_labels"])
+    assert [step["step"] for step in trace["decision_chain"]][:2] == ["goal_frame", "coverage_decision"]
+    highlights = {item["key"]: item for item in data["readability"]["audit_highlights"]}
+    assert "authority_labels" in highlights
+    assert "decision_chain" in highlights
 
     assert data["meta"]["plan_version"] == plan["version"]
     assert data["meta"]["provenance"]["truth_source"] == "plan_audit_snapshot"

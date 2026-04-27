@@ -20,7 +20,14 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db.init_db import cleanup_expired_sessions
-from app.models.sqlite_models import Base, GoalResolutionSession
+from app.models.sqlite_models import (
+    Base,
+    ClarificationSession,
+    FeedbackPreviewSession,
+    GoalResolutionSession,
+    KnownNodeConfirmationDraft,
+    VariantPreviewSession,
+)
 
 # ---------------------------------------------------------------------------
 # Isolated in-memory engine for this test module
@@ -58,6 +65,20 @@ async def test_table_exists_in_schema():
     assert "goal_resolution_sessions" in table_names
 
 
+async def test_redesign_preview_tables_exist_in_schema():
+    required_tables = {
+        "clarification_sessions",
+        "variant_preview_sessions",
+        "feedback_preview_sessions",
+        "known_node_confirmation_drafts",
+    }
+    async with _engine.connect() as conn:
+        table_names = await conn.run_sync(
+            lambda sync_conn: set(inspect(sync_conn).get_table_names())
+        )
+    assert required_tables <= table_names
+
+
 async def test_required_columns_present():
     """All spec-mandated columns must be present."""
     required_columns = {
@@ -71,6 +92,12 @@ async def test_required_columns_present():
         "pack_version",
         "pack_hash",
         "graph_hash",
+        "project_graph_hash",
+        "goal_frame_json",
+        "coverage_response_json",
+        "clarification_trace_json",
+        "decision_history_json",
+        "turn_count",
         "candidates_json",
         "recommended_candidate_id",
         "status",
@@ -271,3 +298,49 @@ async def test_cleanup_idempotent():
 
     assert first == 1
     assert second == 0
+
+
+async def test_cleanup_removes_expired_redesign_preview_rows():
+    now = datetime.now(timezone.utc)
+    expired_at = now - timedelta(hours=1)
+    active_at = now + timedelta(hours=24)
+    async with _Session() as db:
+        expired_clarification = ClarificationSession(
+            raw_text="我想学 AI",
+            goal_text_hash="clarification-expired",
+            domain="machine_learning",
+            expires_at=expired_at,
+        )
+        active_variant = VariantPreviewSession(
+            project_id="project-active",
+            variants_json="[]",
+            expires_at=active_at,
+        )
+        expired_feedback = FeedbackPreviewSession(
+            project_id="project-expired",
+            intent_type="compress_time",
+            expires_at=expired_at,
+        )
+        expired_known_nodes = KnownNodeConfirmationDraft(
+            feedback_preview_id="feedback-expired",
+            project_id="project-expired",
+            node_ids_json="[]",
+            expires_at=expired_at,
+        )
+        db.add_all([expired_clarification, active_variant, expired_feedback, expired_known_nodes])
+        await db.commit()
+        expired_clarification_id = expired_clarification.clarification_session_id
+        active_variant_id = active_variant.variant_preview_id
+        expired_feedback_id = expired_feedback.feedback_preview_id
+        expired_known_nodes_id = expired_known_nodes.draft_id
+
+    async with _Session() as db:
+        deleted_count = await cleanup_expired_sessions(db)
+        await db.commit()
+
+    assert deleted_count == 3
+    async with _Session() as db:
+        assert await db.get(ClarificationSession, expired_clarification_id) is None
+        assert await db.get(FeedbackPreviewSession, expired_feedback_id) is None
+        assert await db.get(KnownNodeConfirmationDraft, expired_known_nodes_id) is None
+        assert await db.get(VariantPreviewSession, active_variant_id) is not None

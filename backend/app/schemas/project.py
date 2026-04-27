@@ -24,6 +24,7 @@ class CreateProjectRequest(BaseModel):
     resolution_session_id: str = Field(min_length=1)
     selected_candidate_id: str = Field(min_length=1)
     path_mode: str = "standard"
+    accept_partial: bool = False
     goal_type: Optional[str] = Field(default=None, pattern="^(domain|concept|problem)$")
 
 
@@ -33,6 +34,7 @@ class UpdateProjectGoalResolutionRequest(BaseModel):
     resolution_session_id: str = Field(min_length=1)
     selected_candidate_id: str = Field(min_length=1)
     path_mode: str | None = None
+    accept_partial: bool = False
     goal_type: Optional[str] = Field(default=None, pattern="^(domain|concept|problem)$")
 
 
@@ -41,6 +43,8 @@ class ProjectGoalResolutionSummary(BaseModel):
     auto_detected_goal_type: Optional[str] = None
     selected_candidate_id: str
     confirmed_target_node_ids: list[str]
+    partial_accepted: bool = False
+    missing_concepts: list[str] = Field(default_factory=list)
 
 
 class ProjectResponse(BaseModel):

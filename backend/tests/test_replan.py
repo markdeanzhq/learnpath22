@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 
-from app.models.sqlite_models import GoalResolutionSession, LearningProject
+from app.models.sqlite_models import (
+    FeedbackPreviewSession,
+    GoalResolutionSession,
+    KnownNodeConfirmationDraft,
+    LearningPath,
+    LearningProject,
+    TrackingEvent,
+)
 
 
 async def _create_project_with_resolution(
@@ -40,6 +47,13 @@ async def _create_project_with_resolution(
     )
     assert project_resp.status_code == 200
     return project_resp.json()
+
+
+async def _path_count(db_session, project_id: str) -> int:
+    result = await db_session.execute(
+        select(LearningPath).where(LearningPath.project_id == project_id)
+    )
+    return len(result.scalars().all())
 
 
 async def test_replan_api_uses_project_domain_for_diff_details_pack(client, project, monkeypatch):
@@ -75,6 +89,234 @@ async def test_replan_api_uses_project_domain_for_diff_details_pack(client, proj
     assert resp.json()["diff_details"] == {
         "added": [{"node_id": "foreign_node", "node_name": "跨领域节点"}]
     }
+
+
+async def test_feedback_preview_compress_time_does_not_write_formal_path(
+    client, db_session, project, profile, plan
+):
+    before_count = await _path_count(db_session, project["id"])
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "这个路径太长了，请压缩一下"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["intent_type"] == "compress_time"
+    assert data["controlled_parameters"]["path_mode"] == "compressed"
+    assert data["requires_confirmation"] is True
+    assert data["requires_second_confirm"] is False
+    assert set(data["diff"]) == {"added", "removed", "unchanged"}
+    assert data["budget_delta"]["previous_total_hours"] == plan["total_hours"]
+    assert await _path_count(db_session, project["id"]) == before_count
+
+    session = await db_session.get(FeedbackPreviewSession, data["feedback_preview_id"])
+    assert session is not None
+    assert session.status == "active"
+
+
+async def test_feedback_preview_rejects_unsupported_or_low_confidence_without_write(
+    client, db_session, project, profile, plan
+):
+    before_count = await _path_count(db_session, project["id"])
+
+    unsupported = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "我想改目标去学 Vue 前端"},
+    )
+    unknown = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "随便优化一下"},
+    )
+
+    assert unsupported.status_code == 422
+    assert unsupported.json()["error"] == "UNSUPPORTED_FEEDBACK_INTENT"
+    assert "goal_change_not_supported" in unsupported.json()["blocked_actions"]
+    assert "cross_domain_not_supported" in unsupported.json()["blocked_actions"]
+    assert unknown.status_code == 422
+    assert unknown.json()["blocked_actions"] == ["low_confidence_or_unknown_intent"]
+    assert await _path_count(db_session, project["id"]) == before_count
+
+
+async def test_feedback_confirm_writes_one_formal_path_and_is_idempotent(
+    client, db_session, project, profile, plan
+):
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "多一点实践和项目"},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+
+    confirm_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{preview['feedback_preview_id']}/confirm"
+    )
+    duplicate_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{preview['feedback_preview_id']}/confirm"
+    )
+
+    assert confirm_resp.status_code == 200
+    assert duplicate_resp.status_code == 200
+    first = confirm_resp.json()
+    duplicate = duplicate_resp.json()
+    assert first["id"] == duplicate["id"]
+    assert first["version"] == duplicate["version"]
+    assert first["path_mode"] == "practice_first"
+    assert first["intent_type"] == "increase_practice"
+    assert duplicate["idempotent"] is True
+
+    paths = (
+        await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
+    ).scalars().all()
+    assert len(paths) == 2
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    audit = latest_resp.json()["audit"]
+    audit_feedback = audit["feedback"]
+    assert audit_feedback["intent_type"] == "increase_practice"
+    assert audit_feedback["controlled_parameters"]["path_mode"] == "practice_first"
+    assert audit["audit_schema_version"] == "formal_path_audit_v2"
+    assert any(label["kind"] == "feedback_preview" for label in audit["authority_labels"])
+
+
+async def test_mark_known_nodes_requires_draft_confirmation_before_formal_write(
+    client, db_session, project, profile, plan
+):
+    known_node_id = plan["stages"][0]["tasks"][0]["node_id"]
+    known_node_name = plan["stages"][0]["tasks"][0]["name"]
+    before_count = await _path_count(db_session, project["id"])
+
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": f"{known_node_name} 我已经会了，不用学"},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    draft = preview["known_node_draft"]
+    assert preview["intent_type"] == "mark_known_nodes"
+    assert preview["requires_second_confirm"] is True
+    assert known_node_id in draft["node_ids"]
+    assert await _path_count(db_session, project["id"]) == before_count
+
+    blocked_confirm = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{preview['feedback_preview_id']}/confirm"
+    )
+    assert blocked_confirm.status_code == 409
+    assert blocked_confirm.json()["reason_code"] == "KNOWN_NODE_DRAFT_CONFIRMATION_REQUIRED"
+    assert await _path_count(db_session, project["id"]) == before_count
+
+    draft_confirm = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/known-node-drafts/{draft['draft_id']}/confirm"
+    )
+    assert draft_confirm.status_code == 200
+    assert draft_confirm.json()["status"] == "confirmed"
+
+    confirm_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{preview['feedback_preview_id']}/confirm"
+    )
+    assert confirm_resp.status_code == 200
+    data = confirm_resp.json()
+    assert data["intent_type"] == "mark_known_nodes"
+    assert data["idempotent"] is False
+    assert known_node_id in data["diff"]["completed"]
+
+    tracking = (
+        await db_session.execute(
+            select(TrackingEvent).where(
+                TrackingEvent.project_id == project["id"],
+                TrackingEvent.node_id == known_node_id,
+                TrackingEvent.event_type == "complete",
+            )
+        )
+    ).scalars().all()
+    assert len(tracking) == 1
+
+    saved_draft = await db_session.get(KnownNodeConfirmationDraft, draft["draft_id"])
+    assert saved_draft is not None
+    assert saved_draft.status == "confirmed"
+    assert await _path_count(db_session, project["id"]) == before_count + 1
+
+
+async def test_feedback_confirm_rejects_pack_hash_drift(
+    client, db_session, project, profile, plan
+):
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "请压缩路径"},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    session = await db_session.get(FeedbackPreviewSession, preview["feedback_preview_id"])
+    assert session is not None
+    session.pack_hash = "stale-pack-hash"
+    await db_session.commit()
+
+    confirm_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{preview['feedback_preview_id']}/confirm"
+    )
+
+    assert confirm_resp.status_code == 409
+    assert confirm_resp.json()["error"] == "STALE_FEEDBACK_PREVIEW"
+    assert confirm_resp.json()["reason_code"] == "PACK_HASH_DRIFT"
+
+
+async def test_known_node_draft_confirm_rejects_pack_hash_drift(
+    client, db_session, project, profile, plan
+):
+    known_node_name = plan["stages"][0]["tasks"][0]["name"]
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": f"{known_node_name} 我已经会了，不用学"},
+    )
+    assert preview_resp.status_code == 200
+    draft = preview_resp.json()["known_node_draft"]
+    saved_draft = await db_session.get(KnownNodeConfirmationDraft, draft["draft_id"])
+    assert saved_draft is not None
+    saved_draft.pack_hash = "stale-pack-hash"
+    await db_session.commit()
+
+    draft_confirm = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/known-node-drafts/{draft['draft_id']}/confirm"
+    )
+
+    assert draft_confirm.status_code == 409
+    assert draft_confirm.json()["error"] == "STALE_FEEDBACK_PREVIEW"
+    assert draft_confirm.json()["reason_code"] == "PACK_HASH_DRIFT"
+
+
+async def test_feedback_confirm_rejects_expired_or_graph_drift(
+    client, db_session, project, profile, plan
+):
+    expired_preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "请压缩路径"},
+    )
+    assert expired_preview_resp.status_code == 200
+    expired_preview = expired_preview_resp.json()
+    expired_session = await db_session.get(FeedbackPreviewSession, expired_preview["feedback_preview_id"])
+    expired_session.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    await db_session.commit()
+
+    expired_confirm = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{expired_preview['feedback_preview_id']}/confirm"
+    )
+    assert expired_confirm.status_code == 409
+    assert expired_confirm.json()["error"] == "STALE_FEEDBACK_PREVIEW"
+
+    drift_preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "请压缩路径"},
+    )
+    assert drift_preview_resp.status_code == 200
+    drift_preview = drift_preview_resp.json()
+    await client.patch(f"/api/v1/projects/{project['id']}/graph/nodes/ml_e08", json={"status": "removed"})
+
+    drift_confirm = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{drift_preview['feedback_preview_id']}/confirm"
+    )
+    assert drift_confirm.status_code == 409
+    assert drift_confirm.json()["reason_code"] == "PROJECT_GRAPH_DRIFT"
 
 
 async def test_replan_profile_update(client, project, plan):
