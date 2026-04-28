@@ -35,6 +35,7 @@
     <GoalUnderstandingCard
       :preview-state="previewState"
       :mode="mode"
+      :display-mode="displayMode"
       :hashes-agree="hashesAgree"
       :hash-status-label="hashStatusLabel"
     />
@@ -138,7 +139,7 @@
             <div class="candidate-meta">
               <el-tag>{{ goalTypeLabel(candidate.goal_type) }}</el-tag>
               <el-tag :type="confidenceTagType(candidate.confidence_level)">{{ confidenceLabel(candidate.confidence_level) }}</el-tag>
-              <el-tag type="info" :title="resolveSourceMeta(candidate.resolve_source).detail || candidate.resolve_source">
+              <el-tag v-if="showAuditDetails" type="info" :title="resolveSourceMeta(candidate.resolve_source).detail || candidate.resolve_source">
                 {{ resolveSourceMeta(candidate.resolve_source).label }}
               </el-tag>
               <el-tag :type="recommendedActionTagType(candidate.recommended_action)">{{ recommendedActionLabel(candidate.recommended_action) }}</el-tag>
@@ -146,9 +147,9 @@
           </div>
 
           <p class="candidate-explanation">{{ candidate.user_explanation || candidate.explanation }}</p>
-          <p v-if="candidate.confidence_reason" class="candidate-confidence-reason">{{ candidate.confidence_reason }}</p>
+          <p v-if="showAuditDetails && candidate.confidence_reason" class="candidate-confidence-reason">{{ candidate.confidence_reason }}</p>
 
-          <div v-if="candidate.match_signals?.length" class="candidate-signals">
+          <div v-if="showAuditDetails && candidate.match_signals?.length" class="candidate-signals">
             <el-tag
               v-for="signal in candidate.match_signals"
               :key="`${candidate.candidate_id}:${signal.type}:${signal.label}`"
@@ -173,7 +174,7 @@
             </el-tag>
           </div>
 
-          <details class="candidate-debug-details">
+          <details v-if="showTechnicalDetails" class="candidate-debug-details">
             <summary>技术评分详情</summary>
             <div class="candidate-debug-content">
               <el-tag type="info">评分 {{ formatScore(candidate.score) }}</el-tag>
@@ -276,7 +277,7 @@
           {{ suggestion }}
         </el-button>
       </div>
-      <details class="debug-details">
+      <details v-if="showTechnicalDetails" class="debug-details">
         <summary>技术详情</summary>
         <el-tag type="danger">{{ previewState.reason_code }}</el-tag>
       </details>
@@ -316,6 +317,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { DisplayMode } from '@/composables/useDisplayMode'
 import type {
   AnswerClarificationCoverageResponse,
   BoundaryRejectCoverageResponse,
@@ -340,6 +342,7 @@ const props = defineProps<{
   unsafeStateMessage: string
   previewDirty: boolean
   mode: 'create' | 'reconfirm'
+  displayMode: DisplayMode
   hashesAgree: boolean
   hashStatusLabel: string
   selectedCandidateId: string
@@ -354,6 +357,9 @@ const props = defineProps<{
   clarificationLoading: boolean
   clarificationAnswers: Record<string, ClarificationAnswerState>
 }>()
+
+const showAuditDetails = computed(() => props.displayMode !== 'simple')
+const showTechnicalDetails = computed(() => props.displayMode === 'debug')
 
 const emit = defineEmits<{
   'update:selectedCandidateId': [candidateId: string]

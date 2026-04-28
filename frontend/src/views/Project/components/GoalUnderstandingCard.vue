@@ -16,9 +16,9 @@
         <el-tag :type="domainDecisionTagType(previewState.goal_understanding.domain_decision)">
           边界判断：{{ domainDecisionLabel(previewState.goal_understanding.domain_decision) }}
         </el-tag>
-        <el-tag type="info">主领域：{{ previewState.goal_understanding.primary_domain }}</el-tag>
-        <el-tag type="info">机器学习相关性：{{ mlRelevanceLabel(previewState.goal_understanding.ml_relevance) }}</el-tag>
-        <el-tag type="warning">置信度：{{ formatConfidence(previewState.goal_understanding.confidence) }}</el-tag>
+        <el-tag v-if="showAuditDetails" type="info">主领域：{{ previewState.goal_understanding.primary_domain }}</el-tag>
+        <el-tag v-if="showAuditDetails" type="info">机器学习相关性：{{ mlRelevanceLabel(previewState.goal_understanding.ml_relevance) }}</el-tag>
+        <el-tag v-if="showAuditDetails" type="warning">置信度：{{ formatConfidence(previewState.goal_understanding.confidence) }}</el-tag>
       </div>
       <div v-if="previewState.goal_understanding.target_concepts.length">
         <span class="summary-label">识别概念：</span>{{ previewState.goal_understanding.target_concepts.join('、') }}
@@ -26,14 +26,14 @@
       <div v-if="previewState.goal_understanding.clarification_question">
         <span class="summary-label">建议澄清：</span>{{ previewState.goal_understanding.clarification_question }}
       </div>
-      <ul v-if="previewState.goal_understanding.evidence.length" class="understanding-evidence-list">
+      <ul v-if="showAuditDetails && previewState.goal_understanding.evidence.length" class="understanding-evidence-list">
         <li v-for="item in previewState.goal_understanding.evidence" :key="`${item.label}:${item.span}:${item.reason}`">
           <strong>{{ item.span }}</strong>：{{ item.reason }}
         </li>
       </ul>
     </div>
 
-    <details class="debug-details">
+    <details v-if="showTechnicalDetails" class="debug-details">
       <summary>技术详情</summary>
       <div class="preview-meta">
         <el-tag type="info">响应类型：{{ resultTypeLabel(previewState.result_type) }}</el-tag>
@@ -68,6 +68,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { DisplayMode } from '@/composables/useDisplayMode'
 import type {
   AnswerClarificationCoverageResponse,
   ConfirmPartialCoverageResponse,
@@ -79,9 +80,13 @@ import type {
 const props = defineProps<{
   previewState: GoalResolutionPreviewResponse
   mode: 'create' | 'reconfirm'
+  displayMode: DisplayMode
   hashesAgree: boolean
   hashStatusLabel: string
 }>()
+
+const showAuditDetails = computed(() => props.displayMode !== 'simple')
+const showTechnicalDetails = computed(() => props.displayMode === 'debug')
 
 const userFacingTitle = computed(() => {
   const state = props.previewState

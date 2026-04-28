@@ -105,7 +105,7 @@
               <strong>{{ polishApplied ? '已应用' : '规则文本' }}</strong>
             </div>
           </el-col>
-          <el-col :xs="12" :sm="6">
+          <el-col v-if="showAuditDetails" :xs="12" :sm="6">
             <div class="metric-card">
               <span class="metric-label">追溯来源</span>
               <strong>{{ traceSourceLabel }}</strong>
@@ -117,7 +117,7 @@
         </ul>
       </el-card>
 
-      <el-card shadow="never" class="section-gap">
+      <el-card v-if="showAuditDetails" shadow="never" class="section-gap">
         <template #header>
           <div class="section-header">
             <span>路径生成流程</span>
@@ -300,7 +300,7 @@
         </div>
       </el-card>
 
-      <el-card shadow="never" class="section-gap">
+      <el-card v-if="showTechnicalDetails" shadow="never" class="section-gap">
         <template #header>
           <div class="section-header">
             <span>高级审计依据</span>
@@ -330,6 +330,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { auditSourceLabel } from '@/utils/displayLabels'
+import type { DisplayMode } from '@/composables/useDisplayMode'
 import type {
   AuditHighlight,
   EvidenceRef,
@@ -372,6 +373,7 @@ const props = defineProps<{
   loading: boolean
   error: string
   polishRequested: boolean
+  displayMode: DisplayMode
   aiAvailability: ExplanationAiAvailability
   askResponse: ExplanationAskResponse | null
   askLoading: boolean
@@ -403,6 +405,8 @@ const explanation = computed(() => props.explanation)
 const loading = computed(() => props.loading)
 const error = computed(() => props.error)
 const polishRequested = computed(() => props.polishRequested)
+const showAuditDetails = computed(() => props.displayMode !== 'simple')
+const showTechnicalDetails = computed(() => props.displayMode === 'debug')
 const askResponse = computed(() => props.askResponse)
 const askLoading = computed(() => props.askLoading)
 const askError = computed(() => props.askError)

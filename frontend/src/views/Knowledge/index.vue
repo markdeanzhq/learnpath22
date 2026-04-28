@@ -133,6 +133,7 @@
 
     <el-drawer v-model="overlayDrawerVisible" title="创建扩展草稿" :size="520" direction="rtl">
       <div class="overlay-drawer" v-loading="overlaySubmitting">
+        <DisplayModeSwitch v-model="displayMode" />
         <el-alert
           class="overlay-alert"
           type="info"
@@ -149,7 +150,15 @@
           title="来自目标理解的领域内未覆盖概念。页面打开不会写入；点击“创建目标扩展草稿”后才会生成 overlay 草稿。"
         />
 
-        <el-form label-position="top">
+        <section v-if="goalDraftResolutionSessionId" class="overlay-subsection goal-draft-entry">
+          <h4>目标扩展入口</h4>
+          <p>当前项目已进入待扩展审核流程。点击下方按钮会基于目标解析结果创建项目级 overlay 草稿，不需要额外粘贴资料。</p>
+          <div v-if="goalDraftMissingConcepts.length" class="review-focus-list">
+            <el-tag v-for="concept in goalDraftMissingConcepts" :key="concept" type="warning" effect="plain">{{ concept }}</el-tag>
+          </div>
+        </section>
+
+        <el-form v-else label-position="top">
           <el-form-item label="来源类型">
             <el-radio-group v-model="overlayForm.sourceType">
               <el-radio-button value="pasted_text">粘贴文本</el-radio-button>
@@ -234,7 +243,8 @@
           <div class="section-header">
             <div>
               <h3>抽取结果</h3>
-              <p>追溯编号：{{ lastOverlaySession.session.session_id }}</p>
+              <p v-if="showTechnicalDetails">追溯编号：{{ lastOverlaySession.session.session_id }}</p>
+              <p v-else>请继续审核候选节点和关系，确认后再开启规划。</p>
             </div>
             <el-tag :type="sessionStatusMeta(lastOverlaySession.session.session_status).tagType" :title="lastOverlaySession.session.session_status">
               {{ sessionStatusMeta(lastOverlaySession.session.session_status).label }}
@@ -266,17 +276,17 @@
               <el-descriptions-item v-if="goalExtensionDraftDetails.gap_analysis?.why_current_graph_is_insufficient" label="缺口原因">
                 {{ goalExtensionDraftDetails.gap_analysis.why_current_graph_is_insufficient }}
               </el-descriptions-item>
-              <el-descriptions-item label="草稿来源">
+              <el-descriptions-item v-if="showAuditDetails" label="草稿来源">
                 {{ goalExtensionDraftDetails.draft_metadata?.draft_engine || 'rules' }} / {{ goalExtensionDraftDetails.draft_metadata?.prompt_version || 'unknown' }}
               </el-descriptions-item>
-              <el-descriptions-item label="安全边界">
+              <el-descriptions-item v-if="showAuditDetails" label="安全边界">
                 需人工审核：{{ goalExtensionDraftDetails.draft_metadata?.requires_user_review ? '是' : '否' }}；可直接规划：{{ goalExtensionDraftDetails.draft_metadata?.can_directly_plan ? '是' : '否' }}
               </el-descriptions-item>
             </el-descriptions>
             <ul v-if="goalDraftReviewNotes.length" class="review-notes">
               <li v-for="note in goalDraftReviewNotes" :key="note">{{ note }}</li>
             </ul>
-            <div v-if="goalDraftReviewFocus.length" class="review-focus-list">
+            <div v-if="showAuditDetails && goalDraftReviewFocus.length" class="review-focus-list">
               <el-tag v-for="item in goalDraftReviewFocus" :key="item" type="info" effect="plain">{{ item }}</el-tag>
             </div>
           </section>
@@ -293,7 +303,7 @@
             </article>
           </section>
 
-          <section v-if="lastOverlaySession.resources?.length" class="overlay-subsection">
+          <section v-if="showAuditDetails && lastOverlaySession.resources?.length" class="overlay-subsection">
             <h4>资源绑定</h4>
             <el-form label-position="top">
               <el-form-item label="资源">
@@ -328,8 +338,8 @@
             </el-form>
           </section>
 
-          <section class="overlay-subsection">
-            <h4>推广到领域包</h4>
+          <section v-if="showTechnicalDetails" class="overlay-subsection">
+            <h4>高级操作：推广到领域包</h4>
             <el-button size="small" :loading="promotionLoading" @click="previewPromotion">预览推广结果（不写入）</el-button>
             <el-descriptions v-if="promotionPreview" class="promotion-summary" :column="1" border size="small">
               <el-descriptions-item label="状态">
@@ -389,6 +399,8 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
+import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
+import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
 import {
   buildGraphQuery,
@@ -480,6 +492,7 @@ function normalizeGoalDraftFlag(value: unknown): boolean {
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
+const { displayMode, showAuditDetails, showTechnicalDetails } = useDisplayMode()
 const projectId = computed(() => projectStore.currentProject?.id)
 const elements = ref<GraphElement[]>([])
 const layout = ref<GraphLayout>('cose')
@@ -1308,6 +1321,20 @@ function toggleFullscreen() {
 
 .overlay-alert {
   margin-bottom: 4px;
+}
+
+.goal-draft-entry {
+  padding: 12px;
+  border: 1px solid #f3d19e;
+  border-radius: 10px;
+  background: #fdf6ec;
+}
+
+.goal-draft-entry p {
+  margin: 0;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .overlay-result {

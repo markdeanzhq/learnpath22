@@ -463,8 +463,9 @@ describe('Knowledge overlay entry', () => {
     expect(wrapper.text()).toContain('目标缺口分析')
     expect(wrapper.text()).toContain('随机森林')
     expect(wrapper.text()).toContain('当前机器学习基础图谱尚未覆盖')
-    expect(wrapper.text()).toContain('rules / goal-extension-draft-v1')
-    expect(wrapper.text()).toContain('需人工审核：是；可直接规划：否')
+    expect(wrapper.text()).toContain('目标扩展入口')
+    expect(wrapper.text()).not.toContain('rules / goal-extension-draft-v1')
+    expect(wrapper.text()).not.toContain('需人工审核：是；可直接规划：否')
   })
 
   it('keeps project graph usable when custom extension readiness is blocked', async () => {

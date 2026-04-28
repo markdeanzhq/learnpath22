@@ -648,7 +648,8 @@ describe('Path page goal reconfirm flow', () => {
     expect(vm.canConfirmGraphOption).toBe(true)
     expect(wrapper.text()).toContain('基础 / 增强图谱路径对比')
     expect(wrapper.text()).toContain('增强图谱路径')
-    expect(wrapper.text()).toContain('po:project-001:n:rf')
+    expect(wrapper.text()).toContain('增强方案会新增 1 个已审核知识点')
+    expect(wrapper.text()).not.toContain('po:project-001:n:rf')
     expect(currentPlanState.value.id).toBe('plan-001')
   })
 
@@ -715,7 +716,7 @@ describe('Path page goal reconfirm flow', () => {
 
     expect(planApiPreviewFeedbackMock).toHaveBeenCalledWith('project-001', '我想增加实践内容')
     expect(vm.feedbackPreview.feedback_preview_id).toBe('feedback-preview-001')
-    expect(vm.feedbackDiffEntries).toEqual([{ key: 'added', values: ['ml-practice-01'] }])
+    expect(vm.feedbackDiffEntries).toEqual([{ key: '新增知识点', values: ['ml-practice-01'] }])
     expect(vm.canConfirmFeedback).toBe(true)
     expect(currentPlanState.value.id).toBe('plan-001')
   })

@@ -46,6 +46,7 @@
     </el-alert>
 
     <div class="actions">
+      <DisplayModeSwitch v-model="displayMode" />
       <el-button type="primary" @click="handlePreview" :loading="previewLoading">
         {{ previewButtonLabel }}
       </el-button>
@@ -61,6 +62,7 @@
     :unsafe-state-message="unsafeStateMessage"
     :preview-dirty="previewDirty"
     :mode="mode"
+    :display-mode="displayMode"
     :hashes-agree="hashesAgree"
     :hash-status-label="hashStatusLabel"
     :can-open-extension-draft="canOpenExtensionDraft"
@@ -97,6 +99,8 @@ import {
   type ReviewExtensionDraftCoverageResponse,
   type SelectCandidateCoverageResponse,
 } from '@/api/modules/project'
+import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
+import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
 import GoalPreviewPanel from './GoalPreviewPanel.vue'
 
@@ -137,6 +141,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ created: [project: Project], updated: [project: Project] }>()
 const router = useRouter()
 const projectStore = useProjectStore()
+const { displayMode } = useDisplayMode()
 const formRef = ref<FormInstance>()
 const previewLoading = ref(false)
 const createLoading = ref(false)

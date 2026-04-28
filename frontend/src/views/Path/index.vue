@@ -5,6 +5,7 @@
         <div class="card-header">
           <span>学习路径</span>
           <div class="header-actions">
+            <DisplayModeSwitch v-model="displayMode" />
             <el-tag>v{{ planStore.currentPlan.version }}</el-tag>
             <el-tag :type="budgetTagType">
               {{ budgetLabel }}
@@ -38,7 +39,7 @@
         <el-tab-pane label="路径总览" name="timeline">
           <StageTimeline :stages="planStore.currentPlan.stages" />
         </el-tab-pane>
-        <el-tab-pane label="预览应用" name="previews">
+        <el-tab-pane label="调整路径" name="previews">
           <section class="preview-section">
             <el-alert
               title="预览不会覆盖当前最新路径；只有点击确认应用后才会保存新的正式路径版本。"
@@ -55,11 +56,41 @@
               show-icon
             />
 
-            <section class="preview-card">
+            <div class="adjustment-entry-grid">
+              <button
+                type="button"
+                class="adjustment-entry-card"
+                :class="{ active: activeAdjustmentTool === 'variants' }"
+                @click="openAdjustmentTool('variants')"
+              >
+                <strong>调整学习方式</strong>
+                <span>标准、压缩、理论优先或实践优先</span>
+              </button>
+              <button
+                type="button"
+                class="adjustment-entry-card"
+                :class="{ active: activeAdjustmentTool === 'graph_options' }"
+                @click="openAdjustmentTool('graph_options')"
+              >
+                <strong>使用扩展知识点</strong>
+                <span>比较基础图谱与已审核扩展图谱</span>
+              </button>
+              <button
+                type="button"
+                class="adjustment-entry-card"
+                :class="{ active: activeAdjustmentTool === 'feedback' }"
+                @click="openAdjustmentTool('feedback')"
+              >
+                <strong>用一句话调整</strong>
+                <span>压缩时间、增加实践或标记已掌握</span>
+              </button>
+            </div>
+
+            <section v-if="activeAdjustmentTool === 'variants'" class="preview-card">
               <div class="section-header">
                 <div>
                   <h3>路径变体预览</h3>
-                  <p>比较 standard / compressed / theory_first / practice_first 的预算、节点取舍和审计摘要。</p>
+                  <p>比较标准路径、压缩路径、理论优先和实践优先的学习投入与节点取舍。</p>
                 </div>
                 <el-button type="primary" :loading="variantLoading" @click="previewVariants">生成变体预览</el-button>
               </div>
@@ -68,7 +99,7 @@
                 <div class="preview-meta">
                   <el-tag type="info">状态：{{ variantPreview.status }}</el-tag>
                   <el-tag type="warning">有效期：{{ formatExpiresAt(variantPreview.expires_at) }}</el-tag>
-                  <el-tag effect="plain">graph：{{ shortHash(variantPreview.project_graph_hash) }}</el-tag>
+                  <el-tag v-if="showTechnicalDetails" effect="plain">graph：{{ shortHash(variantPreview.project_graph_hash) }}</el-tag>
                 </div>
                 <div class="variant-grid">
                   <el-card
@@ -90,13 +121,13 @@
                       <el-tag type="warning">排除 {{ variant.excluded_node_ids.length }} 个节点</el-tag>
                     </div>
                     <dl class="summary-list">
-                      <template v-for="item in summaryEntries(variant.budget_summary)" :key="item.key">
+                      <template v-for="item in budgetSummaryEntries(variant.budget_summary)" :key="item.key">
                         <dt>{{ item.key }}</dt>
                         <dd>{{ item.value }}</dd>
                       </template>
                     </dl>
-                    <dl class="summary-list audit-summary">
-                      <template v-for="item in summaryEntries(variant.audit_summary)" :key="item.key">
+                    <dl v-if="showAuditDetails" class="summary-list audit-summary">
+                      <template v-for="item in auditSummaryEntries(variant.audit_summary)" :key="item.key">
                         <dt>{{ item.key }}</dt>
                         <dd>{{ item.value }}</dd>
                       </template>
@@ -114,7 +145,7 @@
               </template>
             </section>
 
-            <section class="preview-card graph-option-card">
+            <section v-if="activeAdjustmentTool === 'graph_options'" class="preview-card graph-option-card">
               <div class="section-header">
                 <div>
                   <h3>基础 / 增强图谱路径对比</h3>
@@ -133,7 +164,7 @@
                 <div class="preview-meta">
                   <el-tag type="info">状态：{{ graphOptionPreview.status }}</el-tag>
                   <el-tag type="warning">有效期：{{ formatExpiresAt(graphOptionPreview.expires_at) }}</el-tag>
-                  <el-tag effect="plain">当前 graph：{{ shortHash(graphOptionPreview.project_graph_hash) }}</el-tag>
+                  <el-tag v-if="showTechnicalDetails" effect="plain">当前 graph：{{ shortHash(graphOptionPreview.project_graph_hash) }}</el-tag>
                 </div>
                 <div class="variant-grid">
                   <el-card
@@ -155,10 +186,11 @@
                       </el-tag>
                     </div>
                     <p class="option-description">{{ variant.option_description }}</p>
+                    <p class="option-impact">{{ graphOptionImpactText(variant) }}</p>
                     <el-alert
                       v-if="variant.blocked_reason"
                       class="preview-alert"
-                      :title="variant.blocked_reason"
+                      :title="formatPreviewReason(variant.blocked_reason)"
                       type="warning"
                       :closable="false"
                       show-icon
@@ -167,20 +199,20 @@
                       <el-tag type="info">包含 {{ variant.included_node_ids.length }} 个节点</el-tag>
                       <el-tag type="success">增强新增 {{ (variant.added_node_ids || []).length }} 个节点</el-tag>
                       <el-tag type="warning">移除 {{ (variant.removed_node_ids || []).length }} 个节点</el-tag>
-                      <el-tag effect="plain">overlay {{ (variant.overlay_node_ids || []).length }} 节点 / {{ (variant.overlay_edge_ids || []).length }} 边</el-tag>
+                      <el-tag v-if="showAuditDetails" effect="plain">overlay {{ (variant.overlay_node_ids || []).length }} 节点 / {{ (variant.overlay_edge_ids || []).length }} 边</el-tag>
                     </div>
-                    <div v-if="variant.added_node_ids?.length" class="node-id-list">
+                    <div v-if="showAuditDetails && variant.added_node_ids?.length" class="node-id-list">
                       <span>增强新增：</span>
                       <el-tag v-for="nodeId in variant.added_node_ids" :key="nodeId" type="success" effect="plain">{{ nodeId }}</el-tag>
                     </div>
                     <dl class="summary-list">
-                      <template v-for="item in summaryEntries(variant.budget_summary)" :key="item.key">
+                      <template v-for="item in budgetSummaryEntries(variant.budget_summary)" :key="item.key">
                         <dt>{{ item.key }}</dt>
                         <dd>{{ item.value }}</dd>
                       </template>
                     </dl>
-                    <dl class="summary-list audit-summary">
-                      <template v-for="item in summaryEntries(variant.audit_summary)" :key="item.key">
+                    <dl v-if="showAuditDetails" class="summary-list audit-summary">
+                      <template v-for="item in auditSummaryEntries(variant.audit_summary)" :key="item.key">
                         <dt>{{ item.key }}</dt>
                         <dd>{{ item.value }}</dd>
                       </template>
@@ -198,7 +230,7 @@
               </template>
             </section>
 
-            <section class="preview-card">
+            <section v-if="activeAdjustmentTool === 'feedback'" class="preview-card">
               <div class="section-header">
                 <div>
                   <h3>自然语言反馈预览</h3>
@@ -220,10 +252,10 @@
                   <el-tag type="info">意图：{{ feedbackIntentLabel(feedbackPreview.intent_type) }}</el-tag>
                   <el-tag type="success">置信度：{{ formatPercent(feedbackPreview.confidence) }}</el-tag>
                   <el-tag type="warning">有效期：{{ formatExpiresAt(feedbackPreview.expires_at) }}</el-tag>
-                  <el-tag effect="plain">graph：{{ shortHash(feedbackPreview.project_graph_hash) }}</el-tag>
+                  <el-tag v-if="showTechnicalDetails" effect="plain">graph：{{ shortHash(feedbackPreview.project_graph_hash) }}</el-tag>
                 </div>
                 <dl class="summary-list">
-                  <template v-for="item in summaryEntries(feedbackPreview.controlled_parameters)" :key="item.key">
+                  <template v-for="item in feedbackParameterEntries(feedbackPreview.controlled_parameters)" :key="item.key">
                     <dt>{{ item.key }}</dt>
                     <dd>{{ item.value }}</dd>
                   </template>
@@ -235,18 +267,19 @@
                   </section>
                 </div>
                 <dl class="summary-list">
-                  <template v-for="item in summaryEntries(feedbackPreview.budget_delta)" :key="item.key">
+                  <template v-for="item in feedbackBudgetDeltaEntries(feedbackPreview.budget_delta)" :key="item.key">
                     <dt>{{ item.key }}</dt>
                     <dd>{{ item.value }}</dd>
                   </template>
                 </dl>
                 <div v-if="feedbackPreview.blocked_actions.length" class="blocked-actions">
-                  <el-tag v-for="action in feedbackPreview.blocked_actions" :key="action" type="warning">{{ action }}</el-tag>
+                  <el-tag v-for="action in feedbackPreview.blocked_actions" :key="action" type="warning">{{ formatPreviewReason(action) }}</el-tag>
                 </div>
                 <section v-if="feedbackPreview.known_node_draft" class="known-node-draft">
                   <h4>已掌握节点确认</h4>
                   <div class="preview-meta compact">
-                    <el-tag v-for="nodeId in feedbackPreview.known_node_draft.node_ids" :key="nodeId" type="success">{{ nodeId }}</el-tag>
+                    <span v-if="!showAuditDetails" class="option-impact">系统识别出 {{ feedbackPreview.known_node_draft.node_ids.length }} 个已掌握知识点，请确认后再应用重规划。</span>
+                    <el-tag v-for="nodeId in showAuditDetails ? feedbackPreview.known_node_draft.node_ids : []" :key="nodeId" type="success">{{ nodeId }}</el-tag>
                     <el-tag type="info">状态：{{ feedbackPreview.known_node_draft.status }}</el-tag>
                   </div>
                   <el-button
@@ -277,6 +310,7 @@
             :loading="explanationLoading"
             :error="explanationError"
             :polish-requested="polishRequested"
+            :display-mode="displayMode"
             :ai-availability="aiAvailability"
             :ask-response="askResponse"
             :ask-loading="askLoading"
@@ -473,9 +507,21 @@ import { useSettingsStore } from '@/stores/settings'
 import { planApi, type ExplanationAskRequest, type FeedbackPreviewSessionResponse, type VariantPreviewSessionResponse, type VariantSummary } from '@/api/modules/plan'
 import { searchApi, type SearchResultItem } from '@/api/modules/search'
 import { resourceApi, type PlanResourcesResponse, type StageResourceGroup } from '@/api/modules/resource'
+import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
+import { useDisplayMode } from '@/composables/useDisplayMode'
+import {
+  auditSummaryEntries,
+  budgetSummaryEntries,
+  feedbackBudgetDeltaEntries,
+  feedbackParameterEntries,
+  stringifyPreviewValue,
+} from '@/utils/pathPreviewDisplay'
+import { formatErrorCode } from '@/utils/displayLabels'
 import StageTimeline from './components/StageTimeline.vue'
 import Explanation from './Explanation.vue'
 import { useExplanationState } from './useExplanationState'
+
+type AdjustmentTool = 'variants' | 'graph_options' | 'feedback'
 
 const STALE_PREVIEW_ERRORS = new Set([
   'STALE_VARIANT_PREVIEW',
@@ -491,6 +537,7 @@ const projectStore = useProjectStore()
 const planStore = usePlanStore()
 const settingsStore = useSettingsStore()
 const { llmApiKeySet, llmExplanationPolish } = storeToRefs(settingsStore)
+const { displayMode, showAuditDetails, showTechnicalDetails } = useDisplayMode()
 
 const activeTab = ref('timeline')
 const loadError = ref('')
@@ -505,6 +552,7 @@ const recommendLoading = ref(false)
 const bindLoading = ref(false)
 const selectedStageName = ref('')
 const selectedNodeId = ref('')
+const activeAdjustmentTool = ref<AdjustmentTool>('variants')
 const variantPreview = ref<VariantPreviewSessionResponse | null>(null)
 const selectedVariantId = ref('')
 const variantLoading = ref(false)
@@ -566,7 +614,7 @@ const canConfirmFeedback = computed(() => {
 })
 const feedbackDiffEntries = computed(() => Object.entries(feedbackPreview.value?.diff ?? {})
   .filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].length > 0)
-  .map(([key, values]) => ({ key, values })))
+  .map(([key, values]) => ({ key: feedbackDiffLabel(key), values })))
 
 async function loadPlanResources() {
   if (!projectId.value || !planStore.currentPlan?.id) {
@@ -607,6 +655,42 @@ function markPreviewContext() {
   previewProjectId.value = projectId.value || ''
   previewPlanId.value = currentPlanId.value || ''
   previewUnsafeMessage.value = ''
+}
+
+function openAdjustmentTool(tool: AdjustmentTool) {
+  activeAdjustmentTool.value = tool
+  activeTab.value = 'previews'
+}
+
+function graphOptionImpactText(variant: VariantSummary) {
+  if (variant.status === 'unavailable') {
+    return `该方案暂不可用：${formatPreviewReason(variant.blocked_reason) || '当前图谱状态无法生成路径'}`
+  }
+  const added = variant.added_node_ids?.length || 0
+  const removed = variant.removed_node_ids?.length || 0
+  if (variant.graph_option === 'baseline') {
+    return added ? `基础方案不会纳入增强方案中的 ${added} 个扩展知识点。` : '基础方案只使用领域基线图谱，适合保守生成路径。'
+  }
+  if (added || removed) {
+    return `增强方案会新增 ${added} 个已审核知识点，移除 ${removed} 个不适用节点。`
+  }
+  return '增强方案当前与基础方案差异较小，但会持续遵守已审核扩展图谱边界。'
+}
+
+function formatPreviewReason(value?: string | null) {
+  return formatErrorCode(value) || value || ''
+}
+
+function feedbackDiffLabel(key: string) {
+  const map: Record<string, string> = {
+    added: '新增知识点',
+    removed: '移除知识点',
+    unchanged: '保持不变',
+    completed: '已完成锁定',
+    skipped: '已跳过',
+    pending: '待重规划',
+  }
+  return map[key] || key
 }
 
 function isStalePreviewError(error: any) {
@@ -724,6 +808,7 @@ async function previewVariants() {
     feedbackPreview.value = null
     selectedVariantId.value = variantPreview.value.variants[0]?.variant_id || ''
     markPreviewContext()
+    activeAdjustmentTool.value = 'variants'
     activeTab.value = 'previews'
   } catch (error: any) {
     handlePreviewError(error, '生成路径变体预览失败')
@@ -766,6 +851,7 @@ async function previewGraphOptions() {
       graphOptionPreview.value.variants.find((item) => item.status !== 'unavailable')?.variant_id || ''
     )
     markPreviewContext()
+    activeAdjustmentTool.value = 'graph_options'
     activeTab.value = 'previews'
   } catch (error: any) {
     handlePreviewError(error, '生成图谱方案对比失败')
@@ -811,6 +897,7 @@ async function previewFeedback() {
     graphOptionPreview.value = null
     selectedGraphOptionVariantId.value = ''
     markPreviewContext()
+    activeAdjustmentTool.value = 'feedback'
     activeTab.value = 'previews'
   } catch (error: any) {
     handlePreviewError(error, '生成反馈预览失败')
@@ -978,7 +1065,7 @@ function budgetStatusLabel(value: unknown) {
   if (value === 'feasible') return '时间充裕'
   if (value === 'tight') return '时间紧张'
   if (value === 'insufficient') return '时间不足'
-  return stringifyValue(value || '未知')
+  return stringifyPreviewValue(value || '未知')
 }
 
 function formatExpiresAt(expiresAt: string) {
@@ -999,18 +1086,6 @@ function shortHash(value?: string | null) {
   return value.length > 12 ? `${value.slice(0, 12)}…` : value
 }
 
-function stringifyValue(value: unknown) {
-  if (value == null) return '无'
-  if (Array.isArray(value)) return value.join('、')
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
-}
-
-function summaryEntries(record: Record<string, unknown> | undefined) {
-  return Object.entries(record ?? {})
-    .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .map(([key, value]) => ({ key, value: stringifyValue(value) }))
-}
 </script>
 
 <style scoped>
@@ -1034,6 +1109,33 @@ function summaryEntries(record: Record<string, unknown> | undefined) {
 }
 .preview-alert {
   margin-top: 12px;
+}
+.adjustment-entry-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.adjustment-entry-card {
+  min-height: 88px;
+  padding: 14px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-primary);
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.adjustment-entry-card span {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.adjustment-entry-card.active {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 1px var(--el-color-primary-light-5);
 }
 .preview-card {
   border: 1px solid var(--el-border-color);
@@ -1081,11 +1183,15 @@ function summaryEntries(record: Record<string, unknown> | undefined) {
   cursor: not-allowed;
   opacity: 0.72;
 }
-.option-description {
+.option-description,
+.option-impact {
   margin: 8px 0 0;
   color: var(--el-text-color-secondary);
   font-size: 13px;
   line-height: 1.6;
+}
+.option-impact {
+  color: var(--el-text-color-regular);
 }
 .node-id-list {
   display: flex;

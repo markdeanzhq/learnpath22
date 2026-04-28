@@ -181,6 +181,7 @@ function mountExplanation(props: Record<string, any> = {}) {
       loading: false,
       error: '',
       polishRequested: false,
+      displayMode: 'simple',
       aiAvailability: {
         llmApiKeySet: true,
         polishEnabled: true,
@@ -286,8 +287,8 @@ describe('Explanation component', () => {
     expect(wrapper.text()).not.toContain('本次已应用 AI 润色')
   })
 
-  it('shows generation step node names before internal trace IDs', () => {
-    const wrapper = mountExplanation()
+  it('shows generation step node names before internal trace IDs in defense mode', () => {
+    const wrapper = mountExplanation({ displayMode: 'defense' })
 
     expect(wrapper.text()).toContain('机器学习概览')
     expect(wrapper.text()).toContain('内部节点 ID 可通过悬停查看')
@@ -313,6 +314,7 @@ describe('Explanation component', () => {
           ],
         },
       }),
+      displayMode: 'debug',
       askResponse: {
         question_id: 'why_path_order',
         answer: '因为依赖约束优先。',
@@ -333,8 +335,9 @@ describe('Explanation component', () => {
     expect(wrapper.text()).not.toContain('来源：audit.ordering_logs')
   })
 
-  it('keeps advanced audit collapsed by default and ignores unknown DTO fields', () => {
+  it('keeps advanced audit collapsed in debug mode and ignores unknown DTO fields', () => {
     const wrapper = mountExplanation({
+      displayMode: 'debug',
       explanation: createExplanationResponse({
         readability: {
           ...createBaseReadability(),
