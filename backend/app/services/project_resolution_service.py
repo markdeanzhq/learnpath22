@@ -13,6 +13,7 @@ from app.repositories.project_repository import create_project, get_project
 from app.schemas.project import validate_path_mode
 from app.services.goal_resolution_service import (
     _build_goal_text_hash,
+    _goal_coverage_actions,
     answer_clarification_session,
     build_project_graph_hash,
     create_goal_resolution_preview,
@@ -156,6 +157,82 @@ def _validate_path_mode_or_raise(path_mode: str | None) -> str:
         raise AppError(code=422, message="INVALID_PATH_MODE") from exc
 
 
+async def _validate_extension_review_session(
+    db: AsyncSession,
+    *,
+    session: GoalResolutionSession,
+    goal_text: str,
+    domain: str,
+    pack_hash: str,
+) -> dict[str, Any]:
+    if session.status != "draft_previewed" or session.project_id is not None:
+        raise AppError(code=409, message=error_codes.STALE_RESOLUTION_SESSION)
+    coverage_response = _json_loads(session.coverage_response_json, {})
+    if not isinstance(coverage_response, dict):
+        raise AppError(code=422, message="INVALID_COVERAGE_RESPONSE")
+    if coverage_response.get("result_type") != "review_extension_draft":
+        raise AppError(code=422, message="INVALID_COVERAGE_TRANSITION")
+    if coverage_response.get("coverage_status") != "in_domain_uncovered":
+        raise AppError(code=422, message="INVALID_COVERAGE_TRANSITION")
+    if session.goal_text_hash != _build_goal_text_hash(goal_text):
+        raise AppError(code=409, message=error_codes.STALE_RESOLUTION_SESSION)
+    if session.domain != domain:
+        raise AppError(code=409, message=error_codes.STALE_RESOLUTION_SESSION)
+    if session.pack_hash != pack_hash:
+        raise AppError(
+            code=409,
+            message=error_codes.STALE_RESOLUTION_SESSION,
+            details={"reason_code": error_codes.PACK_HASH_DRIFT},
+        )
+    return coverage_response
+
+
+async def _create_extension_review_project(
+    db: AsyncSession,
+    *,
+    title: str,
+    goal_text: str,
+    domain: str,
+    path_mode: str,
+    session: GoalResolutionSession,
+    coverage_response: dict[str, Any],
+) -> dict[str, Any]:
+    missing_concepts = coverage_response.get("missing_concepts", [])
+    if not isinstance(missing_concepts, list):
+        missing_concepts = []
+    goal_type = session.effective_goal_type or session.auto_detected_goal_type or "concept"
+    project = await create_project(
+        db,
+        title=title,
+        goal_text=goal_text,
+        goal_type=goal_type,
+        domain=domain,
+        commit=False,
+        status="extension_review",
+        path_mode=path_mode,
+        requested_goal_type=session.requested_goal_type,
+        auto_detected_goal_type=session.auto_detected_goal_type,
+        resolution_pack_version=session.pack_version,
+        missing_concepts_json=json.dumps(missing_concepts, ensure_ascii=False),
+    )
+    project_graph_hash = await build_project_graph_hash(db, project.id, session.pack_hash or "")
+    session.project_id = project.id
+    session.graph_hash = project_graph_hash
+    session.project_graph_hash = project_graph_hash
+    coverage_response.update({
+        "project_graph_hash": project_graph_hash,
+        "available_actions": _goal_coverage_actions("in_domain_uncovered", has_project=True),
+    })
+    audit_trace = coverage_response.get("audit_trace")
+    if isinstance(audit_trace, dict):
+        audit_trace["project_graph_hash"] = project_graph_hash
+    session.coverage_response_json = json.dumps(coverage_response, ensure_ascii=False, sort_keys=True)
+    await db.commit()
+    await db.refresh(project)
+    await db.refresh(session)
+    return _serialize_project(project)
+
+
 def _apply_confirmed_resolution(
     project: LearningProject,
     *,
@@ -194,15 +271,35 @@ async def create_project_from_resolution_session(
     goal_text: str,
     domain: str | None,
     resolution_session_id: str,
-    selected_candidate_id: str,
+    selected_candidate_id: str | None,
     path_mode: str = "standard",
     accept_partial: bool = False,
+    creation_mode: str = "confirmed",
 ) -> dict[str, Any]:
     path_mode = _validate_path_mode_or_raise(path_mode)
     session = await _get_valid_session(db, resolution_session_id=resolution_session_id)
-    selected_candidate = _get_selected_candidate(session, selected_candidate_id)
     resolved_domain = resolve_compatible_domain(domain)
     pack = get_domain_pack_service(resolved_domain)
+    if creation_mode == "extension_review":
+        coverage_response = await _validate_extension_review_session(
+            db,
+            session=session,
+            goal_text=goal_text,
+            domain=resolved_domain,
+            pack_hash=pack.contract.pack_hash,
+        )
+        return await _create_extension_review_project(
+            db,
+            title=title,
+            goal_text=goal_text,
+            domain=resolved_domain,
+            path_mode=path_mode,
+            session=session,
+            coverage_response=coverage_response,
+        )
+    if selected_candidate_id is None:
+        raise AppError(code=422, message="INVALID_RESOLUTION_CANDIDATE")
+    selected_candidate = _get_selected_candidate(session, selected_candidate_id)
     coverage_response = await _validate_session_integrity(
         db,
         session=session,

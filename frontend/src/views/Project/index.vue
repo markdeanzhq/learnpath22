@@ -3,102 +3,31 @@
     <el-row :gutter="20">
       <!-- 左侧：项目列表 -->
       <el-col :span="9">
-        <el-card shadow="never">
-          <template #header>
-            <div class="card-header">
-              <span>我的项目</span>
-              <div class="header-actions">
-                <el-button size="small" @click="router.push('/search')">搜索资料</el-button>
-                <el-button type="primary" size="small" :icon="Plus" @click="startCreate">新建</el-button>
-              </div>
-            </div>
-          </template>
-          <el-table
-            :data="projectStore.projects"
-            v-loading="projectStore.loading || deletingProjectId !== ''"
-            empty-text="暂无项目"
-            @row-click="handleRowClick"
-            highlight-current-row
-            style="cursor: pointer"
-          >
-            <el-table-column prop="title" label="标题" />
-            <el-table-column prop="goal_type" label="类型" width="80">
-              <template #default="{ row }">
-                <el-tag size="small">{{ goalTypeLabel(row.goal_type) }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="status" label="状态" width="80">
-              <template #default="{ row }">
-                <el-tag :type="projectStatusMeta(row.status).tagType" size="small" :title="projectStatusMeta(row.status).detail">
-                  {{ projectStatusMeta(row.status).label }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="90" align="center">
-              <template #default="{ row }">
-                <el-button
-                  type="danger"
-                  link
-                  :loading="deletingProjectId === row.id"
-                  @click.stop="handleDelete(row)"
-                >
-                  删除
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
+        <ProjectListPanel
+          :projects="projectStore.projects"
+          :loading="projectStore.loading"
+          :deleting-project-id="deletingProjectId"
+          @search="router.push('/search')"
+          @create="startCreate"
+          @select="handleRowClick"
+          @delete="handleDelete"
+        />
       </el-col>
 
       <!-- 右侧：创建/问卷流程 -->
       <el-col :span="15">
-        <el-card shadow="never">
-          <el-steps :active="step" align-center finish-status="success" style="margin-bottom: 30px">
-            <el-step title="创建项目" />
-            <el-step title="画像采集" />
-            <el-step title="完成" />
-          </el-steps>
-
-          <!-- Step 0: 创建项目 / 重新确认目标 -->
-          <GoalForm
-            v-if="step === 0"
-            :mode="goalFormMode"
-            :project-id="currentProjectId"
-            :project-title="projectStore.currentProject?.title ?? ''"
-            :initial-goal-text="projectStore.currentProject?.goal_text ?? ''"
-            :initial-goal-type="goalFormMode === 'reconfirm' ? (projectStore.currentProject?.goal_type as any) : 'auto'"
-            :reconfirm-reason="reconfirmReason"
-            @created="onProjectCreated"
-            @updated="onGoalResolutionUpdated"
-          />
-
-          <!-- Step 1: 画像采集 -->
-          <ProfileQuestionnaire
-            v-else-if="step === 1 && currentProjectId"
-            :project-id="currentProjectId"
-            @completed="onProfileCompleted"
-          />
-
-          <!-- Step 2: 完成 -->
-          <div v-else-if="step === 2" class="complete-section">
-            <el-result icon="success" title="项目创建成功" sub-title="画像已采集完毕，可以生成学习路径了">
-              <template #extra>
-                <el-button type="primary" @click="goToPath" :loading="generatingPlan">
-                  生成学习路径
-                </el-button>
-              </template>
-            </el-result>
-          </div>
-
-          <!-- 未开始创建时的提示 -->
-          <div v-else-if="step === -1" class="welcome-section">
-            <el-empty description="选择左侧已有项目或点击「新建」开始">
-              <template #image>
-                <el-icon :size="60" color="#409EFF"><Document /></el-icon>
-              </template>
-            </el-empty>
-          </div>
-        </el-card>
+        <ProjectWorkflowPanel
+          :step="step"
+          :goal-form-mode="goalFormMode"
+          :current-project-id="currentProjectId"
+          :current-project="projectStore.currentProject"
+          :reconfirm-reason="reconfirmReason"
+          :generating-plan="generatingPlan"
+          @project-created="onProjectCreated"
+          @goal-resolution-updated="onGoalResolutionUpdated"
+          @profile-completed="onProfileCompleted"
+          @generate-path="goToPath"
+        />
       </el-col>
     </el-row>
   </div>
@@ -108,14 +37,12 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Document } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useTrackingStore } from '@/stores/tracking'
 import type { Project } from '@/api/modules/project'
-import { projectStatusMeta } from '@/utils/displayLabels'
-import GoalForm from './components/GoalForm.vue'
-import ProfileQuestionnaire from './components/ProfileQuestionnaire.vue'
+import ProjectListPanel from './components/ProjectListPanel.vue'
+import ProjectWorkflowPanel from './components/ProjectWorkflowPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -241,26 +168,10 @@ async function handleDelete(row: Project) {
   }
 }
 
-function goalTypeLabel(type: string) {
-  const map: Record<string, string> = { domain: '领域', concept: '概念', problem: '问题' }
-  return map[type] || type
-}
 </script>
 
 <style scoped>
 .page-container { padding: 20px; }
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.header-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.complete-section { text-align: center; padding: 40px 0; }
-.welcome-section { padding: 40px 0; }
 
 @media (max-width: 768px) {
   .page-container {
@@ -278,9 +189,5 @@ function goalTypeLabel(type: string) {
     flex: 0 0 100%;
   }
 
-  .card-header {
-    gap: 8px;
-    flex-wrap: wrap;
-  }
 }
 </style>

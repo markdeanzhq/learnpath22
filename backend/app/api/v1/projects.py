@@ -46,6 +46,7 @@ async def create_project_endpoint(
         selected_candidate_id=req.selected_candidate_id,
         path_mode=req.path_mode,
         accept_partial=req.accept_partial,
+        creation_mode=req.creation_mode,
     )
 
 

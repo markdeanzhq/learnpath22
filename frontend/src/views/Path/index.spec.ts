@@ -10,6 +10,7 @@ const {
   refreshServerStatusMock,
   planApiGetExplanationMock,
   planApiPreviewVariantsMock,
+  planApiPreviewGraphOptionsMock,
   planApiConfirmVariantMock,
   planApiPreviewFeedbackMock,
   planApiConfirmKnownNodeDraftMock,
@@ -30,6 +31,7 @@ const {
   refreshServerStatusMock: vi.fn(),
   planApiGetExplanationMock: vi.fn(),
   planApiPreviewVariantsMock: vi.fn(),
+  planApiPreviewGraphOptionsMock: vi.fn(),
   planApiConfirmVariantMock: vi.fn(),
   planApiPreviewFeedbackMock: vi.fn(),
   planApiConfirmKnownNodeDraftMock: vi.fn(),
@@ -139,6 +141,7 @@ vi.mock('@/api/modules/plan', () => ({
   planApi: {
     getExplanation: planApiGetExplanationMock,
     previewVariants: planApiPreviewVariantsMock,
+    previewGraphOptions: planApiPreviewGraphOptionsMock,
     confirmVariant: planApiConfirmVariantMock,
     previewFeedback: planApiPreviewFeedbackMock,
     confirmKnownNodeDraft: planApiConfirmKnownNodeDraftMock,
@@ -289,6 +292,52 @@ function createVariantPreviewResponse(overrides: Record<string, any> = {}) {
   }
 }
 
+function createGraphOptionPreviewResponse(overrides: Record<string, any> = {}) {
+  return createVariantPreviewResponse({
+    variant_preview_id: 'graph-option-preview-001',
+    project_graph_hash: 'graph-hash-enhanced',
+    variants: [
+      {
+        variant_id: 'baseline-standard',
+        path_mode: 'standard',
+        preview_kind: 'graph_option',
+        graph_option: 'baseline',
+        option_label: '基础图谱路径',
+        option_description: '不纳入项目级扩展草稿。',
+        status: 'available',
+        budget_summary: { status: 'feasible', total_hours: 12 },
+        included_node_ids: ['ml-a01'],
+        excluded_node_ids: [],
+        added_node_ids: [],
+        removed_node_ids: [],
+        overlay_node_ids: [],
+        overlay_edge_ids: [],
+        project_graph_hash: 'graph-hash-baseline',
+        audit_summary: { nodes_missing_vs_enhanced: ['po:project-001:n:rf'] },
+      },
+      {
+        variant_id: 'enhanced-standard',
+        path_mode: 'standard',
+        preview_kind: 'graph_option',
+        graph_option: 'enhanced',
+        option_label: '增强图谱路径',
+        option_description: '纳入已审核的项目级扩展草稿。',
+        status: 'available',
+        budget_summary: { status: 'feasible', total_hours: 14 },
+        included_node_ids: ['ml-a01', 'po:project-001:n:rf'],
+        excluded_node_ids: [],
+        added_node_ids: ['po:project-001:n:rf'],
+        removed_node_ids: [],
+        overlay_node_ids: ['po:project-001:n:rf'],
+        overlay_edge_ids: [],
+        project_graph_hash: 'graph-hash-enhanced',
+        audit_summary: { nodes_added_vs_baseline: ['po:project-001:n:rf'] },
+      },
+    ],
+    ...overrides,
+  })
+}
+
 function createFeedbackPreviewResponse(overrides: Record<string, any> = {}) {
   return {
     feedback_preview_id: 'feedback-preview-001',
@@ -396,6 +445,7 @@ describe('Path page goal reconfirm flow', () => {
     })
     planApiGetExplanationMock.mockResolvedValue(createExplanationResponse())
     planApiPreviewVariantsMock.mockResolvedValue(createVariantPreviewResponse())
+    planApiPreviewGraphOptionsMock.mockResolvedValue(createGraphOptionPreviewResponse())
     planApiConfirmVariantMock.mockResolvedValue(createReplanResult())
     planApiPreviewFeedbackMock.mockResolvedValue(createFeedbackPreviewResponse())
     planApiConfirmKnownNodeDraftMock.mockResolvedValue({
@@ -579,6 +629,78 @@ describe('Path page goal reconfirm flow', () => {
     expect(vm.feedbackPreview).toBeNull()
     expect(vm.previewUnsafeMessage).toBe('')
     expect(currentPlanState.value.id).toBe('plan-002')
+    expect(vm.activeTab).toBe('timeline')
+  })
+
+  it('previews baseline and enhanced graph options without applying them', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewGraphOptions()
+    await flushPromises()
+
+    expect(planApiPreviewGraphOptionsMock).toHaveBeenCalledWith('project-001', undefined)
+    expect(vm.graphOptionPreview.variant_preview_id).toBe('graph-option-preview-001')
+    expect(vm.selectedGraphOptionVariantId).toBe('baseline-standard')
+    expect(vm.variantPreview).toBeNull()
+    expect(vm.feedbackPreview).toBeNull()
+    expect(vm.canConfirmGraphOption).toBe(true)
+    expect(wrapper.text()).toContain('基础 / 增强图谱路径对比')
+    expect(wrapper.text()).toContain('增强图谱路径')
+    expect(wrapper.text()).toContain('po:project-001:n:rf')
+    expect(currentPlanState.value.id).toBe('plan-001')
+  })
+
+  it('does not select unavailable graph options', async () => {
+    const unavailablePreview: any = createGraphOptionPreviewResponse()
+    unavailablePreview.variants[0] = {
+      ...unavailablePreview.variants[0],
+      status: 'unavailable',
+      blocked_reason: 'GOAL_TARGETS_REMOVED',
+    }
+    planApiPreviewGraphOptionsMock.mockResolvedValueOnce(unavailablePreview)
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewGraphOptions()
+    await flushPromises()
+
+    expect(vm.selectedGraphOptionVariantId).toBe('enhanced-standard')
+    vm.selectGraphOptionVariant(unavailablePreview.variants[0])
+    expect(vm.selectedGraphOptionVariantId).toBe('enhanced-standard')
+    expect(wrapper.text()).toContain('暂不可用')
+    expect(vm.graphOptionPreview.variants[0].blocked_reason).toBe('GOAL_TARGETS_REMOVED')
+  })
+
+  it('confirms the selected graph option through the variant confirmation API', async () => {
+    loadLatestMock.mockImplementation(async () => {
+      currentPlanState.value = {
+        id: 'plan-graph-option',
+        version: 2,
+        budget_status: 'feasible',
+        total_hours: 14,
+        stages: [],
+      }
+    })
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewGraphOptions()
+    await flushPromises()
+    vm.selectedGraphOptionVariantId = 'enhanced-standard'
+
+    await vm.confirmGraphOption()
+    await flushPromises()
+
+    expect(planApiConfirmVariantMock).toHaveBeenCalledWith('project-001', 'graph-option-preview-001', 'enhanced-standard')
+    expect(vm.graphOptionPreview).toBeNull()
+    expect(vm.variantPreview).toBeNull()
+    expect(vm.feedbackPreview).toBeNull()
+    expect(currentPlanState.value.id).toBe('plan-graph-option')
     expect(vm.activeTab).toBe('timeline')
   })
 

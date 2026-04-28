@@ -693,6 +693,9 @@ async def create_goal_extension_draft(
     )
     response["goal_trace"] = created["goal_trace"]
     response["missing_concepts"] = created["missing_concepts"]
+    response["gap_analysis"] = created["gap_analysis"]
+    response["review_notes"] = created["review_notes"]
+    response["draft_metadata"] = created["draft_metadata"]
     return response
 
 

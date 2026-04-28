@@ -309,6 +309,22 @@ export interface ReplanResult {
   idempotent?: boolean
 }
 
+export interface VariantConfirmResponse {
+  id: string
+  project_id?: string
+  version: number
+  stages: PathStage[]
+  budget_status: string
+  path_mode?: PathMode | string | null
+  total_hours: number
+  node_count?: number
+  reinforced_ids?: string[]
+  text_output?: string
+  variant_preview_id?: string
+  variant_id?: string
+  idempotent?: boolean
+}
+
 export type PathMode = 'standard' | 'compressed' | 'theory_first' | 'practice_first'
 export type FeedbackIntentType = 'compress_time' | 'increase_practice' | 'increase_theory' | 'adjust_deadline' | 'mark_known_nodes'
 
@@ -319,6 +335,17 @@ export interface VariantSummary {
   included_node_ids: string[]
   excluded_node_ids: string[]
   audit_summary: Record<string, unknown>
+  preview_kind?: string | null
+  graph_option?: 'baseline' | 'enhanced' | string | null
+  option_label?: string | null
+  option_description?: string | null
+  status?: 'available' | 'unavailable' | string
+  blocked_reason?: string | null
+  added_node_ids?: string[]
+  removed_node_ids?: string[]
+  overlay_node_ids?: string[]
+  overlay_edge_ids?: string[]
+  project_graph_hash?: string | null
 }
 
 export interface VariantPreviewSessionResponse {
@@ -378,7 +405,9 @@ export const planApi = {
     }),
   previewVariants: (projectId: string, pathModes?: PathMode[]): Promise<VariantPreviewSessionResponse> =>
     request.post(`/projects/${projectId}/plans/variants/preview`, pathModes?.length ? { path_modes: pathModes } : {}),
-  confirmVariant: (projectId: string, previewId: string, variantId: string): Promise<ReplanResult> =>
+  previewGraphOptions: (projectId: string, pathMode?: PathMode | string | null): Promise<VariantPreviewSessionResponse> =>
+    request.post(`/projects/${projectId}/plans/graph-options/preview`, pathMode ? { path_mode: pathMode } : {}),
+  confirmVariant: (projectId: string, previewId: string, variantId: string): Promise<VariantConfirmResponse> =>
     request.post(`/projects/${projectId}/plans/variants/${previewId}/confirm`, { variant_id: variantId }),
   previewFeedback: (projectId: string, feedbackText: string): Promise<FeedbackPreviewSessionResponse> =>
     request.post(`/projects/${projectId}/replans/feedback/preview`, { feedback_text: feedbackText }),

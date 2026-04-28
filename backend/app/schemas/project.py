@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -22,9 +22,10 @@ class CreateProjectRequest(BaseModel):
     goal_text: str = Field(min_length=1)
     domain: Optional[str] = None
     resolution_session_id: str = Field(min_length=1)
-    selected_candidate_id: str = Field(min_length=1)
+    selected_candidate_id: Optional[str] = Field(default=None, min_length=1)
     path_mode: str = "standard"
     accept_partial: bool = False
+    creation_mode: Literal["confirmed", "extension_review"] = "confirmed"
     goal_type: Optional[str] = Field(default=None, pattern="^(domain|concept|problem)$")
 
 

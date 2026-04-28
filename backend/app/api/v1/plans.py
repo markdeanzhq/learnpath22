@@ -39,7 +39,7 @@ from app.services.explanation_service import (
     polish_explanation,
 )
 from app.services.formal_path_audit_service import enrich_formal_path_audit
-from app.services.goal_service import UnsupportedGoalTypeError
+from app.services.goal_service import UnsupportedGoalTypeError, resolve_goal
 from app.services.planner_service import plan_with_profile
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 
@@ -52,6 +52,10 @@ class GeneratePlanRequest(BaseModel):
 
 class VariantPreviewRequest(BaseModel):
     path_modes: list[str] | None = None
+
+
+class GraphOptionPreviewRequest(BaseModel):
+    path_mode: str | None = None
 
 
 class VariantConfirmRequest(BaseModel):
@@ -148,8 +152,160 @@ def _build_variant_summary(path_mode: str, plan_result: dict[str, Any], paramete
     }
 
 
-def _public_variant(variant: dict[str, Any]) -> dict[str, Any]:
+def _graph_option_variant_id(graph_option: str, path_mode: str, parameter_hash: str) -> str:
+    return f"{graph_option}:{path_mode}:{parameter_hash[:12]}"
+
+
+def _graph_option_labels(graph_option: str) -> tuple[str, str]:
+    if graph_option == "baseline":
+        return (
+            "基础图谱路径",
+            "只使用当前领域基线与项目中已移除/恢复的审核状态，不纳入项目级扩展草稿。",
+        )
+    return (
+        "增强图谱路径",
+        "使用领域基线，并纳入已确认、校验通过且开启规划的项目级 overlay 节点和关系。",
+    )
+
+
+def _overlay_ids_from_snapshot(snapshot, plan_result: dict[str, Any] | None = None) -> tuple[list[str], list[str]]:
+    overlay_lineage = getattr(snapshot, "overlay_lineage", {}) or {}
+    overlay_nodes = overlay_lineage.get("nodes") if isinstance(overlay_lineage, dict) else {}
+    overlay_edges = overlay_lineage.get("edges") if isinstance(overlay_lineage, dict) else {}
+    node_ids = sorted(overlay_nodes) if isinstance(overlay_nodes, dict) else []
+    if plan_result is not None:
+        planned = set(plan_result.get("ordered_ids") or [])
+        node_ids = [node_id for node_id in node_ids if node_id in planned]
+    edge_ids = sorted(overlay_edges) if isinstance(overlay_edges, dict) else []
+    return node_ids, edge_ids
+
+
+def _build_graph_option_goal_result(project, snapshot, confirmed_goal_result: dict[str, Any] | None) -> dict[str, Any] | None:
+    try:
+        resolved = resolve_goal(
+            goal_text=project.goal_text,
+            goal_type_override=project.goal_type,
+            templates=snapshot.goal_templates,
+            nodes_by_id=snapshot.nodes_by_id,
+            supported_goal_types=snapshot.contract.supported_goal_types if snapshot.contract is not None else (),
+            default_goal_policy=snapshot.contract.default_goal_policy if snapshot.contract is not None else None,
+        )
+    except UnsupportedGoalTypeError:
+        resolved = None
+
+    if confirmed_goal_result is None:
+        return resolved
+    if not resolved or not resolved.get("target_node_ids"):
+        return deepcopy(confirmed_goal_result)
+
+    merged = deepcopy(confirmed_goal_result)
+    merged_target_ids: list[str] = []
+    for node_id in list(confirmed_goal_result.get("target_node_ids") or []) + list(resolved.get("target_node_ids") or []):
+        if node_id in snapshot.nodes_by_id and node_id not in merged_target_ids:
+            merged_target_ids.append(node_id)
+    merged["target_node_ids"] = merged_target_ids
+    merged["confirmed_target_node_ids"] = merged_target_ids
+    merged["effective_target_node_ids"] = merged_target_ids
+    merged["resolve_source"] = "confirmed_plus_graph_option"
+    merged["source_breakdown"] = resolved.get("source_breakdown") or merged.get("source_breakdown") or {}
+    merged["warnings"] = sorted(set(merged.get("warnings", [])) | {"graph_option_target_merge"})
+    return merged
+
+
+def _build_unavailable_graph_option(
+    *,
+    graph_option: str,
+    path_mode: str,
+    parameter_hash: str,
+    snapshot,
+    blocked_reason: str,
+) -> dict[str, Any]:
+    option_label, option_description = _graph_option_labels(graph_option)
+    overlay_node_ids, overlay_edge_ids = _overlay_ids_from_snapshot(snapshot)
     return {
+        "variant_id": _graph_option_variant_id(graph_option, path_mode, parameter_hash),
+        "path_mode": path_mode,
+        "preview_kind": "graph_option",
+        "graph_option": graph_option,
+        "option_label": option_label,
+        "option_description": option_description,
+        "status": "unavailable",
+        "blocked_reason": blocked_reason,
+        "budget_summary": {},
+        "included_node_ids": [],
+        "excluded_node_ids": [],
+        "added_node_ids": [],
+        "removed_node_ids": [],
+        "overlay_node_ids": overlay_node_ids,
+        "overlay_edge_ids": overlay_edge_ids,
+        "project_graph_hash": snapshot.project_graph_hash,
+        "audit_summary": {
+            "path_mode": path_mode,
+            "graph_option": graph_option,
+            "project_graph_hash": snapshot.project_graph_hash,
+            "blocked_reason": blocked_reason,
+        },
+    }
+
+
+def _build_graph_option_summary(
+    *,
+    graph_option: str,
+    path_mode: str,
+    plan_result: dict[str, Any],
+    parameter_hash: str,
+    snapshot,
+) -> dict[str, Any]:
+    option_label, option_description = _graph_option_labels(graph_option)
+    plan_result.setdefault("audit", {})["graph_option"] = {
+        "preview_kind": "graph_option",
+        "graph_option": graph_option,
+        "option_label": option_label,
+        "project_graph_hash": snapshot.project_graph_hash,
+    }
+    summary = _build_variant_summary(path_mode, plan_result, parameter_hash)
+    overlay_node_ids, overlay_edge_ids = _overlay_ids_from_snapshot(snapshot, plan_result)
+    summary.update({
+        "variant_id": _graph_option_variant_id(graph_option, path_mode, parameter_hash),
+        "preview_kind": "graph_option",
+        "graph_option": graph_option,
+        "option_label": option_label,
+        "option_description": option_description,
+        "status": "available",
+        "blocked_reason": None,
+        "added_node_ids": [],
+        "removed_node_ids": [],
+        "overlay_node_ids": overlay_node_ids,
+        "overlay_edge_ids": overlay_edge_ids,
+        "project_graph_hash": snapshot.project_graph_hash,
+    })
+    summary["audit_summary"].update({
+        "graph_option": graph_option,
+        "option_label": option_label,
+        "project_graph_hash": snapshot.project_graph_hash,
+        "overlay_node_ids": overlay_node_ids,
+        "overlay_edge_ids": overlay_edge_ids,
+    })
+    return summary
+
+
+def _apply_graph_option_diff(variants: list[dict[str, Any]]) -> None:
+    by_option = {variant.get("graph_option"): variant for variant in variants}
+    baseline_ids = set(by_option.get("baseline", {}).get("included_node_ids") or [])
+    enhanced_ids = set(by_option.get("enhanced", {}).get("included_node_ids") or [])
+    added_by_enhanced = sorted(enhanced_ids - baseline_ids)
+    removed_by_enhanced = sorted(baseline_ids - enhanced_ids)
+    if "baseline" in by_option:
+        by_option["baseline"].setdefault("audit_summary", {})["nodes_missing_vs_enhanced"] = added_by_enhanced
+    if "enhanced" in by_option:
+        by_option["enhanced"]["added_node_ids"] = added_by_enhanced
+        by_option["enhanced"]["removed_node_ids"] = removed_by_enhanced
+        by_option["enhanced"].setdefault("audit_summary", {})["nodes_added_vs_baseline"] = added_by_enhanced
+        by_option["enhanced"].setdefault("audit_summary", {})["nodes_removed_vs_baseline"] = removed_by_enhanced
+
+
+def _public_variant(variant: dict[str, Any]) -> dict[str, Any]:
+    response = {
         "variant_id": variant["variant_id"],
         "path_mode": variant["path_mode"],
         "budget_summary": variant.get("budget_summary", {}),
@@ -157,6 +313,22 @@ def _public_variant(variant: dict[str, Any]) -> dict[str, Any]:
         "excluded_node_ids": variant.get("excluded_node_ids", []),
         "audit_summary": variant.get("audit_summary", {}),
     }
+    for key in (
+        "preview_kind",
+        "graph_option",
+        "option_label",
+        "option_description",
+        "status",
+        "blocked_reason",
+        "added_node_ids",
+        "removed_node_ids",
+        "overlay_node_ids",
+        "overlay_edge_ids",
+        "project_graph_hash",
+    ):
+        if key in variant:
+            response[key] = variant[key]
+    return response
 
 
 def _variant_session_response(session: VariantPreviewSession) -> dict[str, Any]:
@@ -304,6 +476,20 @@ def _variant_parameter_hash(project, confirmed_goal_result: dict[str, Any] | Non
     })
 
 
+def _variant_session_path_modes(session: VariantPreviewSession) -> list[str]:
+    history = _load_json_dict(session.decision_history_json)
+    path_modes = history.get("path_modes")
+    if isinstance(path_modes, list):
+        normalized = [mode for mode in path_modes if isinstance(mode, str)]
+        if normalized:
+            return normalized
+    return [
+        variant["path_mode"]
+        for variant in _load_json_list_or_dicts(session.variants_json)
+        if isinstance(variant.get("path_mode"), str)
+    ]
+
+
 def _selected_variant(session: VariantPreviewSession, variant_id: str) -> dict[str, Any]:
     variants = _load_json_list_or_dicts(session.variants_json)
     for variant in variants:
@@ -441,6 +627,106 @@ async def preview_plan_variants(
     return _variant_session_response(session)
 
 
+@router.post(
+    "/projects/{project_id}/plans/graph-options/preview",
+    response_model=VariantPreviewSessionResponse,
+)
+async def preview_graph_options(
+    project_id: str,
+    req: GraphOptionPreviewRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+
+    profile_row = await get_latest_profile(db, project_id)
+    if not profile_row:
+        raise AppError(code=400, message="请先完成画像测评再生成路径")
+
+    path_mode = _validate_path_mode_or_raise(
+        (req.path_mode if req else None) or getattr(project, "path_mode", None)
+    )
+    profile = _profile_to_dict(profile_row)
+    profile_hash = _hash_json(profile)
+    confirmed_goal_result = _build_confirmed_goal_result(project)
+    parameter_hash = _variant_parameter_hash(project, confirmed_goal_result, [path_mode])
+
+    variants: list[dict[str, Any]] = []
+    snapshots = {}
+    for graph_option, include_overlay in (("baseline", False), ("enhanced", True)):
+        snapshot = await build_project_graph_snapshot(
+            db,
+            project_id,
+            domain=project.domain,
+            include_overlay=include_overlay,
+        )
+        snapshots[graph_option] = snapshot
+        option_goal_result = _build_graph_option_goal_result(project, snapshot, confirmed_goal_result)
+        try:
+            plan_result = plan_with_profile(
+                goal_text=project.goal_text,
+                goal_type=project.goal_type,
+                profile=profile,
+                pack=snapshot,
+                removed_node_ids=snapshot.removed_node_ids,
+                removed_edge_ids=snapshot.removed_edge_ids,
+                confirmed_goal_result=deepcopy(option_goal_result) if option_goal_result else None,
+                path_mode=path_mode,
+            )
+        except UnsupportedGoalTypeError:
+            variants.append(_build_unavailable_graph_option(
+                graph_option=graph_option,
+                path_mode=path_mode,
+                parameter_hash=parameter_hash,
+                snapshot=snapshot,
+                blocked_reason="GOAL_DEFAULT_TARGETS_UNAVAILABLE",
+            ))
+            continue
+        if option_goal_result and not plan_result["goal_result"]["target_node_ids"]:
+            variants.append(_build_unavailable_graph_option(
+                graph_option=graph_option,
+                path_mode=path_mode,
+                parameter_hash=parameter_hash,
+                snapshot=snapshot,
+                blocked_reason="GOAL_TARGETS_REMOVED",
+            ))
+            continue
+        variants.append(_build_graph_option_summary(
+            graph_option=graph_option,
+            path_mode=path_mode,
+            plan_result=plan_result,
+            parameter_hash=parameter_hash,
+            snapshot=snapshot,
+        ))
+
+    _apply_graph_option_diff(variants)
+    enhanced_snapshot = snapshots["enhanced"]
+    session = VariantPreviewSession(
+        project_id=project_id,
+        pack_hash=enhanced_snapshot.pack_hash,
+        project_graph_hash=enhanced_snapshot.project_graph_hash,
+        profile_hash=profile_hash,
+        parameter_hash=parameter_hash,
+        variants_json=_canonical_json(variants),
+        status="active",
+        decision_history_json=_canonical_json({
+            "event": "graph_option_preview_created",
+            "preview_kind": "graph_option",
+            "path_modes": [path_mode],
+            "graph_options": ["baseline", "enhanced"],
+            "option_graph_hashes": {
+                "baseline": snapshots["baseline"].project_graph_hash,
+                "enhanced": enhanced_snapshot.project_graph_hash,
+            },
+        }),
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return _variant_session_response(session)
+
+
 @router.post("/projects/{project_id}/plans/variants/{preview_id}/confirm")
 async def confirm_plan_variant(
     project_id: str,
@@ -484,22 +770,32 @@ async def confirm_plan_variant(
     current_parameter_hash = _variant_parameter_hash(
         project,
         confirmed_goal_result,
-        [variant["path_mode"] for variant in _load_json_list_or_dicts(session.variants_json)],
+        _variant_session_path_modes(session),
     )
     if session.parameter_hash != current_parameter_hash:
         raise AppError(code=409, message=error_codes.STALE_VARIANT_PREVIEW, details={"reason_code": "PARAMETER_DRIFT"})
 
     selected = _selected_variant(session, req.variant_id)
+    if selected.get("status") == "unavailable":
+        raise AppError(
+            code=409,
+            message="GRAPH_OPTION_UNAVAILABLE",
+            details={"blocked_reason": selected.get("blocked_reason")},
+        )
     plan_result = selected.get("plan_result")
     if not isinstance(plan_result, dict):
         raise AppError(code=409, message=error_codes.STALE_VARIANT_PREVIEW)
     plan_result = deepcopy(plan_result)
-    plan_result.setdefault("audit", {})["variant"] = {
+    variant_audit = {
         "variant_preview_id": session.variant_preview_id,
         "variant_id": selected["variant_id"],
         "path_mode": selected["path_mode"],
         "parameter_hash": session.parameter_hash,
     }
+    for key in ("preview_kind", "graph_option", "option_label", "project_graph_hash"):
+        if selected.get(key) is not None:
+            variant_audit[key] = selected[key]
+    plan_result.setdefault("audit", {})["variant"] = variant_audit
     await enrich_formal_path_audit(db, project=project, plan_result=plan_result)
 
     version = await get_plan_version_count(db, project_id) + 1

@@ -837,7 +837,61 @@ async def test_goal_resolution_preview_returns_in_domain_uncovered_draft_entry(c
     assert data["result_type"] == "review_extension_draft"
     assert data["coverage_status"] == "in_domain_uncovered"
     assert "随机森林" in data["missing_concepts"]
-    assert "session_id" not in data or data["session_id"] is None
+    assert data["available_actions"][0]["action"] == "create_extension_draft"
+    assert data["available_actions"][0]["enabled"] is True
+    assert data["available_actions"][0]["requires_review"] is True
+    assert data["session_id"]
+
+
+async def test_create_extension_review_project_from_uncovered_goal_preview(client):
+    with patch(
+        "app.services.goal_resolution_service.resolve_goal_candidates",
+        return_value={
+            "auto_detected_goal_type": "concept",
+            "effective_goal_type": "concept",
+            "goal_type_source": "auto",
+            "recommended_candidate_id": None,
+            "candidates": [],
+            "warnings": [],
+        },
+    ):
+        preview_resp = await client.post("/api/v1/goal-resolution/preview", json={"goal_text": "我想学习随机森林"})
+
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    assert preview["result_type"] == "review_extension_draft"
+    assert preview["session_id"]
+
+    create_resp = await client.post(
+        "/api/v1/projects",
+        json={
+            "title": "随机森林扩展计划",
+            "goal_text": "我想学习随机森林",
+            "resolution_session_id": preview["session_id"],
+            "creation_mode": "extension_review",
+        },
+    )
+
+    assert create_resp.status_code == 200
+    project = create_resp.json()
+    assert project["status"] == "extension_review"
+    assert project["goal_text"] == "我想学习随机森林"
+    assert project["goal_resolution"] is None
+
+    draft_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/goal-resolution/extension-drafts",
+        json={"resolution_session_id": preview["session_id"]},
+    )
+
+    assert draft_resp.status_code == 200
+    draft = draft_resp.json()
+    assert draft["goal_trace"]["trace_id"] == preview["session_id"]
+    assert "随机森林" in draft["missing_concepts"]
+    assert draft["gap_analysis"]["missing_concepts"] == ["随机森林"]
+    assert draft["gap_analysis"]["coverage_status"] == "in_domain_uncovered"
+    assert draft["review_notes"]
+    assert draft["draft_metadata"]["requires_user_review"] is True
+    assert draft["draft_metadata"]["can_directly_plan"] is False
 
 
 async def test_project_goal_extension_draft_requires_explicit_creation(client, db_session, project):
@@ -862,6 +916,8 @@ async def test_project_goal_extension_draft_requires_explicit_creation(client, d
     assert preview["result_type"] == "review_extension_draft"
     assert preview["session_id"]
     assert preview["audit_trace"]["trace_id"] == preview["session_id"]
+    assert preview["available_actions"][0]["action"] == "create_extension_draft"
+    assert preview["available_actions"][0]["enabled"] is True
 
     sources_before = (await db_session.execute(select(ProjectOverlaySource))).scalars().all()
     overlay_sessions_before = (await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all()
@@ -880,11 +936,22 @@ async def test_project_goal_extension_draft_requires_explicit_creation(client, d
     assert draft["session"]["session_status"] == "validated"
     assert draft["session"]["provenance"]["origin"] == "goal_extension_draft"
     assert draft["session"]["provenance"]["goal_trace"]["trace_id"] == preview["session_id"]
+    assert draft["session"]["provenance"]["gap_analysis"]["missing_concepts"] == ["随机森林"]
+    assert draft["session"]["provenance"]["draft_metadata"]["can_directly_plan"] is False
+    assert draft["gap_analysis"]["missing_concepts"] == ["随机森林"]
+    assert draft["gap_analysis"]["recommended_review_focus"]
+    assert draft["review_notes"]
+    assert draft["draft_metadata"]["requires_user_review"] is True
+    assert draft["draft_metadata"]["can_directly_plan"] is False
+    assert draft["draft_metadata"]["safety_policy"]["writes_formal_path"] is False
     assert draft["warnings"] == ["goal_extension_draft_requires_review"]
     assert len(draft["sources"]) == 1
     assert draft["sources"][0]["quality_status"] == "goal_extension_draft"
     source_metadata = json.loads(draft["sources"][0]["metadata_json"])
     assert source_metadata["goal_trace"]["trace_id"] == preview["session_id"]
+    assert source_metadata["gap_analysis"]["missing_concepts"] == ["随机森林"]
+    assert source_metadata["review_notes"] == draft["review_notes"]
+    assert source_metadata["draft_metadata"]["requires_user_review"] is True
 
     duplicate_resp = await client.post(
         f"/api/v1/projects/{project['id']}/goal-resolution/extension-drafts",
@@ -893,6 +960,8 @@ async def test_project_goal_extension_draft_requires_explicit_creation(client, d
     assert duplicate_resp.status_code == 200
     duplicate = duplicate_resp.json()
     assert duplicate["session"]["session_id"] == draft["session"]["session_id"]
+    assert duplicate["gap_analysis"] == draft["gap_analysis"]
+    assert duplicate["draft_metadata"] == draft["draft_metadata"]
     assert [source["source_id"] for source in duplicate["sources"]] == [draft["sources"][0]["source_id"]]
     assert len((await db_session.execute(select(ProjectOverlaySource))).scalars().all()) == 1
     assert len((await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all()) == 1
@@ -910,6 +979,7 @@ async def test_project_goal_extension_draft_requires_explicit_creation(client, d
     assert node["planning_enabled"] is True
     assert node["provenance"]["origin"] == "goal_extension_draft"
     assert node["provenance"]["goal_trace"]["trace_id"] == preview["session_id"]
+    assert node["provenance"]["draft_metadata"]["can_directly_plan"] is False
     assert "随机森林" in node["name"]
 
 
@@ -929,7 +999,7 @@ async def test_project_goal_extension_draft_rejects_global_preview_session(clien
 
     assert preview_resp.status_code == 200
     preview = preview_resp.json()
-    assert preview.get("session_id") is None
+    assert preview["session_id"]
 
     draft_resp = await client.post(
         f"/api/v1/projects/{project['id']}/goal-resolution/extension-drafts",
@@ -948,6 +1018,13 @@ async def test_goal_resolution_preview_partial_cannot_be_confirmed_as_full_proje
     assert data["coverage_status"] == "partial"
     assert data["covered_target_node_ids"]
     assert "随机森林" in data["missing_concepts"]
+    assert [action["action"] for action in data["available_actions"]] == [
+        "use_existing_graph",
+        "create_extension_draft",
+        "rewrite_goal",
+    ]
+    assert data["available_actions"][0]["risk_level"] == "low"
+    assert data["available_actions"][1]["requires_review"] is True
 
     confirm_resp = await client.post(
         "/api/v1/projects",

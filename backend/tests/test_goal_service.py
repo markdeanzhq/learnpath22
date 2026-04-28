@@ -412,8 +412,58 @@ def test_resolve_goal_candidates_returns_stable_schema():
     assert isinstance(candidate["source_breakdown"], dict)
     assert isinstance(candidate["score_breakdown"], dict)
     assert isinstance(candidate["warnings"], list)
+    assert candidate["confidence_level"] in {"high", "medium", "low"}
+    assert candidate["recommended_action"] in {"confirm", "review", "clarify", "rewrite", "extension_draft"}
+    assert isinstance(candidate["confidence_reason"], str) and candidate["confidence_reason"]
+    assert isinstance(candidate["user_explanation"], str) and candidate["user_explanation"]
+    assert isinstance(candidate["debug_explanation"], str) and candidate["debug_explanation"]
+    assert isinstance(candidate["match_signals"], list)
+    assert isinstance(candidate["is_recommended"], bool)
     assert 0 <= candidate["score"] <= 1
     assert all(node_id in pack.nodes_by_id for node_id in candidate["target_node_ids"])
+
+
+def test_lexical_only_low_score_candidate_is_not_marked_recommended():
+    pack = get_domain_pack_service(force_reload=True)
+    result = resolve_goal_candidates(
+        goal_text="学习机器学习的数学基础",
+        goal_type_override="domain",
+        templates=[],
+        nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
+        allow_llm=False,
+    )
+
+    candidate = result["candidates"][0]
+    assert candidate["resolve_source"] == "jieba"
+    assert candidate["score"] < 0.30
+    assert candidate["confidence_level"] == "low"
+    assert candidate["recommended_action"] == "clarify"
+    assert candidate["is_recommended"] is False
+    assert "关键词匹配" in candidate["confidence_reason"]
+
+
+
+def test_template_candidate_exposes_user_friendly_confidence_metadata():
+    pack = get_domain_pack_service(force_reload=True)
+    result = resolve_goal_candidates(
+        goal_text="理解梯度下降",
+        goal_type_override=None,
+        templates=pack.goal_templates,
+        nodes_by_id=pack.nodes_by_id,
+        supported_goal_types=pack.contract.supported_goal_types,
+        allow_llm=False,
+    )
+
+    candidate = result["candidates"][0]
+    assert candidate["candidate_id"] == "template:concept_gradient_descent"
+    assert candidate["confidence_level"] == "high"
+    assert candidate["recommended_action"] == "confirm"
+    assert candidate["is_recommended"] is True
+    assert "template=" in candidate["debug_explanation"]
+    assert "系统较可靠" in candidate["user_explanation"]
+    assert any(signal["type"] == "template" for signal in candidate["match_signals"])
+
 
 
 def test_specific_problem_candidate_beats_generic_domain_candidate():

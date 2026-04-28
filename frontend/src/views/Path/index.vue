@@ -27,6 +27,9 @@
             <el-button size="small" type="primary" plain :loading="variantLoading" @click="previewVariants">
               预览路径变体
             </el-button>
+            <el-button size="small" type="success" plain :loading="graphOptionLoading" @click="previewGraphOptions">
+              对比基础/增强图谱
+            </el-button>
           </div>
         </div>
       </template>
@@ -107,6 +110,90 @@
                   @click="confirmSelectedVariant"
                 >
                   应用所选变体为正式路径
+                </el-button>
+              </template>
+            </section>
+
+            <section class="preview-card graph-option-card">
+              <div class="section-header">
+                <div>
+                  <h3>基础 / 增强图谱路径对比</h3>
+                  <p>比较“只按现有基线图谱规划”和“纳入已审核且开启规划的项目扩展图谱规划”，未审核草稿不会进入正式路径。</p>
+                </div>
+                <el-button type="success" :loading="graphOptionLoading" @click="previewGraphOptions">生成图谱方案对比</el-button>
+              </div>
+              <el-alert
+                title="增强方案只消费已校验、已人工确认并开启规划的 overlay；LLM 草稿不能绕过审核直接进入正式路径。"
+                type="warning"
+                :closable="false"
+                show-icon
+              />
+
+              <template v-if="graphOptionPreview">
+                <div class="preview-meta">
+                  <el-tag type="info">状态：{{ graphOptionPreview.status }}</el-tag>
+                  <el-tag type="warning">有效期：{{ formatExpiresAt(graphOptionPreview.expires_at) }}</el-tag>
+                  <el-tag effect="plain">当前 graph：{{ shortHash(graphOptionPreview.project_graph_hash) }}</el-tag>
+                </div>
+                <div class="variant-grid">
+                  <el-card
+                    v-for="variant in graphOptionPreview.variants"
+                    :key="variant.variant_id"
+                    shadow="never"
+                    class="variant-card"
+                    :class="{ selected: selectedGraphOptionVariantId === variant.variant_id, unavailable: variant.status === 'unavailable' }"
+                    @click="selectGraphOptionVariant(variant)"
+                  >
+                    <div class="variant-title-row">
+                      <el-radio-group v-model="selectedGraphOptionVariantId">
+                        <el-radio :value="variant.variant_id" :disabled="variant.status === 'unavailable'">
+                          {{ variant.option_label || graphOptionLabel(variant.graph_option) }}
+                        </el-radio>
+                      </el-radio-group>
+                      <el-tag :type="variant.status === 'unavailable' ? 'warning' : 'success'">
+                        {{ graphOptionStatusLabel(variant.status) }}
+                      </el-tag>
+                    </div>
+                    <p class="option-description">{{ variant.option_description }}</p>
+                    <el-alert
+                      v-if="variant.blocked_reason"
+                      class="preview-alert"
+                      :title="variant.blocked_reason"
+                      type="warning"
+                      :closable="false"
+                      show-icon
+                    />
+                    <div class="preview-meta compact">
+                      <el-tag type="info">包含 {{ variant.included_node_ids.length }} 个节点</el-tag>
+                      <el-tag type="success">增强新增 {{ (variant.added_node_ids || []).length }} 个节点</el-tag>
+                      <el-tag type="warning">移除 {{ (variant.removed_node_ids || []).length }} 个节点</el-tag>
+                      <el-tag effect="plain">overlay {{ (variant.overlay_node_ids || []).length }} 节点 / {{ (variant.overlay_edge_ids || []).length }} 边</el-tag>
+                    </div>
+                    <div v-if="variant.added_node_ids?.length" class="node-id-list">
+                      <span>增强新增：</span>
+                      <el-tag v-for="nodeId in variant.added_node_ids" :key="nodeId" type="success" effect="plain">{{ nodeId }}</el-tag>
+                    </div>
+                    <dl class="summary-list">
+                      <template v-for="item in summaryEntries(variant.budget_summary)" :key="item.key">
+                        <dt>{{ item.key }}</dt>
+                        <dd>{{ item.value }}</dd>
+                      </template>
+                    </dl>
+                    <dl class="summary-list audit-summary">
+                      <template v-for="item in summaryEntries(variant.audit_summary)" :key="item.key">
+                        <dt>{{ item.key }}</dt>
+                        <dd>{{ item.value }}</dd>
+                      </template>
+                    </dl>
+                  </el-card>
+                </div>
+                <el-button
+                  type="success"
+                  :loading="graphOptionConfirming"
+                  :disabled="!canConfirmGraphOption"
+                  @click="confirmGraphOption"
+                >
+                  应用所选图谱方案为正式路径
                 </el-button>
               </template>
             </section>
@@ -383,7 +470,7 @@ import { Guide } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useSettingsStore } from '@/stores/settings'
-import { planApi, type ExplanationAskRequest, type FeedbackPreviewSessionResponse, type ReplanResult, type VariantPreviewSessionResponse } from '@/api/modules/plan'
+import { planApi, type ExplanationAskRequest, type FeedbackPreviewSessionResponse, type VariantPreviewSessionResponse, type VariantSummary } from '@/api/modules/plan'
 import { searchApi, type SearchResultItem } from '@/api/modules/search'
 import { resourceApi, type PlanResourcesResponse, type StageResourceGroup } from '@/api/modules/resource'
 import StageTimeline from './components/StageTimeline.vue'
@@ -422,6 +509,10 @@ const variantPreview = ref<VariantPreviewSessionResponse | null>(null)
 const selectedVariantId = ref('')
 const variantLoading = ref(false)
 const variantConfirming = ref(false)
+const graphOptionPreview = ref<VariantPreviewSessionResponse | null>(null)
+const selectedGraphOptionVariantId = ref('')
+const graphOptionLoading = ref(false)
+const graphOptionConfirming = ref(false)
 const feedbackText = ref('')
 const feedbackPreview = ref<FeedbackPreviewSessionResponse | null>(null)
 const feedbackLoading = ref(false)
@@ -453,8 +544,16 @@ const previewContextMatches = computed(() => (
   previewPlanId.value === currentPlanId.value
 ))
 const selectedVariant = computed(() => variantPreview.value?.variants.find((item) => item.variant_id === selectedVariantId.value) ?? null)
+const selectedGraphOptionVariant = computed(() => graphOptionPreview.value?.variants.find((item) => item.variant_id === selectedGraphOptionVariantId.value) ?? null)
 const canConfirmVariant = computed(() => Boolean(
   variantPreview.value?.status === 'active' && selectedVariant.value && previewContextMatches.value && !previewUnsafeMessage.value,
+))
+const canConfirmGraphOption = computed(() => Boolean(
+  graphOptionPreview.value?.status === 'active'
+  && selectedGraphOptionVariant.value
+  && selectedGraphOptionVariant.value.status !== 'unavailable'
+  && previewContextMatches.value
+  && !previewUnsafeMessage.value,
 ))
 const canConfirmFeedback = computed(() => {
   if (feedbackPreview.value?.status !== 'active' || !previewContextMatches.value || previewUnsafeMessage.value) {
@@ -496,6 +595,8 @@ async function loadPlanResources() {
 function clearPreviews(message = '') {
   variantPreview.value = null
   selectedVariantId.value = ''
+  graphOptionPreview.value = null
+  selectedGraphOptionVariantId.value = ''
   feedbackPreview.value = null
   previewUnsafeMessage.value = message
   previewProjectId.value = ''
@@ -618,6 +719,8 @@ async function previewVariants() {
   previewUnsafeMessage.value = ''
   try {
     variantPreview.value = await planApi.previewVariants(projectId.value)
+    graphOptionPreview.value = null
+    selectedGraphOptionVariantId.value = ''
     feedbackPreview.value = null
     selectedVariantId.value = variantPreview.value.variants[0]?.variant_id || ''
     markPreviewContext()
@@ -633,7 +736,7 @@ async function confirmSelectedVariant() {
   if (variantConfirming.value || !projectId.value || !variantPreview.value || !selectedVariant.value || !canConfirmVariant.value) return
   variantConfirming.value = true
   try {
-    await planApi.confirmVariant(projectId.value, variantPreview.value.variant_preview_id, selectedVariant.value.variant_id) as ReplanResult
+    await planApi.confirmVariant(projectId.value, variantPreview.value.variant_preview_id, selectedVariant.value.variant_id)
     clearPreviews()
     await refreshAfterPlanWrite()
     activeTab.value = 'timeline'
@@ -645,6 +748,58 @@ async function confirmSelectedVariant() {
   }
 }
 
+function selectGraphOptionVariant(variant: VariantSummary) {
+  if (variant.status === 'unavailable') return
+  selectedGraphOptionVariantId.value = variant.variant_id
+}
+
+async function previewGraphOptions() {
+  if (graphOptionLoading.value || !projectId.value || !currentPlanId.value) return
+  graphOptionLoading.value = true
+  previewUnsafeMessage.value = ''
+  try {
+    graphOptionPreview.value = await planApi.previewGraphOptions(projectId.value, planStore.currentPlan?.path_mode)
+    variantPreview.value = null
+    selectedVariantId.value = ''
+    feedbackPreview.value = null
+    selectedGraphOptionVariantId.value = (
+      graphOptionPreview.value.variants.find((item) => item.status !== 'unavailable')?.variant_id || ''
+    )
+    markPreviewContext()
+    activeTab.value = 'previews'
+  } catch (error: any) {
+    handlePreviewError(error, '生成图谱方案对比失败')
+  } finally {
+    graphOptionLoading.value = false
+  }
+}
+
+async function confirmGraphOption() {
+  if (
+    graphOptionConfirming.value
+    || !projectId.value
+    || !graphOptionPreview.value
+    || !selectedGraphOptionVariant.value
+    || !canConfirmGraphOption.value
+  ) return
+  graphOptionConfirming.value = true
+  try {
+    await planApi.confirmVariant(
+      projectId.value,
+      graphOptionPreview.value.variant_preview_id,
+      selectedGraphOptionVariant.value.variant_id,
+    )
+    clearPreviews()
+    await refreshAfterPlanWrite()
+    activeTab.value = 'timeline'
+    ElMessage.success('图谱方案已保存为新的正式路径版本')
+  } catch (error: any) {
+    handlePreviewError(error, '应用图谱方案失败')
+  } finally {
+    graphOptionConfirming.value = false
+  }
+}
+
 async function previewFeedback() {
   if (feedbackLoading.value || !projectId.value || !currentPlanId.value || !feedbackText.value.trim()) return
   feedbackLoading.value = true
@@ -653,6 +808,8 @@ async function previewFeedback() {
     feedbackPreview.value = await planApi.previewFeedback(projectId.value, feedbackText.value.trim())
     variantPreview.value = null
     selectedVariantId.value = ''
+    graphOptionPreview.value = null
+    selectedGraphOptionVariantId.value = ''
     markPreviewContext()
     activeTab.value = 'previews'
   } catch (error: any) {
@@ -795,6 +952,17 @@ function pathModeLabel(pathMode: string) {
   return map[pathMode] || pathMode
 }
 
+function graphOptionLabel(option?: string | null) {
+  if (option === 'baseline') return '基础图谱路径'
+  if (option === 'enhanced') return '增强图谱路径'
+  return option || '图谱方案'
+}
+
+function graphOptionStatusLabel(status?: string) {
+  if (status === 'unavailable') return '暂不可用'
+  return '可应用'
+}
+
 function feedbackIntentLabel(intent: string) {
   const map: Record<string, string> = {
     compress_time: '压缩时间',
@@ -908,6 +1076,25 @@ function summaryEntries(record: Record<string, unknown> | undefined) {
 .variant-card.selected {
   border-color: var(--el-color-primary);
   box-shadow: 0 0 0 1px var(--el-color-primary-light-5);
+}
+.variant-card.unavailable {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+.option-description {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.node-id-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 .variant-title-row,
 .feedback-input-row {

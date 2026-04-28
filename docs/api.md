@@ -107,14 +107,16 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 
 `GoalFrame.target_node_ids` 只是候选提示；正式规划目标只能来自用户确认的候选或显式接受的 partial covered targets。GoalFrame 只能影响受控 planner 参数：`path_mode`、理论/实践权重、时间预算提示与解释关注点，不能覆盖 `confirmed_target_node_ids`，也不能删除硬 `REQUIRES` 前置依赖。
 
+候选对象同时返回调试字段与用户字段：`explanation` / `debug_explanation` 保留打分细节；`confidence_level`、`confidence_reason`、`user_explanation`、`match_signals[]`、`recommended_action`、`is_recommended` 用于前端判断是否强推荐、谨慎确认或建议澄清。低置信候选不应在前端被包装为强推荐。
+
 **Coverage discriminated union:**
 
 | `result_type` | `coverage_status` | 关键字段 | 合法下一步 |
 |---|---|---|---|
 | `select_candidate` | `covered` / `adjacent_domain` | `session_id`、`expires_at`、`recommended_candidate_id`、`candidates[]` | 选择候选后创建项目或更新项目目标 |
-| `confirm_partial` | `partial` | `session_id`、`covered_target_node_ids[]`、`missing_concepts[]`、`candidates[]` | 勾选 partial acceptance 后只规划 covered targets |
+| `confirm_partial` | `partial` | `session_id`、`covered_target_node_ids[]`、`missing_concepts[]`、`candidates[]`、`available_actions[]` | 勾选 partial acceptance 后只规划 covered targets，或选择生成扩展草稿 |
 | `answer_clarification` | `ambiguous` / `cross_domain` | `clarification_session_id`、`turn_count`、`max_turns`、`questions[]` | 调用 clarification answer 端点，直到 resolved 后获得新的 coverage response |
-| `review_extension_draft` | `in_domain_uncovered` | `missing_concepts[]`、`draft_entry`、可选 `session_id` | 用户显式请求创建项目级 overlay 草稿 |
+| `review_extension_draft` | `in_domain_uncovered` | `missing_concepts[]`、`draft_entry`、`available_actions[]`、可选 `session_id` | 创建待扩展项目后，用户显式请求创建项目级 overlay 草稿 |
 | `boundary_reject` | `out_of_domain` / `adjacent_domain` | `reason_code`、`reason_text`、`rewrite_suggestions[]` | 展示边界说明，不调用 planner，不写正式路径 |
 
 **候选选择响应示例:**
@@ -142,7 +144,17 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
       "source_breakdown": {"template": 1.0, "lexical": 0.0, "llm": 0.0},
       "score": 0.86,
       "score_breakdown": {"final_score": 0.86},
-      "explanation": "推荐学习完整机器学习主干。",
+      "explanation": "template 候选，template=0.90 lexical=0.40 llm=0.00 specificity=0.60 penalty=0.00",
+      "confidence_level": "high",
+      "confidence_reason": "命中预设目标模板，并通过当前知识图谱节点校验。",
+      "user_explanation": "系统较可靠地将你的目标映射到机器学习主干，确认后可用于生成正式学习路径。",
+      "debug_explanation": "template 候选，template=0.90 lexical=0.40 llm=0.00 specificity=0.60 penalty=0.00",
+      "match_signals": [
+        {"type": "template", "label": "目标模板", "strength": "strong", "detail": "命中预设学习目标模板。"},
+        {"type": "graph", "label": "知识图谱校验", "strength": "medium", "detail": "候选知识点均来自当前已审核的机器学习基础图谱。"}
+      ],
+      "recommended_action": "confirm",
+      "is_recommended": true,
       "warnings": []
     }
   ],
@@ -160,9 +172,30 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
   "covered_target_node_ids": ["ml_c09"],
   "missing_concepts": ["深度学习"],
   "goal_frame": {"schema_version": "v1", "raw_text": "我想学习机器学习和深度学习"},
+  "available_actions": [
+    {
+      "action": "use_existing_graph",
+      "label": "按已有图谱生成路径",
+      "description": "只使用当前已覆盖的机器学习基础内容，缺失概念会写入审计记录。",
+      "risk_level": "low",
+      "requires_review": false,
+      "enabled": true
+    },
+    {
+      "action": "create_extension_draft",
+      "label": "生成扩展草稿并审核",
+      "description": "由 LLM/规则辅助补充缺失概念草稿，用户审核后才可用于增强路径。",
+      "risk_level": "medium",
+      "requires_review": true,
+      "enabled": false,
+      "disabled_reason": "当前还没有项目上下文，请先创建待扩展项目或在已有项目中重新确认目标。"
+    }
+  ],
   "candidates": []
 }
 ```
+
+`available_actions[]` 用于前端展示下一步选择：`use_existing_graph` 表示保守使用当前图谱；`create_extension_draft` 表示生成需审核的项目级扩展草稿；`rewrite_goal` 表示建议用户改写目标后重新解析。禁用动作只作说明，不应触发写入。
 
 **澄清回答请求体:**
 ```json
@@ -186,13 +219,26 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
   "goal_text": "我想系统学习机器学习基础",
   "resolution_session_id": "<resolution_session_id>",
   "selected_candidate_id": "template:domain_ml_full",
+  "creation_mode": "confirmed",
   "accept_partial": false
 }
 ```
 
+如用户选择先审核扩展草稿，可用 `review_extension_draft` 返回的 `session_id` 创建待扩展项目：
+
+```json
+{
+  "title": "深度学习入门计划",
+  "goal_text": "我想学习深度学习入门",
+  "resolution_session_id": "<draft_resolution_session_id>",
+  "creation_mode": "extension_review"
+}
+```
+
 说明：
-- 创建或 reconfirm 时必须复用 preview 返回的 `resolution_session_id` 与候选 ID
+- 创建或 reconfirm 时必须复用 preview 返回的 `resolution_session_id` 与候选 ID；`extension_review` 模式不需要 `selected_candidate_id`
 - `confirm_partial` 分支必须提交 `accept_partial=true`，正式 audit 会记录 `partial_accepted` 与 `missing_concepts`
+- `extension_review` 只创建待扩展项目并绑定目标解析 session，不会生成正式路径；后续必须进入项目级 overlay 草稿审核
 - 后端会校验目标文本 hash、domain、`pack_hash`、`project_graph_hash`、候选归属与会话状态
 - `goal_type` 与 `domain` 仅保留兼容语义，不是公共创建流程的事实源
 
@@ -215,7 +261,50 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 }
 ```
 
-该端点只为 `coverage_status=in_domain_uncovered` 的已保存目标解析会话创建项目级 overlay source/session/candidate 草稿；打开 Knowledge 深链本身不会创建草稿、不会改变 review/planning 状态，也不会写入 Domain Pack。
+该端点只为 `coverage_status=in_domain_uncovered` 的已保存目标解析会话创建项目级 overlay source/session/candidate 草稿；打开 Knowledge 深链本身不会创建草稿、不会改变 review/planning 状态，也不会写入 Domain Pack。响应在通用 overlay extraction session 结构外额外返回：
+
+```json
+{
+  "goal_trace": {
+    "trace_type": "goal_resolution",
+    "trace_id": "<resolution_session_id>",
+    "pack_hash": "<pack_hash>",
+    "project_graph_hash": "<project_graph_hash>"
+  },
+  "missing_concepts": ["随机森林"],
+  "gap_analysis": {
+    "schema_version": "v1",
+    "draft_origin": "rules_goal_extension",
+    "user_goal": "我想学习随机森林",
+    "coverage_status": "in_domain_uncovered",
+    "target_concepts": ["随机森林"],
+    "covered_by_current_graph": {
+      "target_node_ids": [],
+      "target_node_names": []
+    },
+    "missing_concepts": ["随机森林"],
+    "why_current_graph_is_insufficient": "当前机器学习基础图谱尚未覆盖“随机森林”，不能直接把该目标映射为正式路径节点。",
+    "recommended_review_focus": ["确认新增概念是否确实属于本次学习目标，而不是相邻或过大的主题。"]
+  },
+  "review_notes": ["请先审核“随机森林”这些扩展概念；未确认前它们只保留在项目级草稿区。"],
+  "draft_metadata": {
+    "draft_origin": "rules_goal_extension",
+    "draft_engine": "rules",
+    "prompt_version": "goal-extension-draft-v1",
+    "model": null,
+    "requires_user_review": true,
+    "can_directly_plan": false,
+    "requires_planning_enabled": true,
+    "safety_policy": {
+      "writes_formal_graph": false,
+      "writes_formal_path": false,
+      "formal_path_source": "graph_algorithm_after_user_review"
+    }
+  }
+}
+```
+
+`gap_analysis` / `review_notes` / `draft_metadata` 会写入 overlay source metadata 与 extraction session provenance，便于审计；`extraction_payload` 仍只包含 nodes / edges / resources / warnings，保证草稿候选继续走既有 overlay 校验管线。
 
 **目标理解相关错误码:**
 
@@ -270,7 +359,8 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 | GET | /projects/{id}/plans/latest | 获取最新路径 |
 | POST | /projects/{id}/replans | 触发传统进度/画像重规划 |
 | POST | /projects/{id}/plans/variants/preview | 生成路径变体 TTL 预览，不写正式路径 |
-| POST | /projects/{id}/plans/variants/{preview_id}/confirm | 确认一个变体并保存为正式最新路径版本 |
+| POST | /projects/{id}/plans/graph-options/preview | 生成基础/增强图谱路径方案 TTL 对比预览，不写正式路径 |
+| POST | /projects/{id}/plans/variants/{preview_id}/confirm | 确认一个变体或图谱方案并保存为正式最新路径版本 |
 | POST | /projects/{id}/replans/feedback/preview | 解析自然语言反馈并返回 replan 预览，不写正式路径 |
 | POST | /projects/{id}/replans/feedback/known-node-drafts/{draft_id}/confirm | 确认 `mark_known_nodes` 候选草稿 |
 | POST | /projects/{id}/replans/feedback/{feedback_preview_id}/confirm | 确认反馈预览并保存正式路径版本 |
@@ -391,6 +481,63 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 }
 ```
 
+### 基础/增强图谱方案 preview/confirm
+
+**图谱方案预览请求体:**
+```json
+{
+  "path_mode": "standard"
+}
+```
+
+`path_mode` 可省略；省略时使用项目当前 `path_mode` 或默认 `standard`。该端点复用 `VariantPreviewSession`，但 `variants[]` 固定表达两种 graph option：
+- `baseline`：只使用领域基线图谱与项目级移除状态，不纳入项目 overlay。
+- `enhanced`：纳入已校验、人工确认且 `planning_enabled=true` 的项目 overlay 节点/边。
+
+未审核、校验失败、关闭规划或归档 session 的 overlay 不会进入增强方案；LLM/规则生成的扩展草稿只有通过 overlay 审核管线后，才可能出现在 `enhanced`。
+
+**图谱方案预览响应片段:**
+```json
+{
+  "variant_preview_id": "<variant_preview_id>",
+  "status": "active",
+  "project_graph_hash": "<enhanced_project_graph_hash>",
+  "variants": [
+    {
+      "variant_id": "baseline:standard:<parameter_hash>",
+      "preview_kind": "graph_option",
+      "graph_option": "baseline",
+      "option_label": "基础图谱路径",
+      "status": "available",
+      "included_node_ids": ["ml_a01"],
+      "added_node_ids": [],
+      "overlay_node_ids": [],
+      "project_graph_hash": "<baseline_project_graph_hash>",
+      "audit_summary": {
+        "nodes_missing_vs_enhanced": ["po:<project_id>:n:<node>"]
+      }
+    },
+    {
+      "variant_id": "enhanced:standard:<parameter_hash>",
+      "preview_kind": "graph_option",
+      "graph_option": "enhanced",
+      "option_label": "增强图谱路径",
+      "status": "available",
+      "included_node_ids": ["ml_a01", "po:<project_id>:n:<node>"],
+      "added_node_ids": ["po:<project_id>:n:<node>"],
+      "overlay_node_ids": ["po:<project_id>:n:<node>"],
+      "project_graph_hash": "<enhanced_project_graph_hash>",
+      "audit_summary": {
+        "nodes_added_vs_baseline": ["po:<project_id>:n:<node>"],
+        "graph_option": "enhanced"
+      }
+    }
+  ]
+}
+```
+
+若某一方案无法形成可规划目标，单个 variant 返回 `status="unavailable"` 与 `blocked_reason`，不会中断另一方案的预览。确认仍调用 `/projects/{id}/plans/variants/{preview_id}/confirm`；确认时会重新校验当前增强图谱 hash、画像 hash、参数 hash，并在正式 audit 中记录 `variant.preview_kind="graph_option"` 与 `graph_option` 来源。
+
 **确认变体请求体:**
 ```json
 {
@@ -398,7 +545,7 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 }
 ```
 
-确认时后端校验 preview 状态、TTL、项目归属、`pack_hash`、`project_graph_hash`、`profile_hash` 与 `parameter_hash`。同一个有效确认只写入一个正式 `LearningPath` 版本；过期、漂移、已确认或跨项目 preview 会返回 `4xx`，不保存路径。
+确认时后端校验 preview 状态、TTL、项目归属、`pack_hash`、`project_graph_hash`、`profile_hash` 与 `parameter_hash`。同一个有效确认只写入一个正式 `LearningPath` 版本；过期、漂移、已确认或跨项目 preview 会返回 `4xx`，不保存路径。`status="unavailable"` 的图谱方案不可确认。
 
 ### 自然语言 feedback replan preview/confirm
 

@@ -252,6 +252,7 @@ async def build_project_graph_snapshot(
     *,
     domain: str | None = None,
     baseline_pack: DomainPackService | None = None,
+    include_overlay: bool = True,
 ) -> ProjectGraphSnapshot:
     if baseline_pack is None:
         if domain is None:
@@ -261,8 +262,8 @@ async def build_project_graph_snapshot(
 
     removed_node_ids = await get_removed_node_ids(db, project_id)
     removed_edge_ids = await get_removed_edge_ids(db, project_id)
-    overlay_nodes = await list_planner_visible_nodes(db, project_id)
-    overlay_edges = await list_planner_visible_edges(db, project_id)
+    overlay_nodes = await list_planner_visible_nodes(db, project_id) if include_overlay else []
+    overlay_edges = await list_planner_visible_edges(db, project_id) if include_overlay else []
 
     nodes_by_id = {
         node_id: _copy_pack_node(node)

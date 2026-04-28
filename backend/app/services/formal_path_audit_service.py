@@ -241,6 +241,15 @@ def _authority_labels(audit: dict[str, Any], llm_status: dict[str, Any], overlay
             "source": "audit.variant",
             "active": True,
         })
+    graph_option = audit.get("graph_option")
+    if isinstance(graph_option, dict):
+        labels.append({
+            "kind": "graph_option_preview",
+            "label": graph_option.get("option_label") or "图谱方案确认",
+            "description": "用户在基础图谱与已审核扩展图谱之间选择后，正式路径仍由图算法生成。",
+            "source": "audit.graph_option",
+            "active": True,
+        })
     if audit.get("feedback"):
         labels.append({
             "kind": "feedback_preview",
@@ -281,6 +290,8 @@ def _decision_chain(audit: dict[str, Any]) -> list[dict[str, str]]:
         chain.insert(3, {"step": "overlay_lineage", "source": "audit.overlay_draft_lineage"})
     if audit.get("variant"):
         chain.append({"step": "variant_confirm", "source": "audit.variant"})
+    if audit.get("graph_option"):
+        chain.append({"step": "graph_option_confirm", "source": "audit.graph_option"})
     if audit.get("feedback"):
         chain.append({"step": "feedback_confirm", "source": "audit.feedback"})
     return chain

@@ -409,6 +409,37 @@ describe('Knowledge overlay entry', () => {
       goalDraft: '1',
       resolutionSessionId: 'resolution-001',
     }
+    graphCreateGoalExtensionDraftMock.mockResolvedValue({
+      session: {
+        session_id: 'sess-001',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-001'],
+        warnings: ['goal_extension_draft_requires_review'],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [],
+      edges: [],
+      resources: [],
+      warnings: ['goal_extension_draft_requires_review'],
+      missing_concepts: ['随机森林'],
+      gap_analysis: {
+        user_goal: '我想学习随机森林',
+        missing_concepts: ['随机森林'],
+        why_current_graph_is_insufficient: '当前机器学习基础图谱尚未覆盖“随机森林”，不能直接把该目标映射为正式路径节点。',
+        recommended_review_focus: ['确认新增概念是否确实属于本次学习目标。'],
+      },
+      review_notes: ['正式路径仍由图算法基于已审核图谱生成。'],
+      draft_metadata: {
+        draft_engine: 'rules',
+        prompt_version: 'goal-extension-draft-v1',
+        requires_user_review: true,
+        can_directly_plan: false,
+      },
+    })
 
     const wrapper = mountKnowledge()
     await flushPromises()
@@ -429,6 +460,11 @@ describe('Knowledge overlay entry', () => {
         sessionId: 'sess-001',
       },
     })
+    expect(wrapper.text()).toContain('目标缺口分析')
+    expect(wrapper.text()).toContain('随机森林')
+    expect(wrapper.text()).toContain('当前机器学习基础图谱尚未覆盖')
+    expect(wrapper.text()).toContain('rules / goal-extension-draft-v1')
+    expect(wrapper.text()).toContain('需人工审核：是；可直接规划：否')
   })
 
   it('keeps project graph usable when custom extension readiness is blocked', async () => {

@@ -247,6 +247,40 @@
             <el-descriptions-item label="来源数">{{ lastOverlaySession.sources?.length || 0 }}</el-descriptions-item>
           </el-descriptions>
 
+          <section v-if="goalExtensionDraftDetails" class="overlay-subsection goal-draft-summary">
+            <h4>目标缺口分析</h4>
+            <el-alert
+              class="overlay-alert"
+              type="warning"
+              :closable="false"
+              show-icon
+              title="扩展草稿只作为审核候选；未确认审核并开启规划前，不会进入正式路径。"
+            />
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item v-if="goalExtensionDraftDetails.gap_analysis?.user_goal" label="用户目标">
+                {{ goalExtensionDraftDetails.gap_analysis.user_goal }}
+              </el-descriptions-item>
+              <el-descriptions-item label="缺失概念">
+                {{ goalDraftMissingConcepts.join('、') || '暂无' }}
+              </el-descriptions-item>
+              <el-descriptions-item v-if="goalExtensionDraftDetails.gap_analysis?.why_current_graph_is_insufficient" label="缺口原因">
+                {{ goalExtensionDraftDetails.gap_analysis.why_current_graph_is_insufficient }}
+              </el-descriptions-item>
+              <el-descriptions-item label="草稿来源">
+                {{ goalExtensionDraftDetails.draft_metadata?.draft_engine || 'rules' }} / {{ goalExtensionDraftDetails.draft_metadata?.prompt_version || 'unknown' }}
+              </el-descriptions-item>
+              <el-descriptions-item label="安全边界">
+                需人工审核：{{ goalExtensionDraftDetails.draft_metadata?.requires_user_review ? '是' : '否' }}；可直接规划：{{ goalExtensionDraftDetails.draft_metadata?.can_directly_plan ? '是' : '否' }}
+              </el-descriptions-item>
+            </el-descriptions>
+            <ul v-if="goalDraftReviewNotes.length" class="review-notes">
+              <li v-for="note in goalDraftReviewNotes" :key="note">{{ note }}</li>
+            </ul>
+            <div v-if="goalDraftReviewFocus.length" class="review-focus-list">
+              <el-tag v-for="item in goalDraftReviewFocus" :key="item" type="info" effect="plain">{{ item }}</el-tag>
+            </div>
+          </section>
+
           <section v-if="lastOverlaySession.resources?.length" class="overlay-subsection">
             <h4>资源候选</h4>
             <article v-for="resource in lastOverlaySession.resources || []" :key="resource.resource_id" class="resource-candidate">
@@ -393,6 +427,7 @@ type GraphState = 'loading' | 'ready' | 'empty' | 'error'
 type GraphLayout = 'cose' | 'breadthfirst'
 type OverlaySourceType = 'pasted_text' | 'search_url' | 'saved_search'
 type OverlayExtractionMode = 'default' | 'custom_extension'
+type OverlaySessionView = OverlayExtractionSessionResponse & Partial<GoalExtensionDraftResponse>
 
 type SelectedAdjacentEdge = GraphEdgeData & {
   direction: 'incoming' | 'outgoing'
@@ -469,7 +504,7 @@ const overlayError = ref('')
 const overlayBridgeMessage = ref('')
 const overlayForm = ref(createOverlayForm())
 const persistedSearchResults = ref<PersistedSearchResult[]>([])
-const lastOverlaySession = ref<OverlayExtractionSessionResponse | null>(null)
+const lastOverlaySession = ref<OverlaySessionView | null>(null)
 const promotionPreview = ref<any | null>(null)
 const promotionResult = ref<any | null>(null)
 const promotionSecret = ref('')
@@ -505,6 +540,20 @@ const resourceTargetOptions = computed(() => nodes.value.map((node) => ({
   id: node.id,
   label: node.label || node.id,
 })))
+const goalExtensionDraftDetails = computed(() => {
+  const session = lastOverlaySession.value
+  if (!session?.gap_analysis && !session?.review_notes?.length && !session?.draft_metadata) {
+    return null
+  }
+  return session
+})
+const goalDraftMissingConcepts = computed(() => (
+  goalExtensionDraftDetails.value?.gap_analysis?.missing_concepts
+  || goalExtensionDraftDetails.value?.missing_concepts
+  || []
+))
+const goalDraftReviewNotes = computed(() => goalExtensionDraftDetails.value?.review_notes || [])
+const goalDraftReviewFocus = computed(() => goalExtensionDraftDetails.value?.gap_analysis?.recommended_review_focus || [])
 const graphQuery = computed(() => buildGraphQuery({
   scope: scope.value,
   path_id: requestedPathId.value,
@@ -1287,6 +1336,25 @@ function toggleFullscreen() {
   margin: 0 0 8px;
   font-size: 14px;
   color: #303133;
+}
+.goal-draft-summary {
+  padding: 12px;
+  border: 1px solid #f3d19e;
+  border-radius: 10px;
+  background: #fdf6ec;
+}
+.review-notes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.review-focus-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
 .resource-candidate {
   padding: 10px;

@@ -218,9 +218,40 @@ export interface CreateOverlayExtractionSessionRequest {
   extraction_payload?: unknown
 }
 
+export interface GoalExtensionGapAnalysis {
+  schema_version?: string
+  draft_origin?: string
+  user_goal?: string
+  coverage_status?: string
+  target_concepts?: string[]
+  covered_by_current_graph?: {
+    target_node_ids?: string[]
+    target_node_names?: string[]
+  }
+  missing_concepts?: string[]
+  why_current_graph_is_insufficient?: string
+  recommended_review_focus?: string[]
+}
+
+export interface GoalExtensionDraftMetadata {
+  schema_version?: string
+  draft_origin?: string
+  draft_engine?: string
+  prompt_version?: string
+  model?: string | null
+  resolution_session_id?: string
+  requires_user_review?: boolean
+  can_directly_plan?: boolean
+  requires_planning_enabled?: boolean
+  safety_policy?: Record<string, unknown>
+}
+
 export interface GoalExtensionDraftResponse extends OverlayExtractionSessionResponse {
   goal_trace?: Record<string, unknown>
   missing_concepts?: string[]
+  gap_analysis?: GoalExtensionGapAnalysis
+  review_notes?: string[]
+  draft_metadata?: GoalExtensionDraftMetadata
 }
 
 export interface OverlayStatusResponse {

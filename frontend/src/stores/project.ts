@@ -52,6 +52,7 @@ function sanitizeProject(input: unknown): Project | null {
     goal_type: typeof raw.goal_type === 'string' ? raw.goal_type : '',
     domain: typeof raw.domain === 'string' ? raw.domain : '',
     status: typeof raw.status === 'string' ? raw.status : '',
+    path_mode: typeof raw.path_mode === 'string' ? raw.path_mode : undefined,
     created_at: typeof raw.created_at === 'string' ? raw.created_at : '',
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : '',
     goal_resolution: sanitizeGoalResolution(raw.goal_resolution),

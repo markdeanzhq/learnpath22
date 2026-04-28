@@ -19,6 +19,30 @@ export interface GoalResolutionNodeRef {
   node_name: string
 }
 
+export type CandidateConfidenceLevel = 'high' | 'medium' | 'low'
+export type CandidateMatchSignalType = 'template' | 'lexical' | 'llm' | 'graph'
+export type CandidateMatchSignalStrength = 'strong' | 'medium' | 'weak'
+export type CandidateRecommendedAction = 'confirm' | 'review' | 'clarify' | 'rewrite' | 'extension_draft'
+export type GoalCoverageActionType = 'use_existing_graph' | 'create_extension_draft' | 'rewrite_goal'
+export type GoalCoverageActionRiskLevel = 'low' | 'medium' | 'high'
+
+export interface GoalCoverageAction {
+  action: GoalCoverageActionType
+  label: string
+  description: string
+  risk_level: GoalCoverageActionRiskLevel
+  requires_review: boolean
+  enabled: boolean
+  disabled_reason?: string | null
+}
+
+export interface CandidateMatchSignal {
+  type: CandidateMatchSignalType
+  label: string
+  strength: CandidateMatchSignalStrength
+  detail: string
+}
+
 export interface GoalResolutionCandidate {
   candidate_id: string
   goal_type: GoalType
@@ -33,6 +57,13 @@ export interface GoalResolutionCandidate {
   score: number
   score_breakdown: Record<string, unknown>
   explanation: string
+  confidence_level?: CandidateConfidenceLevel
+  confidence_reason?: string
+  user_explanation?: string
+  debug_explanation?: string
+  match_signals?: CandidateMatchSignal[]
+  recommended_action?: CandidateRecommendedAction
+  is_recommended?: boolean
   warnings: string[]
 }
 
@@ -128,6 +159,7 @@ export interface ConfirmPartialCoverageResponse extends CoverageResponseBase {
   covered_target_node_ids: string[]
   missing_concepts: string[]
   candidates: GoalResolutionCandidate[]
+  available_actions?: GoalCoverageAction[]
 }
 
 export interface ClarificationQuestionOption {
@@ -159,6 +191,7 @@ export interface ReviewExtensionDraftCoverageResponse extends CoverageResponseBa
   coverage_status: 'in_domain_uncovered'
   missing_concepts: string[]
   draft_entry: Record<string, unknown>
+  available_actions?: GoalCoverageAction[]
   session_id?: string | null
   expires_at?: string | null
 }
@@ -203,7 +236,8 @@ export interface CreateProjectDto {
   title: string
   goal_text: string
   resolution_session_id: string
-  selected_candidate_id: string
+  selected_candidate_id?: string
+  creation_mode?: 'confirmed' | 'extension_review'
   goal_type?: GoalType
   accept_partial?: boolean
   path_mode?: PathMode

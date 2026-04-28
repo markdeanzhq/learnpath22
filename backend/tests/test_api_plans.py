@@ -10,6 +10,56 @@ from app.models.sqlite_models import GoalResolutionSession, LearnerProfile, Lear
 from app.services.domain_pack_service import get_domain_pack_service
 
 
+async def _create_overlay_target(client, project_id: str, *, name: str, confirm_review: bool = True) -> dict:
+    source_resp = await client.post(
+        f"/api/v1/projects/{project_id}/graph/overlay/sources",
+        json={"source_type": "pasted_text", "raw_text": f"{name} 是一个可规划的机器学习补充知识点。"},
+    )
+    assert source_resp.status_code == 200
+    source = source_resp.json()
+
+    extraction_resp = await client.post(
+        f"/api/v1/projects/{project_id}/graph/overlay/extraction-sessions",
+        json={
+            "source_ids": [source["source_id"]],
+            "extraction_payload": {
+                "nodes": [
+                    {
+                        "name": name,
+                        "group": "concept",
+                        "category": "foundation",
+                        "summary": f"{name} 的摘要",
+                        "difficulty_final": 1,
+                        "importance_final": 5,
+                        "estimated_hours": 2,
+                        "req_math": 1,
+                        "req_coding": 1,
+                        "req_ml": 1,
+                        "theory_weight": 0.5,
+                        "practice_weight": 0.5,
+                        "confidence": 0.9,
+                        "legality_rationale": f"{name} 字段完整，可作为补充节点",
+                        "evidence_spans": [{"source_id": source["source_id"], "text": name}],
+                    }
+                ],
+                "edges": [],
+                "resources": [],
+                "warnings": [],
+            },
+        },
+    )
+    assert extraction_resp.status_code == 200
+    node = extraction_resp.json()["nodes"][0]
+
+    if confirm_review:
+        review_resp = await client.patch(
+            f"/api/v1/projects/{project_id}/graph/overlay/nodes/{node['node_id']}/review",
+            json={"review_status": "confirmed"},
+        )
+        assert review_resp.status_code == 200
+    return node
+
+
 async def test_generate_plan(client, project, profile):
     resp = await client.post(f"/api/v1/projects/{project['id']}/plans")
     assert resp.status_code == 200
@@ -129,6 +179,183 @@ async def test_variant_preview_rejects_invalid_path_mode(client, project, profil
 
     assert resp.status_code == 422
     assert resp.json()["error"] == "INVALID_PATH_MODE"
+
+
+async def test_graph_option_preview_compares_baseline_and_enhanced_overlay(client, db_session, project, profile):
+    overlay_node = await _create_overlay_target(client, project["id"], name="路径对比 Overlay 目标")
+    project_row = await db_session.get(LearningProject, project["id"])
+    assert project_row is not None
+    baseline_target_ids = json.loads(project_row.confirmed_target_node_ids_json)
+    project_row.goal_text = "路径对比 Overlay 目标"
+    project_row.goal_type = "concept"
+    project_row.confirmed_target_node_ids_json = json.dumps([baseline_target_ids[0]], ensure_ascii=False)
+    await db_session.commit()
+
+    before_paths = (
+        await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
+    ).scalars().all()
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/graph-options/preview",
+        json={"path_mode": "standard"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "active"
+    assert data["project_graph_hash"]
+    variants = {variant["graph_option"]: variant for variant in data["variants"]}
+    baseline = variants["baseline"]
+    enhanced = variants["enhanced"]
+    assert baseline["preview_kind"] == "graph_option"
+    assert baseline["status"] == "available"
+    assert enhanced["status"] == "available"
+    assert overlay_node["node_id"] not in baseline["included_node_ids"]
+    assert overlay_node["node_id"] in enhanced["included_node_ids"]
+    assert overlay_node["node_id"] in enhanced["added_node_ids"]
+    assert overlay_node["node_id"] in enhanced["overlay_node_ids"]
+    assert overlay_node["node_id"] in enhanced["audit_summary"]["nodes_added_vs_baseline"]
+    assert baseline["project_graph_hash"] != enhanced["project_graph_hash"]
+
+    after_paths = (
+        await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
+    ).scalars().all()
+    assert len(after_paths) == len(before_paths)
+
+
+async def test_graph_option_preview_ignores_unreviewed_overlay(client, db_session, project, profile):
+    pending_node = await _create_overlay_target(
+        client,
+        project["id"],
+        name="未审核路径对比 Overlay 目标",
+        confirm_review=False,
+    )
+    project_row = await db_session.get(LearningProject, project["id"])
+    assert project_row is not None
+    baseline_target_ids = json.loads(project_row.confirmed_target_node_ids_json)
+    project_row.goal_text = "未审核路径对比 Overlay 目标"
+    project_row.goal_type = "concept"
+    project_row.confirmed_target_node_ids_json = json.dumps([baseline_target_ids[0]], ensure_ascii=False)
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/graph-options/preview",
+        json={"path_mode": "standard"},
+    )
+
+    assert resp.status_code == 200
+    variants = {variant["graph_option"]: variant for variant in resp.json()["variants"]}
+    enhanced = variants["enhanced"]
+    assert pending_node["node_id"] not in enhanced["included_node_ids"]
+    assert pending_node["node_id"] not in enhanced["overlay_node_ids"]
+    assert enhanced["added_node_ids"] == []
+
+
+async def test_graph_option_confirm_rejects_unavailable_option(client, db_session, project, profile):
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/graph-options/preview",
+        json={"path_mode": "standard"},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    baseline_variant_id = next(
+        variant["variant_id"]
+        for variant in preview["variants"]
+        if variant["graph_option"] == "baseline"
+    )
+    session = await db_session.get(VariantPreviewSession, preview["variant_preview_id"])
+    assert session is not None
+    variants = json.loads(session.variants_json)
+    for variant in variants:
+        if variant["variant_id"] == baseline_variant_id:
+            variant["status"] = "unavailable"
+            variant["blocked_reason"] = "GOAL_TARGETS_REMOVED"
+            variant.pop("plan_result", None)
+    session.variants_json = json.dumps(variants, ensure_ascii=False, sort_keys=True)
+    await db_session.commit()
+
+    confirm_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": baseline_variant_id},
+    )
+
+    assert confirm_resp.status_code == 409
+    assert confirm_resp.json()["error"] == "GRAPH_OPTION_UNAVAILABLE"
+    assert confirm_resp.json()["blocked_reason"] == "GOAL_TARGETS_REMOVED"
+
+
+async def test_graph_option_confirm_rejects_project_graph_drift(client, project, profile):
+    overlay_node = await _create_overlay_target(client, project["id"], name="漂移增强 Overlay 目标")
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/graph-options/preview",
+        json={"path_mode": "standard"},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    enhanced_variant_id = next(
+        variant["variant_id"]
+        for variant in preview["variants"]
+        if variant["graph_option"] == "enhanced"
+    )
+
+    planning_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{overlay_node['node_id']}/planning",
+        json={"planning_enabled": False},
+    )
+    assert planning_resp.status_code == 200
+
+    confirm_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": enhanced_variant_id},
+    )
+
+    assert confirm_resp.status_code == 409
+    assert confirm_resp.json()["error"] == "STALE_VARIANT_PREVIEW"
+    assert confirm_resp.json()["reason_code"] == "PROJECT_GRAPH_DRIFT"
+
+
+async def test_graph_option_confirm_persists_selected_enhanced_path_audit(client, db_session, project, profile):
+    overlay_node = await _create_overlay_target(client, project["id"], name="确认增强 Overlay 目标")
+    project_row = await db_session.get(LearningProject, project["id"])
+    assert project_row is not None
+    baseline_target_ids = json.loads(project_row.confirmed_target_node_ids_json)
+    project_row.goal_text = "确认增强 Overlay 目标"
+    project_row.goal_type = "concept"
+    project_row.confirmed_target_node_ids_json = json.dumps([baseline_target_ids[0]], ensure_ascii=False)
+    await db_session.commit()
+
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/graph-options/preview",
+        json={"path_mode": "standard"},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    enhanced_variant_id = next(
+        variant["variant_id"]
+        for variant in preview["variants"]
+        if variant["graph_option"] == "enhanced"
+    )
+
+    confirm_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": enhanced_variant_id},
+    )
+    duplicate_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/variants/{preview['variant_preview_id']}/confirm",
+        json={"variant_id": enhanced_variant_id},
+    )
+
+    assert confirm_resp.status_code == 200
+    assert duplicate_resp.status_code == 200
+    assert duplicate_resp.json()["idempotent"] is True
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    latest = latest_resp.json()
+    latest_node_ids = [task["node_id"] for stage in latest["stages"] for task in stage["tasks"]]
+    assert overlay_node["node_id"] in latest_node_ids
+    assert latest["audit"]["graph_option"]["graph_option"] == "enhanced"
+    assert latest["audit"]["variant"]["preview_kind"] == "graph_option"
+    assert any(label["kind"] == "graph_option_preview" for label in latest["audit"]["authority_labels"])
+    assert any(step["step"] == "graph_option_confirm" for step in latest["audit"]["decision_chain"])
 
 
 async def test_variant_confirm_writes_one_learning_path_and_is_idempotent(client, db_session, project, profile):

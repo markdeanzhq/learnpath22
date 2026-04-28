@@ -347,6 +347,38 @@ def _missing_concepts(goal_text: str) -> list[str]:
     return _in_domain_uncovered_terms(goal_text) or ["当前机器学习知识包暂未覆盖的目标概念"]
 
 
+def _goal_coverage_actions(coverage_status: str, *, has_project: bool) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    if coverage_status == "partial":
+        actions.append({
+            "action": "use_existing_graph",
+            "label": "按已有图谱生成路径",
+            "description": "只使用当前已覆盖的机器学习基础内容，缺失概念会写入审计记录。",
+            "risk_level": "low",
+            "requires_review": False,
+            "enabled": True,
+        })
+    if coverage_status in {"partial", "in_domain_uncovered"}:
+        actions.append({
+            "action": "create_extension_draft",
+            "label": "生成扩展草稿并审核",
+            "description": "由 LLM/规则辅助补充缺失概念草稿，用户审核后才可用于增强路径。",
+            "risk_level": "medium",
+            "requires_review": True,
+            "enabled": True,
+            "disabled_reason": None,
+        })
+    actions.append({
+        "action": "rewrite_goal",
+        "label": "改写学习目标",
+        "description": "把目标收敛到当前机器学习基础图谱已覆盖的概念后重新解析。",
+        "risk_level": "low",
+        "requires_review": False,
+        "enabled": True,
+    })
+    return actions
+
+
 def _json_default(value: Any) -> str:
     if isinstance(value, datetime):
         return _ensure_utc(value).isoformat().replace("+00:00", "Z")
@@ -866,9 +898,8 @@ async def create_goal_resolution_preview(
             "project_graph_hash": graph_hash,
             "missing_concepts": missing_concepts,
             "draft_entry": {"action": "create_project_overlay_draft", "requires_explicit_request": True},
+            "available_actions": _goal_coverage_actions("in_domain_uncovered", has_project=project_id is not None),
         }
-        if project_id is None:
-            return response
         session = GoalResolutionSession(
             project_id=project_id,
             goal_text_hash=_build_goal_text_hash(goal_text),
@@ -962,6 +993,7 @@ async def create_goal_resolution_preview(
             for node_id in candidate.get("target_node_ids", [])
             if isinstance(node_id, str)
         ])
+        available_actions = _goal_coverage_actions("partial", has_project=project_id is not None)
         session = GoalResolutionSession(
             project_id=project_id,
             goal_text_hash=_build_goal_text_hash(goal_text),
@@ -980,6 +1012,7 @@ async def create_goal_resolution_preview(
                 "goal_understanding": goal_understanding,
                 "covered_target_node_ids": covered_ids,
                 "missing_concepts": _missing_concepts(goal_text),
+                "available_actions": available_actions,
             }),
             candidates_json=_json_dumps(candidates),
             recommended_candidate_id=str(result.get("recommended_candidate_id") or candidates[0]["candidate_id"]),
@@ -1001,6 +1034,7 @@ async def create_goal_resolution_preview(
             "covered_target_node_ids": covered_ids,
             "missing_concepts": _missing_concepts(goal_text),
             "candidates": candidates,
+            "available_actions": available_actions,
         }
 
     if not candidates:

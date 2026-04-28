@@ -24,6 +24,7 @@ function pick(value: string | null | undefined, map: Record<string, DisplayMeta>
 
 const PROJECT_STATUS: Record<string, DisplayMeta> = {
   draft: { label: '待完善', tagType: 'warning' },
+  extension_review: { label: '待扩展审核', tagType: 'warning', detail: '已创建项目，需先审核扩展图谱草稿' },
   active: { label: '进行中', tagType: 'primary' },
   completed: { label: '已完成', tagType: 'success' },
   archived: { label: '已归档', tagType: 'info' },

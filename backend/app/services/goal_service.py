@@ -715,6 +715,157 @@ def _compute_generic_penalty(goal_text: str, candidate: dict[str, Any]) -> float
 
 
 
+def _signal_strength(score: float) -> str:
+    if score >= 0.65:
+        return "strong"
+    if score >= 0.35:
+        return "medium"
+    return "weak"
+
+
+
+def _candidate_node_names(
+    candidate: dict[str, Any],
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    names: list[str] = []
+    for node_id in candidate.get("target_node_ids", []):
+        node = nodes_by_id.get(str(node_id))
+        if node and node.get("name"):
+            names.append(str(node["name"]))
+    return names
+
+
+
+def _candidate_match_signals(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    breakdown = candidate.get("score_breakdown", {})
+    signals: list[dict[str, str]] = []
+    template_score = float(breakdown.get("template_score") or 0.0)
+    lexical_score = float(breakdown.get("lexical_score") or 0.0)
+    llm_score = float(breakdown.get("llm_score") or 0.0)
+
+    if template_score > 0:
+        signals.append({
+            "type": "template",
+            "label": "目标模板",
+            "strength": _signal_strength(template_score),
+            "detail": "命中预设学习目标模板，适合作为正式学习路径目标。",
+        })
+    if lexical_score > 0:
+        signals.append({
+            "type": "lexical",
+            "label": "关键词匹配",
+            "strength": _signal_strength(lexical_score),
+            "detail": "根据目标描述与知识点名称、别名、关键词的重合度召回。",
+        })
+    if llm_score > 0:
+        signals.append({
+            "type": "llm",
+            "label": "LLM 语义匹配",
+            "strength": "strong",
+            "detail": "LLM 在当前知识图谱节点范围内补充了语义候选。",
+        })
+    if candidate.get("target_node_ids"):
+        signals.append({
+            "type": "graph",
+            "label": "知识图谱校验",
+            "strength": "medium",
+            "detail": "候选知识点均来自当前已审核的机器学习基础图谱。",
+        })
+    return signals
+
+
+
+def _candidate_confidence_level(candidate: dict[str, Any]) -> str:
+    breakdown = candidate.get("score_breakdown", {})
+    template_score = float(breakdown.get("template_score") or 0.0)
+    lexical_score = float(breakdown.get("lexical_score") or 0.0)
+    llm_score = float(breakdown.get("llm_score") or 0.0)
+    final_score = float(breakdown.get("final_score") or candidate.get("score") or 0.0)
+    has_template = bool(candidate.get("template_id")) or template_score > 0
+    has_llm = llm_score > 0
+
+    if has_template and template_score >= 0.45:
+        return "high"
+    if has_llm and (lexical_score >= 0.25 or final_score >= 0.35):
+        return "high"
+    if has_template or has_llm:
+        return "medium"
+    if candidate.get("resolve_source") == "jieba":
+        if final_score < 0.30:
+            return "low"
+        return "medium"
+    return "medium" if final_score >= 0.35 else "low"
+
+
+
+def _candidate_confidence_reason(candidate: dict[str, Any], confidence_level: str) -> str:
+    breakdown = candidate.get("score_breakdown", {})
+    template_score = float(breakdown.get("template_score") or 0.0)
+    llm_score = float(breakdown.get("llm_score") or 0.0)
+    lexical_score = float(breakdown.get("lexical_score") or 0.0)
+
+    if confidence_level == "high" and template_score > 0:
+        return "命中预设目标模板，并通过当前知识图谱节点校验。"
+    if confidence_level == "high" and llm_score > 0:
+        return "LLM 语义匹配与规则信号共同支持该候选，并通过图谱节点校验。"
+    if confidence_level == "medium":
+        return "系统找到了可用候选，但匹配依据仍需要你确认是否符合真实目标。"
+    if lexical_score > 0:
+        return "主要来自关键词匹配，未命中稳定目标模板或 LLM 语义确认，请谨慎确认。"
+    return "当前候选依据较弱，请先澄清或改写学习目标。"
+
+
+
+def _candidate_recommended_action(confidence_level: str) -> str:
+    if confidence_level == "high":
+        return "confirm"
+    if confidence_level == "medium":
+        return "review"
+    return "clarify"
+
+
+
+def _candidate_user_explanation(
+    candidate: dict[str, Any],
+    nodes_by_id: dict[str, dict[str, Any]],
+    confidence_level: str,
+) -> str:
+    node_names = _candidate_node_names(candidate, nodes_by_id)
+    if node_names:
+        preview_names = "、".join(node_names[:3])
+        if len(node_names) > 3:
+            preview_names = f"{preview_names}等 {len(node_names)} 个知识点"
+    else:
+        preview_names = "当前候选知识点"
+
+    if confidence_level == "high":
+        return f"系统较可靠地将你的目标映射到{preview_names}，确认后可用于生成正式学习路径。"
+    if confidence_level == "medium":
+        return f"系统找到了一组可能匹配的目标知识点：{preview_names}，请确认是否符合你的真实意图。"
+    return f"系统仅找到弱匹配候选：{preview_names}，建议先澄清或改写目标后再创建项目。"
+
+
+
+def _attach_candidate_ui_metadata(
+    candidate: dict[str, Any],
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    confidence_level = _candidate_confidence_level(candidate)
+    recommended_action = _candidate_recommended_action(confidence_level)
+    return {
+        **candidate,
+        "confidence_level": confidence_level,
+        "confidence_reason": _candidate_confidence_reason(candidate, confidence_level),
+        "user_explanation": _candidate_user_explanation(candidate, nodes_by_id, confidence_level),
+        "debug_explanation": candidate.get("explanation", ""),
+        "match_signals": _candidate_match_signals(candidate),
+        "recommended_action": recommended_action,
+        "is_recommended": recommended_action == "confirm",
+    }
+
+
+
 def _score_candidate(
     goal_text: str,
     candidate: dict[str, Any],
@@ -935,7 +1086,11 @@ def resolve_goal_candidates(
         if candidate["goal_type"] in runtime_supported_goal_types and candidate["target_node_ids"]
     ]
     ranked_candidates = sorted(scored_candidates, key=_candidate_sort_key)
-    public_candidates = [_public_candidate(candidate) for candidate in ranked_candidates]
+    enriched_candidates = [
+        _attach_candidate_ui_metadata(candidate, nodes_by_id)
+        for candidate in ranked_candidates
+    ]
+    public_candidates = [_public_candidate(candidate) for candidate in enriched_candidates]
     empty_evidence = {
         "requested_goal_type": goal_type_override,
         "effective_goal_type": effective_goal_type,

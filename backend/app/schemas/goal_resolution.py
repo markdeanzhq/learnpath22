@@ -45,6 +45,13 @@ class GoalResolutionNodeRef(BaseModel):
     node_name: str
 
 
+class GoalResolutionCandidateMatchSignal(BaseModel):
+    type: Literal["template", "lexical", "llm", "graph"]
+    label: str
+    strength: Literal["strong", "medium", "weak"]
+    detail: str
+
+
 class GoalResolutionCandidateResponse(BaseModel):
     candidate_id: str
     goal_type: GoalType
@@ -59,7 +66,24 @@ class GoalResolutionCandidateResponse(BaseModel):
     score: float
     score_breakdown: dict[str, Any]
     explanation: str
+    confidence_level: Literal["high", "medium", "low"] = "medium"
+    confidence_reason: str = "系统找到了可用候选，但仍需要用户确认。"
+    user_explanation: str = "请确认该候选是否符合你的真实学习目标。"
+    debug_explanation: str = ""
+    match_signals: list[GoalResolutionCandidateMatchSignal] = Field(default_factory=list)
+    recommended_action: Literal["confirm", "review", "clarify", "rewrite", "extension_draft"] = "review"
+    is_recommended: bool = False
     warnings: list[str] = Field(default_factory=list)
+
+
+class GoalCoverageAction(BaseModel):
+    action: Literal["use_existing_graph", "create_extension_draft", "rewrite_goal"]
+    label: str
+    description: str
+    risk_level: Literal["low", "medium", "high"]
+    requires_review: bool = False
+    enabled: bool = True
+    disabled_reason: Optional[str] = None
 
 
 class GoalResolutionPreviewResponse(BaseModel):
@@ -177,6 +201,7 @@ class ConfirmPartialCoverageResponse(CoverageResponseBase):
     covered_target_node_ids: list[str]
     missing_concepts: list[str]
     candidates: list[GoalResolutionCandidateResponse] = Field(default_factory=list)
+    available_actions: list[GoalCoverageAction] = Field(default_factory=list)
 
 
 class ClarificationQuestionOption(BaseModel):
@@ -208,6 +233,7 @@ class ReviewExtensionDraftCoverageResponse(CoverageResponseBase):
     coverage_status: Literal["in_domain_uncovered"]
     missing_concepts: list[str]
     draft_entry: dict[str, Any] = Field(default_factory=dict)
+    available_actions: list[GoalCoverageAction] = Field(default_factory=list)
     session_id: Optional[str] = None
     expires_at: Optional[datetime] = None
 
@@ -260,6 +286,17 @@ class VariantSummary(BaseModel):
     included_node_ids: list[str] = Field(default_factory=list)
     excluded_node_ids: list[str] = Field(default_factory=list)
     audit_summary: dict[str, Any] = Field(default_factory=dict)
+    preview_kind: Optional[str] = None
+    graph_option: Optional[Literal["baseline", "enhanced"]] = None
+    option_label: Optional[str] = None
+    option_description: Optional[str] = None
+    status: Literal["available", "unavailable"] = "available"
+    blocked_reason: Optional[str] = None
+    added_node_ids: list[str] = Field(default_factory=list)
+    removed_node_ids: list[str] = Field(default_factory=list)
+    overlay_node_ids: list[str] = Field(default_factory=list)
+    overlay_edge_ids: list[str] = Field(default_factory=list)
+    project_graph_hash: Optional[str] = None
 
 
 class VariantPreviewSessionResponse(BaseModel):

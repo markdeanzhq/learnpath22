@@ -104,17 +104,22 @@ const tableColumnStub = defineComponent({
   template: '<div><slot :row="{}" /></div>',
 })
 
-const goalFormStub = defineComponent({
-  name: 'GoalForm',
+const projectWorkflowPanelStub = defineComponent({
+  name: 'ProjectWorkflowPanel',
   props: {
-    mode: { type: String, default: 'create' },
-    projectId: { type: String, default: '' },
-    projectTitle: { type: String, default: '' },
-    initialGoalText: { type: String, default: '' },
-    initialGoalType: { type: String, default: 'auto' },
+    step: { type: Number, default: -1 },
+    goalFormMode: { type: String, default: 'create' },
+    currentProjectId: { type: String, default: '' },
+    currentProject: { type: Object, default: null },
     reconfirmReason: { type: String, default: '' },
+    generatingPlan: { type: Boolean, default: false },
   },
-  template: '<div data-testid="goal-form">{{ mode }}|{{ projectId }}|{{ projectTitle }}|{{ initialGoalText }}|{{ initialGoalType }}|{{ reconfirmReason }}</div>',
+  template: '<div data-testid="workflow-panel">{{ goalFormMode }}|{{ currentProjectId }}|{{ currentProject?.title || "" }}|{{ currentProject?.goal_text || "" }}|{{ currentProject?.goal_type || "auto" }}|{{ reconfirmReason }}</div>',
+})
+
+const projectListPanelStub = defineComponent({
+  name: 'ProjectListPanel',
+  template: '<div data-testid="project-list-panel" />',
 })
 
 const slotStub = (tag: string) => defineComponent({
@@ -128,7 +133,8 @@ function mountProjectIndex() {
         loading: () => undefined,
       },
       stubs: {
-        GoalForm: goalFormStub,
+        ProjectListPanel: projectListPanelStub,
+        ProjectWorkflowPanel: projectWorkflowPanelStub,
         ProfileQuestionnaire: slotStub('div'),
         ElRow: slotStub('div'),
         ElCol: slotStub('div'),
@@ -176,7 +182,7 @@ describe('Project page goal reconfirm flow', () => {
     expect(loadListMock).toHaveBeenCalled()
     expect((wrapper.vm as any).step).toBe(0)
     expect((wrapper.vm as any).currentProjectId).toBe('project-001')
-    expect(wrapper.get('[data-testid="goal-form"]').text()).toContain('reconfirm|project-001|机器学习基础学习计划|我想系统学习机器学习基础|domain|goal-targets-removed')
+    expect(wrapper.get('[data-testid="workflow-panel"]').text()).toContain('reconfirm|project-001|机器学习基础学习计划|我想系统学习机器学习基础|domain|goal-targets-removed')
   })
 
   it('redirects to reconfirm flow when generating a path hits GOAL_TARGETS_REMOVED', async () => {
