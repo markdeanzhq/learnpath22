@@ -289,7 +289,7 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 }
 ```
 
-`source_id=goal_extension_draft_proposal` 只是 proposal 阶段的占位来源；真正创建 overlay 草稿时，后端会先创建项目级 source，再用真实 `source_id` 重建 `extraction_payload` 并进入既有校验管线。
+`source_id=goal_extension_draft_proposal` 只是 proposal 阶段的占位来源；真正创建 overlay 草稿时，后端会先创建项目级 source，再用真实 `source_id` 重建 `extraction_payload` 并进入既有校验管线。已有项目的手动推荐草稿入口复用 `/projects/{id}/goal-resolution/preview` 做覆盖分析：只有返回 `review_extension_draft` 且携带 `draft_proposal` 时，前端才打开草稿收件箱；该动作本身不创建 overlay session。
 
 **Extension draft 创建请求体:**
 ```json
@@ -350,7 +350,7 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 }
 ```
 
-`gap_analysis` / `review_notes` / `draft_metadata` 会写入 overlay source metadata 与 extraction session provenance，便于审计；`draft_proposal` 用于前端回显创建前推荐内容；`extraction_payload` 仍只包含 nodes / edges / resources / warnings，保证草稿候选继续走既有 overlay 校验管线。推荐草稿物化后仍默认 planner-invisible，只有候选通过 validation、人工 confirmed 且开启 planning 后才进入增强图谱方案。
+`gap_analysis` / `review_notes` / `draft_metadata` 会写入 overlay source metadata 与 extraction session provenance，便于审计；`draft_proposal` 用于前端回显创建前推荐内容；`extraction_payload` 仍只包含 nodes / edges / resources / warnings，保证草稿候选继续走既有 overlay 校验管线。推荐草稿物化后不能直接写正式图谱或正式路径；只有候选通过 validation、人工 confirmed 且 `planning_enabled=true` 后，才会被增强图谱预检和图谱方案对比消费。
 
 **目标理解相关错误码:**
 
@@ -710,6 +710,7 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 | POST | /projects/{id}/graph/overlay/extraction-payload/preview | 用 LLM 从 source IDs 生成可审阅 extraction payload，不写 session |
 | POST | /projects/{id}/graph/overlay/extraction-sessions | 从 source IDs 和可选 extraction payload 创建抽取会话 |
 | GET | /projects/{id}/graph/overlay/extraction-sessions/{session_id} | 读取抽取会话详情 |
+| GET | /projects/{id}/graph/overlay/preflight | 预检增强图谱可用性、路径命中和阻塞/警告项 |
 | PATCH | /projects/{id}/graph/overlay/nodes/{element_id}/review | 只更新 overlay node 的 review 状态 |
 | PATCH | /projects/{id}/graph/overlay/edges/{element_id}/review | 只更新 overlay edge 的 review 状态 |
 | PATCH | /projects/{id}/graph/overlay/resources/{element_id}/review | 只更新 overlay resource 的 review 状态 |
@@ -719,7 +720,8 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 
 说明：
 - baseline review 只允许 `pending|confirmed|removed`，`rejected` 返回 `422`；overlay review 允许 `pending|confirmed|rejected|removed`
-- `review_status` 与 `planning_enabled` 独立更新，互不隐式改写 validation/source/provenance/promotion 字段
+- `review_status` 与 `planning_enabled` 独立更新，互不隐式改写 validation/source/provenance/promotion 字段；前端在确认 overlay 候选有效和开启规划时会分别要求显式确认
+- `GET /graph/overlay/preflight` 汇总 active/planner-visible overlay、增强图谱实际可见 overlay、当前最新路径命中 overlay、被 baseline 覆盖或端点不可用而忽略的关系，以及 `REQUIRES` 环依赖等阻塞项；`status=blocked` 时前端不会生成基础/增强图谱方案对比
 - unknown origin 或 unknown lifecycle status 在前端以安全未知状态展示，并禁用会影响审核或规划的操作
 - resource `planning_enabled` 只影响 resource 自身显示/推广资格，不改变 node/edge planner-visible 集合、`ProjectGraphSnapshot`、path graph、goal resolution、planner、replan 或 `project_graph_hash`
 - `extraction-payload/preview` 需要 LLM 配置；未配置返回 `503 LLM_NOT_READY`，LLM 返回非 JSON/越界结构返回 `422 INVALID_LLM_EXTRACTION_JSON`
