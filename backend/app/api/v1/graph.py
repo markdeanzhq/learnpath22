@@ -53,6 +53,7 @@ from app.services.project_goal_extension_draft_service import (
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 from app.services.project_overlay_extraction_service import MAX_TEXT_CHARS, create_extraction_session_from_sources
 from app.services.project_overlay_llm_extraction_service import preview_overlay_extraction_payload_from_sources
+from app.services.project_overlay_preflight_service import build_project_overlay_preflight
 from app.services.project_overlay_projection_service import (
     get_project_overlay_projection_status,
     sync_project_overlay_projection,
@@ -749,6 +750,17 @@ async def create_goal_extension_draft(
     response["draft_metadata"] = created["draft_metadata"]
     response["draft_proposal"] = created.get("draft_proposal")
     return response
+
+
+@router.get("/projects/{project_id}/graph/overlay/preflight")
+async def get_overlay_preflight(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+    return await build_project_overlay_preflight(db, project_id=project_id, domain=project.domain)
 
 
 @router.get("/projects/{project_id}/graph/overlay/extraction-sessions/{session_id}")

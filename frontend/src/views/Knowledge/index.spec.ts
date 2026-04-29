@@ -11,13 +11,17 @@ const {
   graphCreateGoalExtensionDraftMock,
   graphGetGoalExtensionDraftProposalMock,
   graphSetOverlayPlanningMock,
+  graphReviewOverlayElementMock,
+  confirmMock,
   graphGetOverlayExtractionSessionMock,
   graphPreviewOverlayPromotionMock,
   graphCommitOverlayPromotionMock,
   graphGetOverlayProjectionStatusMock,
+  graphGetOverlayPreflightMock,
   searchListPersistedResultsMock,
   searchBridgeOverlaySourcesMock,
   resourceBindProjectResourceMock,
+  projectPreviewForProjectMock,
   currentProjectState,
   routeState,
   replaceMock,
@@ -30,13 +34,17 @@ const {
   graphCreateGoalExtensionDraftMock: vi.fn(),
   graphGetGoalExtensionDraftProposalMock: vi.fn(),
   graphSetOverlayPlanningMock: vi.fn(),
+  graphReviewOverlayElementMock: vi.fn(),
+  confirmMock: vi.fn(),
   graphGetOverlayExtractionSessionMock: vi.fn(),
   graphPreviewOverlayPromotionMock: vi.fn(),
   graphCommitOverlayPromotionMock: vi.fn(),
   graphGetOverlayProjectionStatusMock: vi.fn(),
+  graphGetOverlayPreflightMock: vi.fn(),
   searchListPersistedResultsMock: vi.fn(),
   searchBridgeOverlaySourcesMock: vi.fn(),
   resourceBindProjectResourceMock: vi.fn(),
+  projectPreviewForProjectMock: vi.fn(),
   currentProjectState: {
     value: {
       id: 'project-001',
@@ -68,6 +76,9 @@ vi.mock('element-plus', () => ({
   ElMessage: {
     success: successMock,
     error: vi.fn(),
+  },
+  ElMessageBox: {
+    confirm: confirmMock,
   },
 }))
 
@@ -112,10 +123,11 @@ vi.mock('@/api/modules/graph', () => {
     createGoalExtensionDraft: graphCreateGoalExtensionDraftMock,
     setOverlayPlanning: graphSetOverlayPlanningMock,
     getOverlayExtractionSession: graphGetOverlayExtractionSessionMock,
-    reviewOverlayElement: vi.fn(),
+    reviewOverlayElement: graphReviewOverlayElementMock,
     previewOverlayPromotion: graphPreviewOverlayPromotionMock,
     commitOverlayPromotion: graphCommitOverlayPromotionMock,
     getOverlayProjectionStatus: graphGetOverlayProjectionStatusMock,
+    getOverlayPreflight: graphGetOverlayPreflightMock,
     },
   }
 })
@@ -124,6 +136,12 @@ vi.mock('@/api/modules/search', () => ({
   searchApi: {
     listPersistedResults: searchListPersistedResultsMock,
     bridgeOverlaySources: searchBridgeOverlaySourcesMock,
+  },
+}))
+
+vi.mock('@/api/modules/project', () => ({
+  projectApi: {
+    previewForProject: projectPreviewForProjectMock,
   },
 }))
 
@@ -180,6 +198,7 @@ describe('Knowledge overlay entry', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     routeState.query = {}
+    confirmMock.mockResolvedValue('confirm')
     graphGetGraphMock.mockResolvedValue({
       scope: 'path',
       elements: [],
@@ -221,7 +240,7 @@ describe('Knowledge overlay entry', () => {
     }
     graphCreateOverlayExtractionSessionMock.mockResolvedValue(sessionResponse)
     graphCreateGoalExtensionDraftMock.mockResolvedValue(sessionResponse)
-    graphGetGoalExtensionDraftProposalMock.mockResolvedValue({
+    const draftProposalResponse = {
       resolution_session_id: 'resolution-001',
       project_id: 'project-001',
       session_status: 'draft_previewed',
@@ -237,6 +256,15 @@ describe('Knowledge overlay entry', () => {
         writes_formal_graph: false,
         writes_formal_path: false,
       },
+    }
+    graphGetGoalExtensionDraftProposalMock.mockResolvedValue(draftProposalResponse)
+    projectPreviewForProjectMock.mockResolvedValue({
+      result_type: 'review_extension_draft',
+      coverage_status: 'in_domain_uncovered',
+      session_id: 'resolution-001',
+      expires_at: '2026-04-22T10:00:00Z',
+      missing_concepts: ['随机森林'],
+      draft_proposal: draftProposalResponse.draft_proposal,
     })
     graphGetOverlayExtractionSessionMock.mockResolvedValue(sessionResponse)
     graphPreviewOverlayPromotionMock.mockResolvedValue({
@@ -260,6 +288,38 @@ describe('Knowledge overlay entry', () => {
       ready: true,
       in_sync: true,
       reason: null,
+    })
+    graphGetOverlayPreflightMock.mockResolvedValue({
+      project_id: 'project-001',
+      status: 'ok',
+      summary: '1 个节点 / 1 条关系可进入增强图谱，当前未发现阻塞问题。',
+      counts: {
+        active_nodes: 2,
+        active_edges: 1,
+        planner_visible_nodes: 1,
+        planner_visible_edges: 1,
+        visible_overlay_nodes: 1,
+        visible_overlay_edges: 1,
+        path_overlay_nodes: 1,
+        path_overlay_edges: 0,
+        ignored_overlay_edges: 0,
+        shadowed_edges: 0,
+        cycle_edges: 0,
+        blocking_items: 0,
+        warning_items: 0,
+        nodes: { total: 2, valid: 2, confirmed: 1, pending_review: 1, planning_disabled: 0, invalid: 0 },
+        edges: { total: 1, valid: 1, confirmed: 1, pending_review: 0, planning_disabled: 0, invalid: 0 },
+      },
+      visible_overlay_node_ids: ['po:project-001:n:rf'],
+      visible_overlay_edge_ids: ['po:project-001:e:rf'],
+      path_overlay_node_ids: ['po:project-001:n:rf'],
+      path_overlay_edge_ids: [],
+      ignored_overlay_edge_ids: [],
+      shadowed_edge_ids: [],
+      cycle_edge_ids: [],
+      blocking_items: [],
+      warning_items: [],
+      project_graph_hash: 'graph-hash',
     })
     searchListPersistedResultsMock.mockResolvedValue([])
     searchBridgeOverlaySourcesMock.mockResolvedValue({
@@ -692,12 +752,128 @@ describe('Knowledge overlay entry', () => {
       label: '扩展节点',
     }, false)
 
+    expect(confirmMock).not.toHaveBeenCalled()
     expect(graphSetOverlayPlanningMock).toHaveBeenCalledWith(
       'project-001',
       'nodes',
       'po:project-001:n:test',
       false,
     )
+  })
+
+  it('confirms before enabling overlay planning', async () => {
+    graphSetOverlayPlanningMock.mockResolvedValue({
+      element_id: 'po:project-001:n:test',
+      element_type: 'node',
+      validation_status: 'valid',
+      review_status: 'confirmed',
+      planning_enabled: true,
+      promotion_status: 'not_promoted',
+    })
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    await (wrapper.vm as any).onSetOverlayPlanning({
+      id: 'po:project-001:n:test',
+      origin: 'overlay',
+      label: '扩展节点',
+    }, true)
+
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.stringContaining('增强图谱预检和路径对比'),
+      '纳入增强图谱规划',
+      expect.objectContaining({ confirmButtonText: '纳入规划' }),
+    )
+    expect(graphSetOverlayPlanningMock).toHaveBeenCalledWith(
+      'project-001',
+      'nodes',
+      'po:project-001:n:test',
+      true,
+    )
+  })
+
+  it('skips enabling overlay planning when confirmation is cancelled', async () => {
+    confirmMock.mockRejectedValueOnce('cancel')
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    await (wrapper.vm as any).onSetOverlayPlanning({
+      id: 'po:project-001:n:test',
+      origin: 'overlay',
+      label: '扩展节点',
+    }, true)
+
+    expect(graphSetOverlayPlanningMock).not.toHaveBeenCalled()
+  })
+
+  it('confirms overlay candidate before marking it confirmed', async () => {
+    graphGetGraphMock.mockResolvedValue({
+      scope: 'path',
+      is_empty: false,
+      elements: [{
+        group: 'nodes',
+        data: {
+          id: 'po:project-001:n:test',
+          label: '扩展节点',
+          origin: 'overlay',
+          review_status: 'pending',
+          planning_enabled: false,
+        },
+      }],
+    })
+    graphReviewOverlayElementMock.mockResolvedValue({
+      element_id: 'po:project-001:n:test',
+      element_type: 'node',
+      validation_status: 'valid',
+      review_status: 'confirmed',
+      planning_enabled: false,
+      promotion_status: 'not_promoted',
+    })
+    const wrapper = mountKnowledge()
+    await flushPromises()
+    ;(wrapper.vm as any).graphRef = { setNodeReviewStatus: vi.fn() }
+
+    await (wrapper.vm as any).onReviewNode('po:project-001:n:test', 'confirmed')
+
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.stringContaining('规划开关控制'),
+      '确认扩展候选有效',
+      expect.objectContaining({ confirmButtonText: '确认有效' }),
+    )
+    expect(graphReviewOverlayElementMock).toHaveBeenCalledWith(
+      'project-001',
+      'nodes',
+      'po:project-001:n:test',
+      'confirmed',
+    )
+  })
+
+  it('renders overlay preflight usage status', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    expect(graphGetOverlayPreflightMock).toHaveBeenCalledWith('project-001')
+    expect(wrapper.text()).toContain('增强图谱使用状态')
+    expect(wrapper.text()).toContain('可进入增强图谱 1 节点 / 1 关系')
+    expect(wrapper.text()).toContain('当前路径命中 1 节点 / 0 关系')
+  })
+
+  it('manually prepares a goal extension draft inbox from the current project goal', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    await (wrapper.vm as any).openOverlayDrawer()
+    await (wrapper.vm as any).prepareGoalDraftFromCurrentProject()
+    await flushPromises()
+
+    expect(projectPreviewForProjectMock).toHaveBeenCalledWith('project-001', {
+      goal_text: '我想系统学习机器学习基础',
+      requested_goal_type: 'domain',
+      domain: 'machine_learning',
+    })
+    expect(graphGetGoalExtensionDraftProposalMock).toHaveBeenCalledWith('project-001', 'resolution-001')
+    expect((wrapper.vm as any).overlayDraftMode).toBe('goal_draft')
+    expect(wrapper.text()).toContain('系统推荐草稿收件箱')
   })
 
   it.each([

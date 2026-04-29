@@ -11,6 +11,7 @@ const {
   planApiGetExplanationMock,
   planApiPreviewVariantsMock,
   planApiPreviewGraphOptionsMock,
+  graphGetOverlayPreflightMock,
   planApiConfirmVariantMock,
   planApiPreviewFeedbackMock,
   planApiConfirmKnownNodeDraftMock,
@@ -32,6 +33,7 @@ const {
   planApiGetExplanationMock: vi.fn(),
   planApiPreviewVariantsMock: vi.fn(),
   planApiPreviewGraphOptionsMock: vi.fn(),
+  graphGetOverlayPreflightMock: vi.fn(),
   planApiConfirmVariantMock: vi.fn(),
   planApiPreviewFeedbackMock: vi.fn(),
   planApiConfirmKnownNodeDraftMock: vi.fn(),
@@ -146,6 +148,12 @@ vi.mock('@/api/modules/plan', () => ({
     previewFeedback: planApiPreviewFeedbackMock,
     confirmKnownNodeDraft: planApiConfirmKnownNodeDraftMock,
     confirmFeedback: planApiConfirmFeedbackMock,
+  },
+}))
+
+vi.mock('@/api/modules/graph', () => ({
+  graphApi: {
+    getOverlayPreflight: graphGetOverlayPreflightMock,
   },
 }))
 
@@ -361,6 +369,42 @@ function createGraphOptionPreviewResponse(overrides: Record<string, any> = {}) {
   })
 }
 
+function createOverlayPreflightResponse(overrides: Record<string, any> = {}) {
+  return {
+    project_id: 'project-001',
+    status: 'warning',
+    summary: '1 个节点 / 1 条关系可进入增强图谱，但存在需要注意的草稿状态或关系问题。',
+    counts: {
+      active_nodes: 2,
+      active_edges: 1,
+      planner_visible_nodes: 1,
+      planner_visible_edges: 1,
+      visible_overlay_nodes: 1,
+      visible_overlay_edges: 1,
+      path_overlay_nodes: 1,
+      path_overlay_edges: 1,
+      ignored_overlay_edges: 0,
+      shadowed_edges: 0,
+      cycle_edges: 0,
+      blocking_items: 0,
+      warning_items: 1,
+      nodes: { total: 2, valid: 2, confirmed: 1, pending_review: 1, planning_disabled: 0, invalid: 0 },
+      edges: { total: 1, valid: 1, confirmed: 1, pending_review: 0, planning_disabled: 0, invalid: 0 },
+    },
+    visible_overlay_node_ids: ['po:project-001:n:rf'],
+    visible_overlay_edge_ids: ['po:project-001:e:dep'],
+    path_overlay_node_ids: ['po:project-001:n:rf'],
+    path_overlay_edge_ids: ['po:project-001:e:dep'],
+    ignored_overlay_edge_ids: [],
+    shadowed_edge_ids: [],
+    cycle_edge_ids: [],
+    blocking_items: [],
+    warning_items: [{ kind: 'pending_review', message: '存在已校验但尚未人工确认的 overlay 候选。' }],
+    project_graph_hash: 'graph-hash-enhanced',
+    ...overrides,
+  }
+}
+
 function createFeedbackPreviewResponse(overrides: Record<string, any> = {}) {
   return {
     feedback_preview_id: 'feedback-preview-001',
@@ -477,6 +521,7 @@ describe('Path page goal reconfirm flow', () => {
     planApiGetExplanationMock.mockResolvedValue(createExplanationResponse())
     planApiPreviewVariantsMock.mockResolvedValue(createVariantPreviewResponse())
     planApiPreviewGraphOptionsMock.mockResolvedValue(createGraphOptionPreviewResponse())
+    graphGetOverlayPreflightMock.mockResolvedValue(createOverlayPreflightResponse())
     planApiConfirmVariantMock.mockResolvedValue(createReplanResult())
     planApiPreviewFeedbackMock.mockResolvedValue(createFeedbackPreviewResponse())
     planApiConfirmKnownNodeDraftMock.mockResolvedValue({
@@ -832,6 +877,45 @@ describe('Path page goal reconfirm flow', () => {
     expect(wrapper.text()).toContain('增强方案会新增 1 个已审核知识点')
     expect(wrapper.text()).not.toContain('po:project-001:n:rf')
     expect(currentPlanState.value.id).toBe('plan-001')
+  })
+
+  it('renders overlay preflight status in graph option panel', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    vm.openAdjustmentTool('graph_options')
+    await nextTick()
+
+    expect(graphGetOverlayPreflightMock).toHaveBeenCalledWith('project-001')
+    expect(wrapper.text()).toContain('增强图谱使用状态')
+    expect(wrapper.text()).toContain('当前路径命中 1 节点 / 1 关系')
+    expect(wrapper.text()).toContain('存在已校验但尚未人工确认的 overlay 候选')
+  })
+
+  it('blocks graph option preview when overlay preflight is blocked', async () => {
+    graphGetOverlayPreflightMock.mockResolvedValue(createOverlayPreflightResponse({
+      status: 'blocked',
+      summary: '增强图谱存在 REQUIRES 环依赖。',
+      counts: {
+        ...createOverlayPreflightResponse().counts,
+        cycle_edges: 1,
+        blocking_items: 1,
+        warning_items: 0,
+      },
+      blocking_items: [{ kind: 'requires_cycle', message: '增强图谱存在 REQUIRES 环依赖。', edge_ids: ['po:project-001:e:cycle'] }],
+      warning_items: [],
+      cycle_edge_ids: ['po:project-001:e:cycle'],
+    }))
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewGraphOptions()
+    await flushPromises()
+
+    expect(planApiPreviewGraphOptionsMock).not.toHaveBeenCalled()
+    expect(vm.previewUnsafeMessage).toContain('REQUIRES 环依赖')
   })
 
   it('explains when enhanced graph has overlay but does not change current path', async () => {

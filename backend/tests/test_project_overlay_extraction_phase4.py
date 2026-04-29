@@ -13,6 +13,7 @@ from app.repositories.project_overlay_repository import (
     update_planning_enabled,
     update_review_status,
 )
+from app.services.domain_pack_service import get_domain_pack_service
 from app.services.graph_service import build_path_graph_elements_from_snapshot
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 from app.services.project_overlay_extraction_service import create_extraction_session_from_sources
@@ -188,6 +189,95 @@ async def test_create_and_get_overlay_extraction_session_endpoints(client, proje
     assert resource["planning_enabled"] is True
     assert resource["promotion_status"] == "not_promoted"
     assert resource["binding_summary"] == {"count": 0, "project_node_ids": [], "path_stage_ids": []}
+
+
+async def test_overlay_preflight_reports_review_and_planning_readiness(client, project):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    create_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/extraction-sessions",
+        json={
+            "source_ids": [source["source_id"]],
+            "extraction_payload": {
+                "nodes": [_valid_node("预检扩展节点")],
+                "edges": [],
+                "resources": [],
+                "warnings": [],
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    node_id = create_resp.json()["nodes"][0]["node_id"]
+
+    pending_resp = await client.get(f"/api/v1/projects/{project['id']}/graph/overlay/preflight")
+    assert pending_resp.status_code == 200
+    pending = pending_resp.json()
+    assert pending["status"] == "warning"
+    assert pending["counts"]["nodes"]["pending_review"] == 1
+    assert node_id not in pending["visible_overlay_node_ids"]
+
+    review_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node_id}/review",
+        json={"review_status": "confirmed"},
+    )
+    assert review_resp.status_code == 200
+    ready_resp = await client.get(f"/api/v1/projects/{project['id']}/graph/overlay/preflight")
+    assert ready_resp.status_code == 200
+    ready = ready_resp.json()
+    assert ready["status"] == "ok"
+    assert node_id in ready["visible_overlay_node_ids"]
+
+    planning_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node_id}/planning",
+        json={"planning_enabled": False},
+    )
+    assert planning_resp.status_code == 200
+    disabled_resp = await client.get(f"/api/v1/projects/{project['id']}/graph/overlay/preflight")
+    assert disabled_resp.status_code == 200
+    disabled = disabled_resp.json()
+    assert disabled["status"] == "warning"
+    assert disabled["counts"]["nodes"]["planning_disabled"] == 1
+    assert node_id not in disabled["visible_overlay_node_ids"]
+
+
+async def test_overlay_preflight_reports_shadowed_overlay_edges(client, project):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    baseline_edge = get_domain_pack_service(project["domain"]).requires_edges[0]
+    create_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/extraction-sessions",
+        json={
+            "source_ids": [source["source_id"]],
+            "extraction_payload": {
+                "nodes": [],
+                "edges": [
+                    {
+                        "source_node_id": baseline_edge["source"],
+                        "target_node_id": baseline_edge["target"],
+                        "relation_type": "REQUIRES",
+                        "confidence": 0.9,
+                        "legality_rationale": "这条关系已存在于基线图谱，用于验证预检提示。",
+                    }
+                ],
+                "resources": [],
+                "warnings": [],
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    edge_id = create_resp.json()["edges"][0]["edge_id"]
+    review_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/edges/{edge_id}/review",
+        json={"review_status": "confirmed"},
+    )
+    assert review_resp.status_code == 200
+
+    preflight_resp = await client.get(f"/api/v1/projects/{project['id']}/graph/overlay/preflight")
+    assert preflight_resp.status_code == 200
+    preflight = preflight_resp.json()
+    assert preflight["status"] == "warning"
+    assert edge_id in preflight["ignored_overlay_edge_ids"]
+    assert edge_id in preflight["shadowed_edge_ids"]
+    assert edge_id not in preflight["visible_overlay_edge_ids"]
+    assert any(item["kind"] == "shadowed_edges" for item in preflight["warning_items"])
 
 
 async def test_preview_overlay_extraction_payload_uses_llm_without_creating_session(client, project, db_session):

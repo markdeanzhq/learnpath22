@@ -205,7 +205,7 @@
                   <h3>基础 / 增强图谱路径对比</h3>
                   <p>比较“只按现有基线图谱规划”和“纳入已审核且开启规划的项目扩展图谱规划”，未审核草稿不会进入正式路径。</p>
                 </div>
-                <el-button type="success" :loading="graphOptionLoading" @click="previewGraphOptions">生成图谱方案对比</el-button>
+                <el-button type="success" :loading="graphOptionLoading" :disabled="overlayPreflight?.status === 'blocked'" @click="previewGraphOptions">生成图谱方案对比</el-button>
               </div>
               <el-alert
                 title="增强方案只消费已校验、已人工确认并开启规划的 overlay；LLM 草稿不能绕过审核直接进入正式路径。"
@@ -213,6 +213,23 @@
                 :closable="false"
                 show-icon
               />
+              <section v-if="overlayPreflight" class="overlay-preflight-panel">
+                <div class="overlay-preflight-header">
+                  <strong>增强图谱使用状态</strong>
+                  <el-tag :type="overlayPreflightTagType">{{ overlayPreflightStatusLabel }}</el-tag>
+                </div>
+                <p>{{ overlayPreflight.summary }}</p>
+                <div class="preview-meta compact">
+                  <el-tag type="info" effect="plain">候选 {{ overlayPreflight.counts.active_nodes }} 节点 / {{ overlayPreflight.counts.active_edges }} 关系</el-tag>
+                  <el-tag type="success" effect="plain">可进入 {{ overlayPreflight.counts.visible_overlay_nodes }} 节点 / {{ overlayPreflight.counts.visible_overlay_edges }} 关系</el-tag>
+                  <el-tag type="warning" effect="plain">当前路径命中 {{ overlayPreflight.counts.path_overlay_nodes }} 节点 / {{ overlayPreflight.counts.path_overlay_edges }} 关系</el-tag>
+                  <el-tag v-if="overlayPreflight.counts.shadowed_edges" type="warning" effect="plain">基线覆盖关系 {{ overlayPreflight.counts.shadowed_edges }}</el-tag>
+                  <el-tag v-if="overlayPreflight.counts.cycle_edges" type="danger" effect="plain">环依赖关系 {{ overlayPreflight.counts.cycle_edges }}</el-tag>
+                </div>
+                <div v-if="overlayPreflightIssues.length" class="overlay-preflight-issues">
+                  <span v-for="(item, index) in overlayPreflightIssues" :key="`${item.kind}-${index}`">{{ item.message }}</span>
+                </div>
+              </section>
 
               <template v-if="graphOptionPreview">
                 <div class="preview-meta">
@@ -670,6 +687,7 @@ import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useSettingsStore } from '@/stores/settings'
 import { planApi, type ExplanationAskRequest, type FeedbackPreviewSessionResponse, type VariantPreviewSessionResponse, type VariantSummary } from '@/api/modules/plan'
+import { graphApi, type OverlayPreflightResponse } from '@/api/modules/graph'
 import { searchApi, type SearchResultItem } from '@/api/modules/search'
 import { resourceApi, type PlanResourcesResponse, type StageResourceGroup } from '@/api/modules/resource'
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
@@ -757,6 +775,7 @@ const graphOptionPreview = ref<VariantPreviewSessionResponse | null>(null)
 const selectedGraphOptionVariantId = ref('')
 const graphOptionLoading = ref(false)
 const graphOptionConfirming = ref(false)
+const overlayPreflight = ref<OverlayPreflightResponse | null>(null)
 const feedbackText = ref('')
 const feedbackPreview = ref<FeedbackPreviewSessionResponse | null>(null)
 const feedbackLoading = ref(false)
@@ -863,6 +882,20 @@ const graphOptionComparisonMessage = computed(() => {
   }
   return '增强图谱边界已变化，但当前目标下最终路径节点没有变化。'
 })
+const overlayPreflightTagType = computed(() => {
+  if (overlayPreflight.value?.status === 'ok') return 'success'
+  if (overlayPreflight.value?.status === 'blocked') return 'danger'
+  return 'warning'
+})
+const overlayPreflightStatusLabel = computed(() => {
+  if (overlayPreflight.value?.status === 'ok') return '可生成对比'
+  if (overlayPreflight.value?.status === 'blocked') return '阻塞'
+  return '需关注'
+})
+const overlayPreflightIssues = computed(() => [
+  ...(overlayPreflight.value?.blocking_items || []),
+  ...(overlayPreflight.value?.warning_items || []),
+])
 const canConfirmVariant = computed(() => Boolean(
   variantPreview.value?.status === 'active' && selectedVariant.value && previewContextMatches.value && !previewUnsafeMessage.value,
 ))
@@ -901,6 +934,18 @@ const selectedNodeResourceCount = computed(() => selectedResourceNode.value?.res
 const missingResourceNodeCount = computed(() => (
   planResources.value?.stages.reduce((sum, stage) => sum + stage.nodes.filter((node) => !node.resources.length).length, 0) ?? 0
 ))
+
+async function loadOverlayPreflight() {
+  if (!projectId.value) {
+    overlayPreflight.value = null
+    return
+  }
+  try {
+    overlayPreflight.value = await graphApi.getOverlayPreflight(projectId.value)
+  } catch {
+    overlayPreflight.value = null
+  }
+}
 
 async function loadPlanResources() {
   if (!projectId.value || !planStore.currentPlan?.id) {
@@ -1026,6 +1071,7 @@ async function refreshAfterPlanWrite() {
   await Promise.all([
     explanationState.load(),
     loadPlanResources(),
+    loadOverlayPreflight(),
   ])
 }
 
@@ -1038,6 +1084,7 @@ async function loadPath() {
   clearPreviews()
   if (!projectId.value) {
     planResources.value = null
+    overlayPreflight.value = null
     planStore.currentPlan = null
     explanationState.clear()
     return
@@ -1049,8 +1096,11 @@ async function loadPath() {
       planResources.value = null
       explanationState.clear()
     }
-    await explanationState.load(llmExplanationPolish.value)
-    await loadPlanResources()
+    await Promise.all([
+      explanationState.load(llmExplanationPolish.value),
+      loadPlanResources(),
+      loadOverlayPreflight(),
+    ])
   } catch (e: any) {
     planResources.value = null
     planStore.currentPlan = null
@@ -1156,6 +1206,12 @@ async function previewGraphOptions() {
   graphOptionLoading.value = true
   previewUnsafeMessage.value = ''
   try {
+    await loadOverlayPreflight()
+    if (overlayPreflight.value?.status === 'blocked') {
+      graphOptionPreview.value = null
+      previewUnsafeMessage.value = overlayPreflight.value.summary || '增强图谱存在阻塞问题，请先处理后再生成路径对比。'
+      return
+    }
     graphOptionPreview.value = await planApi.previewGraphOptions(projectId.value, planStore.currentPlan?.path_mode)
     variantPreview.value = null
     selectedVariantId.value = ''
@@ -1609,6 +1665,32 @@ function shortHash(value?: string | null) {
   border: 1px solid var(--el-border-color);
   border-radius: 8px;
   padding: 16px;
+}
+.overlay-preflight-panel {
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: var(--el-fill-color-light);
+}
+.overlay-preflight-header,
+.overlay-preflight-issues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.overlay-preflight-header {
+  justify-content: space-between;
+}
+.overlay-preflight-panel p {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.overlay-preflight-issues {
+  color: var(--el-color-warning);
+  font-size: 12px;
 }
 .quick-replan-card {
   display: flex;

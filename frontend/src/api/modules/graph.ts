@@ -85,6 +85,60 @@ export interface OverlayProjectionStatusResponse {
   projected_at?: string | null
 }
 
+export type OverlayPreflightStatus = 'ok' | 'warning' | 'blocked'
+
+export interface OverlayCandidateCounts {
+  total: number
+  valid: number
+  confirmed: number
+  pending_review: number
+  planning_disabled: number
+  invalid: number
+}
+
+export interface OverlayPreflightCounts {
+  active_nodes: number
+  active_edges: number
+  planner_visible_nodes?: number
+  planner_visible_edges?: number
+  visible_overlay_nodes: number
+  visible_overlay_edges: number
+  path_overlay_nodes: number
+  path_overlay_edges: number
+  ignored_overlay_edges?: number
+  shadowed_edges?: number
+  cycle_edges?: number
+  blocking_items: number
+  warning_items: number
+  nodes: OverlayCandidateCounts
+  edges: OverlayCandidateCounts
+}
+
+export interface OverlayPreflightItem {
+  kind: string
+  message: string
+  edge_ids?: string[]
+  node_ids?: string[]
+  [key: string]: unknown
+}
+
+export interface OverlayPreflightResponse {
+  project_id: string
+  status: OverlayPreflightStatus
+  summary: string
+  counts: OverlayPreflightCounts
+  visible_overlay_node_ids: string[]
+  visible_overlay_edge_ids: string[]
+  path_overlay_node_ids: string[]
+  path_overlay_edge_ids: string[]
+  ignored_overlay_edge_ids: string[]
+  shadowed_edge_ids: string[]
+  cycle_edge_ids: string[]
+  blocking_items: OverlayPreflightItem[]
+  warning_items: OverlayPreflightItem[]
+  project_graph_hash?: string | null
+}
+
 export interface GraphSyncResponse {
   domain: string
   version: string
@@ -456,6 +510,8 @@ export const graphApi = {
     request.get(`/projects/${projectId}/graph/entities`),
   getOverlayProjectionStatus: (projectId: string): Promise<OverlayProjectionStatusResponse> =>
     request.get(`/projects/${projectId}/graph/overlay/projection/status`),
+  getOverlayPreflight: (projectId: string): Promise<OverlayPreflightResponse> =>
+    request.get(`/projects/${projectId}/graph/overlay/preflight`),
   reviewNode: (projectId: string, nodeId: string, status: ReviewStatus): Promise<any> =>
     request.patch(`/projects/${projectId}/graph/nodes/${nodeId}`, { status }),
   reviewEdge: (projectId: string, edgeId: GraphEdgeData['id'], status: ReviewStatus): Promise<any> =>

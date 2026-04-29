@@ -71,6 +71,22 @@
           show-icon
           :title="projectionStatusTitle"
         />
+        <section v-if="overlayPreflight" class="overlay-preflight-panel graph-alert">
+          <div class="overlay-preflight-header">
+            <strong>增强图谱使用状态</strong>
+            <el-tag :type="overlayPreflightTagType">{{ overlayPreflightStatusLabel }}</el-tag>
+          </div>
+          <p>{{ overlayPreflight.summary }}</p>
+          <div class="overlay-preflight-tags">
+            <el-tag type="info" effect="plain">候选 {{ overlayPreflight.counts.active_nodes }} 节点 / {{ overlayPreflight.counts.active_edges }} 关系</el-tag>
+            <el-tag type="success" effect="plain">可进入增强图谱 {{ overlayPreflight.counts.visible_overlay_nodes }} 节点 / {{ overlayPreflight.counts.visible_overlay_edges }} 关系</el-tag>
+            <el-tag type="warning" effect="plain">当前路径命中 {{ overlayPreflight.counts.path_overlay_nodes }} 节点 / {{ overlayPreflight.counts.path_overlay_edges }} 关系</el-tag>
+            <el-tag v-if="overlayPreflight.counts.ignored_overlay_edges" type="warning" effect="plain">忽略关系 {{ overlayPreflight.counts.ignored_overlay_edges }}</el-tag>
+          </div>
+          <div v-if="overlayPreflightIssues.length" class="overlay-preflight-issues">
+            <span v-for="(item, index) in overlayPreflightIssues" :key="`${item.kind}-${index}`">{{ item.message }}</span>
+          </div>
+        </section>
         <el-alert
           v-if="graphState === 'ready' && lastRefreshError"
           class="graph-alert"
@@ -142,15 +158,22 @@
           title="扩展草稿会先进入项目扩展区，确认审核与规划开关后才会参与路径规划。"
         />
         <el-alert
-          v-if="goalDraftResolutionSessionId"
+          v-if="activeGoalDraftResolutionSessionId"
           class="overlay-alert"
           type="warning"
           :closable="false"
           show-icon
           title="来自目标理解的领域内未覆盖概念。页面打开只展示草稿收件箱；点击创建后才会生成 overlay 草稿。"
         />
+        <section v-else class="overlay-subsection goal-draft-entry manual-goal-draft-entry">
+          <h4>智能草稿建议</h4>
+          <p>手动触发当前项目目标的覆盖分析；只有识别为领域内未覆盖概念时，才会生成待审核 overlay 草稿收件箱。</p>
+          <el-button size="small" type="primary" plain :loading="manualGoalDraftLoading" @click="prepareGoalDraftFromCurrentProject">
+            分析当前目标并生成推荐草稿
+          </el-button>
+        </section>
 
-        <section v-if="goalDraftResolutionSessionId" class="overlay-subsection goal-draft-entry" v-loading="goalDraftProposalLoading">
+        <section v-if="activeGoalDraftResolutionSessionId" class="overlay-subsection goal-draft-entry" v-loading="goalDraftProposalLoading">
           <h4>系统推荐草稿收件箱</h4>
           <p>系统已根据目标理解准备推荐草稿图谱；您也可以忽略推荐，继续使用粘贴文本、搜索 URL 或已保存搜索结果手动补充。</p>
           <el-radio-group v-model="overlayDraftMode" class="draft-mode-switch">
@@ -515,7 +538,7 @@
         <div class="drawer-actions">
           <el-button @click="overlayDrawerVisible = false">关闭</el-button>
           <el-button type="primary" :loading="overlaySubmitting" @click="submitOverlayDraft">
-            {{ goalDraftResolutionSessionId && overlayDraftMode === 'goal_draft' ? '创建推荐草稿' : '创建手动草稿' }}
+            {{ activeGoalDraftResolutionSessionId && overlayDraftMode === 'goal_draft' ? '创建推荐草稿' : '创建手动草稿' }}
           </el-button>
         </div>
       </div>
@@ -525,7 +548,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'
@@ -545,6 +568,7 @@ import {
   type GoalExtensionDraftProposalResponse,
   type GoalExtensionDraftResponse,
   type OverlayProjectionStatusResponse,
+  type OverlayPreflightResponse,
   type OverlayElementGroup,
   type OverlayExtractionPayloadPreviewResponse,
   type OverlayExtractionSessionResponse,
@@ -558,6 +582,7 @@ import NodeDetail from '@/components/Graph/NodeDetail.vue'
 import GraphToolbar from '@/components/Graph/GraphToolbar.vue'
 import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph/graphMeta'
 import { searchApi, type PersistedSearchResult } from '@/api/modules/search'
+import { projectApi, type GoalResolutionPreviewResponse, type ReviewExtensionDraftCoverageResponse } from '@/api/modules/project'
 import { resourceApi } from '@/api/modules/resource'
 import {
   formatServiceReason,
@@ -629,6 +654,14 @@ function normalizeGoalDraftFlag(value: unknown): boolean {
   return nextValue === '1' || nextValue === 'true'
 }
 
+function isReviewExtensionDraftResponse(response: GoalResolutionPreviewResponse): response is ReviewExtensionDraftCoverageResponse {
+  return response.result_type === 'review_extension_draft' && response.coverage_status === 'in_domain_uncovered'
+}
+
+function normalizePreviewGoalType(value: unknown): 'domain' | 'concept' | 'problem' | undefined {
+  return value === 'domain' || value === 'concept' || value === 'problem' ? value : undefined
+}
+
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
@@ -651,6 +684,7 @@ const entityDrawerVisible = ref(false)
 const entityLoading = ref(false)
 const entityMetadata = ref<GraphEntityMetadata | null>(null)
 const projectionStatus = ref<OverlayProjectionStatusResponse | null>(null)
+const overlayPreflight = ref<OverlayPreflightResponse | null>(null)
 const overlayDrawerVisible = ref(false)
 const overlaySubmitting = ref(false)
 const overlayExtractionPreviewLoading = ref(false)
@@ -662,6 +696,8 @@ const overlayExtractionPreview = ref<OverlayExtractionPayloadPreviewResponse | n
 const selectedPreviewCandidates = ref<Record<OverlayPreviewGroup, number[]>>({ nodes: [], edges: [], resources: [] })
 const goalDraftProposal = ref<GoalExtensionDraftProposalResponse | null>(null)
 const goalDraftProposalLoading = ref(false)
+const manualGoalDraftLoading = ref(false)
+const manualGoalDraftResolutionSessionId = ref<string | null>(null)
 const goalDraftProposalDismissed = ref(false)
 const persistedSearchResults = ref<PersistedSearchResult[]>([])
 const lastOverlaySession = ref<OverlaySessionView | null>(null)
@@ -679,6 +715,7 @@ const requestedSessionId = computed<string | null>(() => normalizeRouteSessionId
 const goalDraftResolutionSessionId = computed<string | null>(() => (
   normalizeGoalDraftFlag(route.query.goalDraft) ? normalizeRouteSessionId(route.query.resolutionSessionId) : null
 ))
+const activeGoalDraftResolutionSessionId = computed(() => goalDraftResolutionSessionId.value || manualGoalDraftResolutionSessionId.value)
 const emptyDescription = computed(() =>
   emptyReason.value === PROJECT_LATEST_PLAN_MISSING
     ? '当前项目尚未生成学习路径，暂时无法展示路径子图；项目图谱仍可显示领域基线与项目扩展草稿。'
@@ -696,6 +733,20 @@ const projectionStatusTitle = computed(() => {
   const reason = formatServiceReason(projectionStatus.value.reason)
   return reason ? `${status}：${reason}` : status
 })
+const overlayPreflightTagType = computed(() => {
+  if (overlayPreflight.value?.status === 'ok') return 'success'
+  if (overlayPreflight.value?.status === 'blocked') return 'danger'
+  return 'warning'
+})
+const overlayPreflightStatusLabel = computed(() => {
+  if (overlayPreflight.value?.status === 'ok') return '可用'
+  if (overlayPreflight.value?.status === 'blocked') return '阻塞'
+  return '需关注'
+})
+const overlayPreflightIssues = computed(() => [
+  ...(overlayPreflight.value?.blocking_items || []),
+  ...(overlayPreflight.value?.warning_items || []),
+])
 const resourceTargetOptions = computed(() => nodes.value.map((node) => ({
   id: node.id,
   label: node.label || node.id,
@@ -714,7 +765,7 @@ const goalDraftMissingConcepts = computed(() => (
 ))
 const goalDraftReviewNotes = computed(() => goalExtensionDraftDetails.value?.review_notes || [])
 const goalDraftReviewFocus = computed(() => goalExtensionDraftDetails.value?.gap_analysis?.recommended_review_focus || [])
-const manualOverlayMode = computed(() => !goalDraftResolutionSessionId.value || overlayDraftMode.value === 'manual')
+const manualOverlayMode = computed(() => !activeGoalDraftResolutionSessionId.value || overlayDraftMode.value === 'manual')
 const goalDraftInboxProposal = computed<GoalExtensionDraftProposal | null>(() => goalDraftProposal.value?.draft_proposal || null)
 const goalDraftInboxCounts = computed(() => goalDraftInboxProposal.value?.counts || { nodes: 0, edges: 0, resources: 0 })
 const goalDraftInboxMissingConcepts = computed(() => goalDraftInboxProposal.value?.missing_concepts || goalDraftMissingConcepts.value)
@@ -809,6 +860,7 @@ function resetGraphState() {
   emptyReason.value = undefined
   graphState.value = 'loading'
   projectionStatus.value = null
+  overlayPreflight.value = null
 }
 
 function resetOverlayState() {
@@ -818,7 +870,7 @@ function resetOverlayState() {
   overlayError.value = ''
   overlayBridgeMessage.value = ''
   overlayForm.value = createOverlayForm()
-  overlayDraftMode.value = goalDraftResolutionSessionId.value ? 'goal_draft' : 'manual'
+  overlayDraftMode.value = activeGoalDraftResolutionSessionId.value ? 'goal_draft' : 'manual'
   overlayExtractionPreview.value = null
   selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
   goalDraftProposal.value = null
@@ -877,6 +929,18 @@ async function loadProjectionStatus() {
   }
 }
 
+async function loadOverlayPreflight() {
+  if (!projectId.value) {
+    overlayPreflight.value = null
+    return
+  }
+  try {
+    overlayPreflight.value = await graphApi.getOverlayPreflight(projectId.value)
+  } catch {
+    overlayPreflight.value = null
+  }
+}
+
 function applyGraphData(data: GraphData) {
   const nextElements = data.elements ?? []
 
@@ -923,6 +987,70 @@ function getElementGroup(data: GraphNodeData | GraphEdgeData): OverlayElementGro
 
 function normalizeOverlayReviewStatus(status: string): OverlayReviewStatus {
   return status === 'rejected' ? 'rejected' : status as OverlayReviewStatus
+}
+
+function isMessageBoxCancel(error: unknown): boolean {
+  if (typeof error === 'string') {
+    return error === 'cancel' || error === 'close'
+  }
+  if (error && typeof error === 'object' && 'action' in error) {
+    const action = (error as { action?: unknown }).action
+    return action === 'cancel' || action === 'close'
+  }
+  return false
+}
+
+function overlayElementLabel(group: OverlayElementGroup): string {
+  return group === 'nodes' ? '节点' : '关系'
+}
+
+async function confirmOverlayReview(group: OverlayElementGroup, status: OverlayReviewStatus): Promise<boolean> {
+  if (status !== 'confirmed') {
+    return true
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确认该扩展${overlayElementLabel(group)}有效后，它会进入“已确认候选”；是否参与增强图谱规划仍由规划开关控制。`,
+      '确认扩展候选有效',
+      {
+        type: 'warning',
+        confirmButtonText: '确认有效',
+        cancelButtonText: '取消',
+      },
+    )
+    return true
+  } catch (error) {
+    if (isMessageBoxCancel(error)) {
+      return false
+    }
+    throw error
+  }
+}
+
+async function confirmOverlayPlanning(data: GraphNodeData | GraphEdgeData, enabled: boolean): Promise<boolean> {
+  if (!enabled) {
+    return true
+  }
+
+  const label = data.label ? `「${data.label}」` : '该扩展候选'
+  try {
+    await ElMessageBox.confirm(
+      `${label}开启规划后会进入增强图谱预检和路径对比，但不会直接保存为正式学习路径。`,
+      '纳入增强图谱规划',
+      {
+        type: 'warning',
+        confirmButtonText: '纳入规划',
+        cancelButtonText: '取消',
+      },
+    )
+    return true
+  } catch (error) {
+    if (isMessageBoxCancel(error)) {
+      return false
+    }
+    throw error
+  }
 }
 
 function patchElementLifecycle(
@@ -1023,12 +1151,14 @@ watch(
   projectId,
   async (nextProjectId, previousProjectId) => {
     if (!nextProjectId) {
+      manualGoalDraftResolutionSessionId.value = null
       resetGraphState()
       resetOverlayState()
       return
     }
 
     if (nextProjectId !== previousProjectId) {
+      manualGoalDraftResolutionSessionId.value = null
       resetGraphState()
       resetOverlayState()
     }
@@ -1036,6 +1166,7 @@ watch(
     scope.value = requestedScope.value
     await loadGraph()
     await loadProjectionStatus()
+    await loadOverlayPreflight()
     await loadPersistedSearchResults()
     await loadRequestedOverlaySession()
     await openGoalDraftEntry()
@@ -1054,6 +1185,7 @@ watch([requestedScope, requestedPathId], async ([nextScope, nextPathId], [previo
   resetOverlayState()
   await loadGraph()
   await loadProjectionStatus()
+  await loadOverlayPreflight()
   await focusRequestedNode()
 })
 
@@ -1070,7 +1202,7 @@ async function syncRequestedOverlaySession(nextSessionId: string | null) {
 }
 
 watch(requestedSessionId, syncRequestedOverlaySession)
-watch(goalDraftResolutionSessionId, async (nextSessionId) => {
+watch(activeGoalDraftResolutionSessionId, async (nextSessionId) => {
   if (!nextSessionId) return
   resetOverlayState()
   await openGoalDraftEntry()
@@ -1097,12 +1229,14 @@ async function onScopeChange(nextScope: GraphScope) {
   await replaceGraphRoute(nextScope)
   await loadGraph()
   await loadProjectionStatus()
+  await loadOverlayPreflight()
   await focusRequestedNode()
 }
 
 async function onRefresh() {
   await loadGraph()
   await loadProjectionStatus()
+  await loadOverlayPreflight()
 }
 
 async function onSync() {
@@ -1118,6 +1252,7 @@ async function onSync() {
     ElMessage.success('知识图谱同步成功')
     await loadGraph()
     await loadProjectionStatus()
+    await loadOverlayPreflight()
   } catch (e: any) {
     const message = e?.response?.data?.error || e?.message || '知识图谱同步失败，请稍后重试'
     errorMessage.value = message
@@ -1146,15 +1281,20 @@ async function onReviewNode(nodeId: string, status: string) {
   const node = nodes.value.find((item) => item.id === nodeId)
   try {
     if (node?.origin === 'overlay') {
+      const nextStatus = normalizeOverlayReviewStatus(status)
+      if (!(await confirmOverlayReview('nodes', nextStatus))) {
+        return
+      }
       const result = await graphApi.reviewOverlayElement(
         projectId.value,
         'nodes',
         nodeId,
-        normalizeOverlayReviewStatus(status),
+        nextStatus,
       )
       selectedNodeId.value = nodeId
       patchElementLifecycle(nodeId, result)
       graphRef.value?.setNodeReviewStatus(nodeId, result.review_status)
+      await loadOverlayPreflight()
     } else {
       const nextStatus = status as ReviewStatus
       await graphApi.reviewNode(projectId.value, nodeId, nextStatus)
@@ -1173,14 +1313,19 @@ async function onReviewEdge(edgeId: string, status: string) {
   const edge = edges.value.find((item) => item.id === edgeId)
   try {
     if (edge?.origin === 'overlay') {
+      const nextStatus = normalizeOverlayReviewStatus(status)
+      if (!(await confirmOverlayReview('edges', nextStatus))) {
+        return
+      }
       const result = await graphApi.reviewOverlayElement(
         projectId.value,
         'edges',
         edgeId,
-        normalizeOverlayReviewStatus(status),
+        nextStatus,
       )
       patchElementLifecycle(edgeId, result)
       graphRef.value?.setEdgeReviewStatus(edgeId, result.review_status)
+      await loadOverlayPreflight()
     } else {
       const nextStatus = status as ReviewStatus
       await graphApi.reviewEdge(projectId.value, edgeId, nextStatus)
@@ -1196,6 +1341,9 @@ async function onReviewEdge(edgeId: string, status: string) {
 async function onSetOverlayPlanning(data: GraphNodeData | GraphEdgeData, enabled: boolean) {
   if (!projectId.value || data.origin !== 'overlay') return
   try {
+    if (!(await confirmOverlayPlanning(data, enabled))) {
+      return
+    }
     const result = await graphApi.setOverlayPlanning(
       projectId.value,
       getElementGroup(data),
@@ -1203,6 +1351,7 @@ async function onSetOverlayPlanning(data: GraphNodeData | GraphEdgeData, enabled
       enabled,
     )
     patchElementLifecycle(data.id, result)
+    await loadOverlayPreflight()
     ElMessage.success(enabled ? '已允许参与规划' : '已从规划中排除')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '规划开关更新失败')
@@ -1211,14 +1360,47 @@ async function onSetOverlayPlanning(data: GraphNodeData | GraphEdgeData, enabled
 
 async function openOverlayDrawer() {
   overlayDrawerVisible.value = true
-  overlayDraftMode.value = goalDraftResolutionSessionId.value ? overlayDraftMode.value : 'manual'
+  overlayDraftMode.value = activeGoalDraftResolutionSessionId.value ? overlayDraftMode.value : 'manual'
   overlayError.value = ''
   overlayBridgeMessage.value = ''
   await loadPersistedSearchResults()
 }
 
+async function prepareGoalDraftFromCurrentProject() {
+  if (!projectId.value || !projectStore.currentProject?.goal_text) return
+  manualGoalDraftLoading.value = true
+  overlayError.value = ''
+  goalDraftProposalDismissed.value = false
+  try {
+    const preview = await projectApi.previewForProject(projectId.value, {
+      goal_text: projectStore.currentProject.goal_text,
+      requested_goal_type: normalizePreviewGoalType(projectStore.currentProject.goal_type),
+      domain: projectStore.currentProject.domain,
+    })
+    if (!isReviewExtensionDraftResponse(preview) || !preview.session_id || !preview.draft_proposal) {
+      overlayDraftMode.value = 'manual'
+      overlayError.value = '当前目标已被现有图谱覆盖，暂不需要生成自动扩展草稿。'
+      return
+    }
+    manualGoalDraftResolutionSessionId.value = preview.session_id
+    goalDraftProposal.value = {
+      resolution_session_id: preview.session_id,
+      project_id: projectId.value,
+      session_status: 'draft_previewed',
+      expires_at: preview.expires_at || undefined,
+      draft_proposal: preview.draft_proposal,
+    }
+    overlayDraftMode.value = 'goal_draft'
+    overlayDrawerVisible.value = true
+  } catch (error: any) {
+    overlayError.value = getOverlayErrorMessage(error)
+  } finally {
+    manualGoalDraftLoading.value = false
+  }
+}
+
 async function openGoalDraftEntry() {
-  if (!goalDraftResolutionSessionId.value) return
+  if (!activeGoalDraftResolutionSessionId.value) return
   overlayDrawerVisible.value = true
   overlayDraftMode.value = 'goal_draft'
   overlayError.value = ''
@@ -1229,12 +1411,12 @@ async function openGoalDraftEntry() {
 }
 
 async function loadGoalDraftProposal() {
-  if (!projectId.value || !goalDraftResolutionSessionId.value) return
+  if (!projectId.value || !activeGoalDraftResolutionSessionId.value) return
   goalDraftProposalLoading.value = true
   try {
     goalDraftProposal.value = await graphApi.getGoalExtensionDraftProposal(
       projectId.value,
-      goalDraftResolutionSessionId.value,
+      activeGoalDraftResolutionSessionId.value,
     )
   } catch (error: any) {
     overlayError.value = getOverlayErrorMessage(error)
@@ -1483,10 +1665,10 @@ async function submitOverlayDraft() {
   overlayBridgeMessage.value = ''
 
   try {
-    if (goalDraftResolutionSessionId.value && overlayDraftMode.value === 'goal_draft') {
+    if (activeGoalDraftResolutionSessionId.value && overlayDraftMode.value === 'goal_draft') {
       lastOverlaySession.value = await graphApi.createGoalExtensionDraft(
         projectId.value,
-        goalDraftResolutionSessionId.value,
+        activeGoalDraftResolutionSessionId.value,
       ) as GoalExtensionDraftResponse
     } else {
       const preview = overlayExtractionPreview.value || await previewOverlayExtractionPayload()
@@ -1505,7 +1687,7 @@ async function submitOverlayDraft() {
     overlayForm.value = createOverlayForm()
     overlayExtractionPreview.value = null
     selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
-    goalDraftProposalDismissed.value = Boolean(goalDraftResolutionSessionId.value)
+    goalDraftProposalDismissed.value = Boolean(activeGoalDraftResolutionSessionId.value)
     ElMessage.success('扩展草稿已创建，请在项目图谱中审核候选节点和关系')
     scope.value = 'project'
     await replaceGraphRoute('project', null, lastOverlaySession.value.session.session_id)
@@ -1640,6 +1822,39 @@ function toggleFullscreen() {
 
 .graph-alert {
   margin: 12px 12px 0;
+}
+
+.overlay-preflight-panel {
+  padding: 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.overlay-preflight-header,
+.overlay-preflight-tags,
+.overlay-preflight-issues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.overlay-preflight-header {
+  justify-content: space-between;
+}
+
+.overlay-preflight-panel p {
+  margin: 8px 0;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.overlay-preflight-issues {
+  margin-top: 8px;
+  color: #e6a23c;
+  font-size: 12px;
 }
 
 .overlay-drawer {
