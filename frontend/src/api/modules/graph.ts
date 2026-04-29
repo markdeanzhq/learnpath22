@@ -392,6 +392,18 @@ export interface GraphWorkspaceData {
   goal_draft_error_detail?: GraphWorkspaceErrorDetail | null
 }
 
+export interface GraphCacheCounterStats {
+  hits: number
+  misses: number
+  stores: number
+  clears: number
+}
+
+export interface GraphCacheStatsData {
+  pack_graph_elements: GraphCacheCounterStats
+  project_graph_snapshot: GraphCacheCounterStats
+}
+
 export interface GoalExtensionDraftResponse extends OverlayExtractionSessionResponse {
   goal_trace?: Record<string, unknown>
   missing_concepts?: string[]
@@ -549,6 +561,8 @@ export const graphApi = {
         goal_draft_resolution_session_id: params?.goal_draft_resolution_session_id || undefined,
       },
     }),
+  getGraphCacheStats: (): Promise<GraphCacheStatsData> =>
+    request.get('/graph/cache/stats'),
   seedGraph: (): Promise<GraphSyncResponse> =>
     request.post('/graph/seed'),
   syncGraph: (projectId: string): Promise<GraphSyncResponse> =>

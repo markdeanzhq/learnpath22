@@ -519,6 +519,21 @@ describe('Knowledge overlay entry', () => {
     expect(wrapper.text()).toContain('本地读模型')
   })
 
+  it('logs workspace load timing in dev mode', async () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+
+    mountKnowledge()
+    await flushPromises()
+
+    expect(debugSpy).toHaveBeenCalledWith('[Knowledge performance]', expect.objectContaining({
+      event: 'workspace_loaded',
+      project_id: 'project-001',
+      scope: 'path',
+      elements: 0,
+    }))
+    debugSpy.mockRestore()
+  })
+
   it('aborts stale workspace requests when a newer graph load starts', async () => {
     const firstLoad = createDeferred<any>()
     const secondLoad = createDeferred<any>()

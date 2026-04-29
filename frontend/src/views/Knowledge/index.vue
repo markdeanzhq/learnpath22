@@ -959,6 +959,17 @@ function workspaceErrorMessage(detail?: { message?: string } | null, fallback?: 
   return detail?.message || fallback || ''
 }
 
+function performanceNow() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function logKnowledgePerformance(event: string, payload: Record<string, unknown>) {
+  if (!import.meta.env.DEV || typeof console === 'undefined') {
+    return
+  }
+  console.debug('[Knowledge performance]', { event, ...payload })
+}
+
 function graphRouteQuery(nextScope: GraphScope, nodeId?: string | null, sessionId?: string | null) {
   return {
     ...buildGraphQuery({
@@ -1138,6 +1149,7 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
   }
 
   const controller = createGraphLoadController()
+  const loadStartedAt = performanceNow()
   const hasExistingGraph = elements.value.length > 0
   if (!hasExistingGraph) {
     graphState.value = 'loading'
@@ -1165,7 +1177,14 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
       signal: controller.signal,
       silent: true,
     })
+    const requestDurationMs = Math.round(performanceNow() - loadStartedAt)
     if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
+      logKnowledgePerformance('workspace_stale_response', {
+        project_id: currentProjectId,
+        scope: currentGraphQuery.scope,
+        path_id: currentGraphQuery.path_id,
+        duration_ms: requestDurationMs,
+      })
       return
     }
 
@@ -1201,12 +1220,43 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
         overlayError.value = goalDraftError
       }
     }
+
+    logKnowledgePerformance('workspace_loaded', {
+      project_id: currentProjectId,
+      scope: workspace.graph.scope,
+      path_id: workspace.graph.path_id ?? currentGraphQuery.path_id ?? null,
+      duration_ms: requestDurationMs,
+      elements: workspace.graph.elements?.length ?? 0,
+      optional_errors: [
+        workspace.overlay_preflight_error_detail?.code,
+        workspace.persisted_search_results_error_detail?.code,
+        workspace.overlay_session_error_detail?.code,
+        workspace.goal_draft_error_detail?.code,
+      ].filter(Boolean),
+    })
   } catch (e: any) {
-    if (isCanceledRequest(e) || requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
+    const durationMs = Math.round(performanceNow() - loadStartedAt)
+    if (isCanceledRequest(e)) {
+      logKnowledgePerformance('workspace_canceled', {
+        project_id: currentProjectId,
+        scope: currentGraphQuery.scope,
+        path_id: currentGraphQuery.path_id,
+        duration_ms: durationMs,
+      })
+      return
+    }
+    if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
       return
     }
     const message = e?.response?.data?.error || e?.message || '知识图谱加载失败，请稍后重试'
 
+    logKnowledgePerformance('workspace_failed', {
+      project_id: currentProjectId,
+      scope: currentGraphQuery.scope,
+      path_id: currentGraphQuery.path_id,
+      duration_ms: durationMs,
+      message,
+    })
     errorMessage.value = message
     if (hasExistingGraph) {
       lastRefreshError.value = message

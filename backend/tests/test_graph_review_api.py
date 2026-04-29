@@ -740,6 +740,16 @@ async def test_get_graph_workspace_returns_structured_optional_read_errors(clien
     }
 
 
+async def test_get_graph_cache_stats_returns_read_model_cache_counters(client):
+    resp = await client.get("/api/v1/graph/cache/stats")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert set(data) == {"pack_graph_elements", "project_graph_snapshot"}
+    assert set(data["pack_graph_elements"]) == {"hits", "misses", "stores", "clears"}
+    assert set(data["project_graph_snapshot"]) == {"hits", "misses", "stores", "clears"}
+
+
 async def test_overlay_review_and_planning_endpoints_update_independent_fields(client, project, db_session):
     session = ProjectOverlayExtractionSession(
         session_id="overlay-api-session",

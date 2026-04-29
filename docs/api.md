@@ -684,6 +684,7 @@ V1 仅支持以下受控意图：`compress_time`、`increase_practice`、`increa
 |------|------|------|
 | GET | /projects/{id}/graph | 获取项目关联的图谱数据 |
 | GET | /projects/{id}/graph/workspace | 聚合 Knowledge 首屏图谱、projection、preflight、可选搜索结果/会话/草稿读模型 |
+| GET | /graph/cache/stats | 获取当前进程内图谱读模型缓存统计 |
 | GET | /projects/{id}/graph/subgraph?node_ids=a,b | 获取指定节点的子图 |
 | GET | /projects/{id}/graph/entities | 获取 Stage / Resource 等扩展实体的只读摘要 |
 | POST | /graph/seed | 同步 Domain Pack 到 Neo4j（全局操作） |
@@ -702,6 +703,7 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 说明：
 - 无 latest plan 但已有 overlay draft 时，`scope=project` 仍返回项目图，不再把项目视为 `project_latest_plan_missing` 空态
 - 后端会记录 graph/workspace 读耗时、可选子读失败来源、Domain Pack graph cache 与 ProjectGraphSnapshot cache 统计，便于定位后续性能回退
+- `GET /graph/cache/stats` 返回 `pack_graph_elements` 与 `project_graph_snapshot` 两组计数器：`hits/misses/stores/clears`
 - `graph/entities` 只返回扩展实体展示数据，不会触发图谱重同步
 - 前端 Knowledge 页使用该接口展示 `Stage` / `Resource` 只读信息
 - Path / Dashboard 的“在图谱中定位”会跳转到 Knowledge，并由图谱画布聚焦对应 `nodeId`

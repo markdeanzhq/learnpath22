@@ -210,6 +210,44 @@ class GoalExtensionDraftRequest(BaseModel):
     resolution_session_id: str = Field(min_length=1)
 
 
+class WorkspaceErrorDetail(BaseModel):
+    code: str
+    message: str
+    source: str
+    recoverable: bool = True
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphWorkspaceResponse(BaseModel):
+    project_id: str
+    graph: dict[str, Any]
+    projection_status: dict[str, Any]
+    overlay_preflight: dict[str, Any] | None = None
+    overlay_preflight_error: str | None = None
+    overlay_preflight_error_detail: WorkspaceErrorDetail | None = None
+    persisted_search_results: list[dict[str, Any]] | None = None
+    persisted_search_results_error: str | None = None
+    persisted_search_results_error_detail: WorkspaceErrorDetail | None = None
+    overlay_session: dict[str, Any] | None = None
+    overlay_session_error: str | None = None
+    overlay_session_error_detail: WorkspaceErrorDetail | None = None
+    goal_draft_proposal: dict[str, Any] | None = None
+    goal_draft_error: str | None = None
+    goal_draft_error_detail: WorkspaceErrorDetail | None = None
+
+
+class GraphCacheCounterStats(BaseModel):
+    hits: int = 0
+    misses: int = 0
+    stores: int = 0
+    clears: int = 0
+
+
+class GraphCacheStatsResponse(BaseModel):
+    pack_graph_elements: GraphCacheCounterStats
+    project_graph_snapshot: GraphCacheCounterStats
+
+
 class OverlayPromotionPreviewRequest(BaseModel):
     element_ids: list[str] | None = None
 
@@ -645,7 +683,7 @@ async def get_overlay_projection_status_endpoint(
     return await get_project_overlay_projection_status(db, project_id)
 
 
-@router.get("/projects/{project_id}/graph/workspace")
+@router.get("/projects/{project_id}/graph/workspace", response_model=GraphWorkspaceResponse)
 async def get_graph_workspace(
     project_id: str,
     scope: str = Query(default=GRAPH_SCOPE_DOMAIN),
@@ -789,6 +827,15 @@ async def get_graph_workspace(
         get_project_graph_snapshot_cache_stats(),
     )
     return workspace
+
+
+@router.get("/graph/cache/stats", response_model=GraphCacheStatsResponse)
+async def get_graph_cache_stats():
+    """获取当前进程内图谱读模型缓存统计。"""
+    return {
+        "pack_graph_elements": get_pack_graph_elements_cache_stats(),
+        "project_graph_snapshot": get_project_graph_snapshot_cache_stats(),
+    }
 
 
 @router.get("/projects/{project_id}/graph")
