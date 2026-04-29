@@ -602,31 +602,52 @@ describe('Knowledge overlay entry', () => {
     expect((wrapper.vm as any).overlayError).toBe('结构化会话不可用')
   })
 
-  it('keeps the newest graph response when overlapping loads finish out of order', async () => {
+  it('keeps the newest workspace response when overlapping loads finish out of order', async () => {
     const firstLoad = createDeferred<any>()
     const secondLoad = createDeferred<any>()
-    graphGetGraphMock
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    graphGetGraphWorkspaceMock
       .mockReturnValueOnce(firstLoad.promise)
       .mockReturnValueOnce(secondLoad.promise)
 
-    const wrapper = mountKnowledge()
-    await flushPromises()
-    const firstReload = (wrapper.vm as any).loadGraph()
+    const firstReload = (wrapper.vm as any).loadGraphWorkspace()
     await Promise.resolve()
-    const secondReload = (wrapper.vm as any).loadGraph()
+    const secondReload = (wrapper.vm as any).loadGraphWorkspace()
     await Promise.resolve()
 
     secondLoad.resolve({
-      scope: 'path',
-      elements: [{ group: 'nodes', data: { id: 'new-node' } }],
-      is_empty: false,
+      project_id: 'project-001',
+      graph: {
+        scope: 'path',
+        elements: [{ group: 'nodes', data: { id: 'new-node' } }],
+        is_empty: false,
+      },
+      projection_status: {
+        project_id: 'project-001',
+        status: 'empty',
+        ready: true,
+        in_sync: true,
+      },
+      overlay_preflight: null,
     })
     await secondReload
 
     firstLoad.resolve({
-      scope: 'path',
-      elements: [{ group: 'nodes', data: { id: 'stale-node' } }],
-      is_empty: false,
+      project_id: 'project-001',
+      graph: {
+        scope: 'path',
+        elements: [{ group: 'nodes', data: { id: 'stale-node' } }],
+        is_empty: false,
+      },
+      projection_status: {
+        project_id: 'project-001',
+        status: 'empty',
+        ready: true,
+        in_sync: true,
+      },
+      overlay_preflight: null,
     })
     await firstReload
     await flushPromises()

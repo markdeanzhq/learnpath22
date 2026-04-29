@@ -745,9 +745,14 @@ async def test_get_graph_cache_stats_returns_read_model_cache_counters(client):
 
     assert resp.status_code == 200
     data = resp.json()
+    expected_counter_keys = {"hits", "misses", "stores", "clears", "size", "max_size", "hit_rate"}
     assert set(data) == {"pack_graph_elements", "project_graph_snapshot"}
-    assert set(data["pack_graph_elements"]) == {"hits", "misses", "stores", "clears"}
-    assert set(data["project_graph_snapshot"]) == {"hits", "misses", "stores", "clears"}
+    assert set(data["pack_graph_elements"]) == expected_counter_keys
+    assert set(data["project_graph_snapshot"]) == expected_counter_keys
+    assert 0 <= data["pack_graph_elements"]["size"] <= data["pack_graph_elements"]["max_size"]
+    assert 0 <= data["project_graph_snapshot"]["size"] <= data["project_graph_snapshot"]["max_size"]
+    assert 0 <= data["pack_graph_elements"]["hit_rate"] <= 1
+    assert 0 <= data["project_graph_snapshot"]["hit_rate"] <= 1
 
 
 async def test_overlay_review_and_planning_endpoints_update_independent_fields(client, project, db_session):

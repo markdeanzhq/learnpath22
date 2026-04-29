@@ -31,8 +31,16 @@ _pack_graph_elements_cache_stats = {
 }
 
 
-def get_pack_graph_elements_cache_stats() -> dict[str, int]:
-    return dict(_pack_graph_elements_cache_stats)
+def get_pack_graph_elements_cache_stats() -> dict[str, int | float]:
+    hits = _pack_graph_elements_cache_stats.get("hits", 0)
+    misses = _pack_graph_elements_cache_stats.get("misses", 0)
+    total_requests = hits + misses
+    return {
+        **_pack_graph_elements_cache_stats,
+        "size": len(_pack_graph_elements_cache),
+        "max_size": _PACK_GRAPH_ELEMENTS_CACHE_MAX_SIZE,
+        "hit_rate": hits / total_requests if total_requests else 0.0,
+    }
 
 
 def _record_pack_graph_cache_event(event: str) -> None:

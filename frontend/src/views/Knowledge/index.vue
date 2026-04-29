@@ -1103,38 +1103,7 @@ type GoalDraftEntryOptions = {
   refreshPersistedSearchResults?: boolean
 }
 
-async function loadCompanionData(options: CompanionLoadOptions = {}) {
-  const tasks: Promise<unknown>[] = [
-    loadProjectionStatus(),
-    loadOverlayPreflight(),
-  ]
-
-  if (options.includePersistedSearchResults) {
-    tasks.push(loadPersistedSearchResults())
-  }
-  if (options.includeRequestedOverlaySession) {
-    tasks.push(loadRequestedOverlaySession())
-  }
-  if (options.includeGoalDraftEntry) {
-    tasks.push(openGoalDraftEntry({
-      refreshPersistedSearchResults: !options.includePersistedSearchResults,
-    }))
-  }
-
-  await Promise.all(tasks)
-}
-
 async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
-  const getWorkspace = (graphApi as any).getGraphWorkspace as typeof graphApi.getGraphWorkspace | undefined
-  if (!getWorkspace) {
-    await Promise.all([
-      loadGraph(),
-      loadCompanionData(options),
-    ])
-    await focusRequestedNode()
-    return
-  }
-
   const currentProjectId = projectId.value
   const currentGraphQuery = graphQuery.value
   const currentSessionId = options.includeRequestedOverlaySession ? requestedSessionId.value : null
@@ -1168,7 +1137,7 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
   errorMessage.value = ''
 
   try {
-    const workspace: GraphWorkspaceData = await getWorkspace(currentProjectId, {
+    const workspace: GraphWorkspaceData = await graphApi.getGraphWorkspace(currentProjectId, {
       ...currentGraphQuery,
       include_persisted_search_results: options.includePersistedSearchResults,
       session_id: currentSessionId,
@@ -1407,63 +1376,6 @@ function updateEdgeReviewStatus(edgeId: string, status: ReviewStatus) {
       },
     }
   })
-}
-
-async function loadGraph() {
-  const currentProjectId = projectId.value
-  const currentGraphQuery = graphQuery.value
-  const requestId = ++graphLoadRequestId
-
-  if (!currentProjectId) {
-    abortGraphLoad()
-    resetGraphState()
-    loading.value = false
-    return
-  }
-
-  const controller = createGraphLoadController()
-  const hasExistingGraph = elements.value.length > 0
-
-  if (!hasExistingGraph) {
-    graphState.value = 'loading'
-  }
-
-  loading.value = true
-  errorMessage.value = ''
-
-  try {
-    const data = await graphApi.getGraph(currentProjectId, currentGraphQuery, {
-      signal: controller.signal,
-      silent: true,
-    })
-    if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
-      return
-    }
-    applyGraphData(data)
-  } catch (e: any) {
-    if (isCanceledRequest(e) || requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
-      return
-    }
-    const message = e?.response?.data?.error || e?.message || '知识图谱加载失败，请稍后重试'
-
-    errorMessage.value = message
-
-    if (hasExistingGraph) {
-      lastRefreshError.value = message
-      graphState.value = 'ready'
-      ElMessage.error(message)
-    } else {
-      selectedNodeId.value = null
-      lastRefreshError.value = ''
-      emptyReason.value = undefined
-      graphState.value = 'error'
-    }
-  } finally {
-    clearGraphLoadController(controller)
-    if (requestId === graphLoadRequestId && projectId.value === currentProjectId) {
-      loading.value = false
-    }
-  }
 }
 
 watch(

@@ -169,6 +169,9 @@ def test_build_project_graph_elements_caches_pack_only_graph_defensively():
     assert after_stats["misses"] == before_stats["misses"] + 1
     assert after_stats["hits"] == before_stats["hits"] + 1
     assert after_stats["stores"] == before_stats["stores"] + 1
+    assert after_stats["size"] >= 1
+    assert after_stats["max_size"] == 16
+    assert 0 < after_stats["hit_rate"] <= 1
 
 
 @pytest.mark.asyncio

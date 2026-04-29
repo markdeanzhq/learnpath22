@@ -703,7 +703,7 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 说明：
 - 无 latest plan 但已有 overlay draft 时，`scope=project` 仍返回项目图，不再把项目视为 `project_latest_plan_missing` 空态
 - 后端会记录 graph/workspace 读耗时、可选子读失败来源、Domain Pack graph cache 与 ProjectGraphSnapshot cache 统计，便于定位后续性能回退
-- `GET /graph/cache/stats` 返回 `pack_graph_elements` 与 `project_graph_snapshot` 两组计数器：`hits/misses/stores/clears`
+- `GET /graph/cache/stats` 返回 `pack_graph_elements` 与 `project_graph_snapshot` 两组计数器：`hits/misses/stores/clears/size/max_size/hit_rate`
 - `graph/entities` 只返回扩展实体展示数据，不会触发图谱重同步
 - 前端 Knowledge 页使用该接口展示 `Stage` / `Resource` 只读信息
 - Path / Dashboard 的“在图谱中定位”会跳转到 Knowledge，并由图谱画布聚焦对应 `nodeId`

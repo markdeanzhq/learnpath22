@@ -152,6 +152,9 @@ async def test_project_graph_snapshot_cache_reuses_unchanged_revision(
     assert after_stats["misses"] == before_stats["misses"] + 1
     assert after_stats["hits"] == before_stats["hits"] + 1
     assert after_stats["stores"] == before_stats["stores"] + 1
+    assert after_stats["size"] >= 1
+    assert after_stats["max_size"] == 64
+    assert 0 < after_stats["hit_rate"] <= 1
     list_nodes.assert_not_awaited()
     list_edges.assert_not_awaited()
 

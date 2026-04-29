@@ -397,6 +397,9 @@ export interface GraphCacheCounterStats {
   misses: number
   stores: number
   clears: number
+  size: number
+  max_size: number
+  hit_rate: number
 }
 
 export interface GraphCacheStatsData {

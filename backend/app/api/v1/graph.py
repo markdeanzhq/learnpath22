@@ -241,6 +241,9 @@ class GraphCacheCounterStats(BaseModel):
     misses: int = 0
     stores: int = 0
     clears: int = 0
+    size: int = 0
+    max_size: int = 0
+    hit_rate: float = 0.0
 
 
 class GraphCacheStatsResponse(BaseModel):
