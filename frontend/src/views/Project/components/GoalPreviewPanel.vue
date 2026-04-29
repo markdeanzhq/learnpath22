@@ -41,12 +41,13 @@
     />
 
     <section class="state-card decision-summary-panel">
-      <div class="section-header">
+      <div class="section-header decision-summary-header">
         <div>
+          <p class="section-eyebrow">解析结论</p>
           <h3>推荐下一步</h3>
           <p>{{ decisionSummary.description }}</p>
         </div>
-        <el-tag :type="decisionSummaryTagType">{{ decisionSummary.badge }}</el-tag>
+        <el-tag :type="decisionSummaryTagType" size="large">{{ decisionSummary.badge }}</el-tag>
       </div>
       <div class="decision-grid">
         <div class="decision-item">
@@ -95,7 +96,7 @@
             :disabled="!action.enabled"
             @click="$emit('openExtensionDraft')"
           >
-            预览扩展草稿
+            进入草稿收件箱
           </el-button>
           <el-button
             v-else-if="action.action === 'create_extension_draft' && isExtensionDraftResponse(previewState) && mode === 'create' && previewState.session_id"
@@ -105,7 +106,7 @@
             :disabled="!action.enabled || previewDirty || Boolean(unsafeStateMessage)"
             @click="$emit('createExtensionProject')"
           >
-            创建待扩展项目
+            创建待扩展项目并审核草稿
           </el-button>
         </article>
       </div>
@@ -114,83 +115,112 @@
     <section v-if="candidateResponses.length" class="state-card candidate-selection-panel">
       <div class="section-header">
         <div>
+          <p class="section-eyebrow">推荐方案</p>
           <h3>{{ candidateSectionTitle }}</h3>
           <p>{{ candidateSectionDescription }}</p>
         </div>
         <el-tag v-if="topCandidate" :type="confidenceTagType(topCandidate.confidence_level)">{{ confidenceLabel(topCandidate.confidence_level) }}</el-tag>
       </div>
 
-      <div class="candidate-list">
-        <el-card
-          v-for="candidate in visibleCandidates"
-          :key="candidate.candidate_id"
-          shadow="never"
-          class="candidate-card"
-          :class="{ selected: selectedCandidateId === candidate.candidate_id }"
-          @click="selectCandidate(candidate.candidate_id)"
-        >
-          <div class="candidate-header">
-            <div class="candidate-title-row">
-              <el-radio-group :model-value="selectedCandidateId" @update:model-value="selectCandidate">
-                <el-radio :value="candidate.candidate_id">{{ candidateTitle(candidate) }}</el-radio>
-              </el-radio-group>
-              <el-tag v-if="candidate.candidate_id === recommendedCandidateId && candidate.is_recommended !== false" type="success">建议确认</el-tag>
-            </div>
-            <div class="candidate-meta">
-              <el-tag>{{ goalTypeLabel(candidate.goal_type) }}</el-tag>
-              <el-tag :type="confidenceTagType(candidate.confidence_level)">{{ confidenceLabel(candidate.confidence_level) }}</el-tag>
-              <el-tag v-if="showAuditDetails" type="info" :title="resolveSourceMeta(candidate.resolve_source).detail || candidate.resolve_source">
-                {{ resolveSourceMeta(candidate.resolve_source).label }}
-              </el-tag>
-              <el-tag :type="recommendedActionTagType(candidate.recommended_action)">{{ recommendedActionLabel(candidate.recommended_action) }}</el-tag>
-            </div>
-          </div>
-
-          <p class="candidate-explanation">{{ candidate.user_explanation || candidate.explanation }}</p>
-          <p v-if="showAuditDetails && candidate.confidence_reason" class="candidate-confidence-reason">{{ candidate.confidence_reason }}</p>
-
-          <div v-if="showAuditDetails && candidate.match_signals?.length" class="candidate-signals">
-            <el-tag
-              v-for="signal in candidate.match_signals"
-              :key="`${candidate.candidate_id}:${signal.type}:${signal.label}`"
-              size="small"
-              effect="plain"
-              :title="signal.detail"
-            >
-              {{ signal.label }}：{{ signalStrengthLabel(signal.strength) }}
-            </el-tag>
-          </div>
-
-          <div class="candidate-targets">
-            <span class="targets-label">路径将围绕这些内容展开：</span>
-            <el-tag
-              v-for="target in candidateTargetRefs(candidate)"
-              :key="target.node_id"
-              size="small"
-              effect="plain"
-              :title="`节点 ID：${target.node_id}`"
-            >
-              {{ target.node_name }}
-            </el-tag>
-          </div>
-
-          <details v-if="showTechnicalDetails" class="candidate-debug-details">
-            <summary>技术评分详情</summary>
-            <div class="candidate-debug-content">
-              <el-tag type="info">评分 {{ formatScore(candidate.score) }}</el-tag>
-              <span>{{ candidate.debug_explanation || candidate.explanation }}</span>
-            </div>
-          </details>
-        </el-card>
-      </div>
-      <el-button
-        v-if="hiddenCandidateCount > 0"
-        class="show-alternatives-button"
-        plain
-        @click="$emit('update:showAllCandidates', !showAllCandidates)"
+      <article
+        v-if="topCandidate"
+        class="candidate-focus-card"
+        :class="{ selected: selectedCandidateId === topCandidate.candidate_id }"
+        @click="selectCandidate(topCandidate.candidate_id)"
       >
-        {{ showAllCandidates ? '收起其他学习方案' : `查看 ${hiddenCandidateCount} 个其他学习方案` }}
-      </el-button>
+        <div>
+          <span class="decision-label">当前推荐</span>
+          <strong>{{ candidateTitle(topCandidate) }}</strong>
+          <p>{{ topCandidate.user_explanation || topCandidate.explanation }}</p>
+        </div>
+        <div class="candidate-targets compact-targets">
+          <span class="targets-label">路径目标：</span>
+          <el-tag
+            v-for="target in candidateTargetRefs(topCandidate)"
+            :key="target.node_id"
+            size="small"
+            effect="plain"
+            :title="`节点 ID：${target.node_id}`"
+          >
+            {{ target.node_name }}
+          </el-tag>
+        </div>
+      </article>
+
+      <details class="candidate-detail-disclosure" :open="showAllCandidates || showTechnicalDetails">
+        <summary>查看或调整学习方案细节</summary>
+        <div class="candidate-list">
+          <el-card
+            v-for="candidate in visibleCandidates"
+            :key="candidate.candidate_id"
+            shadow="never"
+            class="candidate-card"
+            :class="{ selected: selectedCandidateId === candidate.candidate_id }"
+            @click="selectCandidate(candidate.candidate_id)"
+          >
+            <div class="candidate-header">
+              <div class="candidate-title-row">
+                <el-radio-group :model-value="selectedCandidateId" @update:model-value="selectCandidate">
+                  <el-radio :value="candidate.candidate_id">{{ candidateTitle(candidate) }}</el-radio>
+                </el-radio-group>
+                <el-tag v-if="candidate.candidate_id === recommendedCandidateId && candidate.is_recommended !== false" type="success">建议确认</el-tag>
+              </div>
+              <div class="candidate-meta">
+                <el-tag>{{ goalTypeLabel(candidate.goal_type) }}</el-tag>
+                <el-tag :type="confidenceTagType(candidate.confidence_level)">{{ confidenceLabel(candidate.confidence_level) }}</el-tag>
+                <el-tag v-if="showAuditDetails" type="info" :title="resolveSourceMeta(candidate.resolve_source).detail || candidate.resolve_source">
+                  {{ resolveSourceMeta(candidate.resolve_source).label }}
+                </el-tag>
+                <el-tag :type="recommendedActionTagType(candidate.recommended_action)">{{ recommendedActionLabel(candidate.recommended_action) }}</el-tag>
+              </div>
+            </div>
+
+            <p class="candidate-explanation">{{ candidate.user_explanation || candidate.explanation }}</p>
+            <p v-if="showAuditDetails && candidate.confidence_reason" class="candidate-confidence-reason">{{ candidate.confidence_reason }}</p>
+
+            <div v-if="showAuditDetails && candidate.match_signals?.length" class="candidate-signals">
+              <el-tag
+                v-for="signal in candidate.match_signals"
+                :key="`${candidate.candidate_id}:${signal.type}:${signal.label}`"
+                size="small"
+                effect="plain"
+                :title="signal.detail"
+              >
+                {{ signal.label }}：{{ signalStrengthLabel(signal.strength) }}
+              </el-tag>
+            </div>
+
+            <div class="candidate-targets">
+              <span class="targets-label">路径将围绕这些内容展开：</span>
+              <el-tag
+                v-for="target in candidateTargetRefs(candidate)"
+                :key="target.node_id"
+                size="small"
+                effect="plain"
+                :title="`节点 ID：${target.node_id}`"
+              >
+                {{ target.node_name }}
+              </el-tag>
+            </div>
+
+            <details v-if="showTechnicalDetails" class="candidate-debug-details">
+              <summary>技术评分详情</summary>
+              <div class="candidate-debug-content">
+                <el-tag type="info">评分 {{ formatScore(candidate.score) }}</el-tag>
+                <span>{{ candidate.debug_explanation || candidate.explanation }}</span>
+              </div>
+            </details>
+          </el-card>
+        </div>
+        <el-button
+          v-if="hiddenCandidateCount > 0"
+          class="show-alternatives-button"
+          plain
+          @click="$emit('update:showAllCandidates', !showAllCandidates)"
+        >
+          {{ showAllCandidates ? '收起其他学习方案' : `查看 ${hiddenCandidateCount} 个其他学习方案` }}
+        </el-button>
+      </details>
     </section>
 
     <section v-if="isPartialResponse(previewState)" class="state-card partial-coverage-panel">
@@ -286,14 +316,32 @@
     <section v-if="isExtensionDraftResponse(previewState)" class="state-card extension-draft-panel">
       <div class="section-header">
         <div>
-          <h3>生成可审核的扩展草稿</h3>
-          <p>当前知识图谱还没有完整覆盖这些概念。你可以先生成草稿，审核通过后再考虑用于学习路径。</p>
+          <p class="section-eyebrow">安全扩展流程</p>
+          <h3>这个目标需要先扩展图谱</h3>
+          <p>当前知识图谱还没有完整覆盖这些概念，系统已把它们分流为可审核草稿，避免直接生成不可靠路径。</p>
         </div>
       </div>
       <div class="missing-concepts">
         <span class="targets-label">待补充概念：</span>
         <el-tag v-for="concept in previewState.missing_concepts" :key="concept" type="warning">{{ concept }}</el-tag>
       </div>
+      <div v-if="previewState.draft_proposal?.counts" class="draft-proposal-metrics">
+        <div class="draft-proposal-metric">
+          <span>推荐节点</span>
+          <strong>{{ previewState.draft_proposal.counts.nodes }}</strong>
+        </div>
+        <div class="draft-proposal-metric">
+          <span>推荐关系</span>
+          <strong>{{ previewState.draft_proposal.counts.edges }}</strong>
+        </div>
+        <div class="draft-proposal-metric">
+          <span>推荐资源</span>
+          <strong>{{ previewState.draft_proposal.counts.resources }}</strong>
+        </div>
+      </div>
+      <p v-if="previewState.draft_proposal" class="form-hint">
+        推荐草稿只会进入 Knowledge 草稿收件箱；必须显式创建、审核并开启 planning 后，才可能影响增强路径方案。
+      </p>
       <el-alert
         class="extension-draft-explain"
         title="为什么不能直接生成路径？"
@@ -305,11 +353,21 @@
           学习路径依赖知识图谱中的前置关系。概念未覆盖时，系统需要先生成并审核扩展草稿，避免生成顺序不可靠的路径。
         </template>
       </el-alert>
-      <el-button type="primary" plain :disabled="!canOpenExtensionDraft" @click="$emit('openExtensionDraft')">
-        预览扩展草稿
+      <el-button
+        v-if="mode === 'create'"
+        type="primary"
+        plain
+        :loading="confirmLoading"
+        :disabled="previewDirty || Boolean(unsafeStateMessage) || !previewState.session_id"
+        @click="$emit('createExtensionProject')"
+      >
+        创建待扩展项目并进入草稿收件箱
+      </el-button>
+      <el-button v-else type="primary" plain :disabled="!canOpenExtensionDraft" @click="$emit('openExtensionDraft')">
+        进入草稿收件箱
       </el-button>
       <p class="form-hint">
-        {{ canOpenExtensionDraft ? '只会打开草稿预览，不会自动写入正式图谱或直接生成路径。' : '新建流程会先创建待扩展项目，再进入草稿审核；审核前不会生成正式路径。' }}
+        {{ mode === 'create' ? '新建流程会先创建待扩展项目，再进入草稿审核；审核前不会生成正式路径。' : '只会打开草稿收件箱，不会自动写入正式图谱或直接生成路径。' }}
       </p>
     </section>
   </div>
@@ -640,9 +698,14 @@ function selectCandidate(candidateId: string) {
 
 .state-card {
   border: 1px solid var(--el-border-color);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 16px;
   background: var(--el-fill-color-blank);
+}
+
+.decision-summary-panel {
+  border-color: var(--el-color-primary-light-7);
+  background: linear-gradient(135deg, var(--el-color-primary-light-9), var(--el-fill-color-blank));
 }
 
 .section-header {
@@ -655,6 +718,13 @@ function selectCandidate(candidateId: string) {
 
 .section-header h3 {
   margin: 0 0 4px;
+}
+
+.section-header .section-eyebrow {
+  margin: 0 0 6px;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .section-header p {
@@ -670,6 +740,34 @@ function selectCandidate(candidateId: string) {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.draft-proposal-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.draft-proposal-metric {
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  background: var(--el-fill-color-light);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.draft-proposal-metric span {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.draft-proposal-metric strong {
+  color: var(--el-color-primary);
+  font-size: 22px;
 }
 
 .decision-grid {
@@ -738,6 +836,42 @@ function selectCandidate(candidateId: string) {
 
 .targets-label {
   font-weight: 600;
+}
+
+.candidate-focus-card {
+  padding: 14px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 12px;
+  background: var(--el-color-primary-light-9);
+  cursor: pointer;
+}
+
+.candidate-focus-card strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--el-text-color-primary);
+  line-height: 1.5;
+}
+
+.candidate-focus-card p {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
+.candidate-detail-disclosure {
+  margin-top: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.candidate-detail-disclosure summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.candidate-detail-disclosure[open] summary {
+  margin-bottom: 12px;
 }
 
 .candidate-list {
@@ -818,6 +952,10 @@ function selectCandidate(candidateId: string) {
   color: var(--el-text-color-secondary);
 }
 
+.compact-targets {
+  margin-top: 10px;
+}
+
 .extension-draft-explain {
   margin: 12px 0;
 }
@@ -881,7 +1019,8 @@ function selectCandidate(candidateId: string) {
 
 @media (max-width: 768px) {
   .decision-grid,
-  .coverage-action-grid {
+  .coverage-action-grid,
+  .draft-proposal-metrics {
     grid-template-columns: 1fr;
   }
 

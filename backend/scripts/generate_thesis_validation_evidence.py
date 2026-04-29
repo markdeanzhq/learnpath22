@@ -34,6 +34,12 @@ DEFAULT_SUMMARY_FILE = (
     / "thesis_validation"
     / "paper_metrics.json"
 )
+DEFAULT_REPORT_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "artifacts"
+    / "thesis_validation"
+    / "report.md"
+)
 DEFAULT_REQUIRES_FILE = (
     Path(__file__).resolve().parents[1]
     / "app"
@@ -828,6 +834,145 @@ def compute_environment_metrics(
     }
 
 
+def format_bool(value: Any) -> str:
+    return "是" if bool(value) else "否"
+
+
+def format_percent(value: Any) -> str:
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def markdown_cell(value: Any) -> str:
+    text = str(value) if value is not None else "-"
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def build_markdown_header(context: dict[str, Any]) -> list[str]:
+    evidence = context["evidence"]
+    paper_metrics = context["paper_metrics"]
+    run_metadata = context["run_metadata"]
+    generated_at = run_metadata.get("finished_at_utc") or run_metadata.get("started_at_utc") or "-"
+    return [
+        "# LearnPath-KG 论文验证自动评估报告",
+        "",
+        f"- 生成时间：{generated_at}",
+        f"- Matrix：`{evidence.get('matrix_id', '-')}`",
+        f"- Change：`{evidence.get('change', '-')}`",
+        f"- 引用就绪：{format_bool(paper_metrics.get('citation_ready'))}",
+        "",
+    ]
+
+
+def build_markdown_conclusion(summary: dict[str, Any], stage_evidence: dict[str, Any]) -> list[str]:
+    return [
+        "## 1. 总体验证结论",
+        "",
+        f"- 场景通过：{summary.get('successful_scenarios', 0)}/{summary.get('scenario_count', 0)}",
+        f"- 全部场景通过：{format_bool(summary.get('all_scenarios_passed'))}",
+        f"- 依赖满足率：{format_percent(summary.get('dependency_satisfaction_ratio'))}",
+        f"- 平均阶段数：{stage_evidence.get('average_stage_count', 0)}",
+        f"- 平均阶段总时长：{stage_evidence.get('average_total_stage_hours', 0)} 小时",
+        "",
+    ]
+
+
+def build_markdown_environment(environment: dict[str, Any], run_metadata: dict[str, Any]) -> list[str]:
+    runtime_mode = environment.get("resolved_runtime_mode") or run_metadata.get("resolved_runtime_mode") or "-"
+    readiness = environment.get("readiness_status") or run_metadata.get("readiness_status") or "-"
+    return [
+        "## 2. 运行环境与依赖状态",
+        "",
+        f"- 运行模式：`{runtime_mode}`",
+        f"- 使用在线依赖：{format_bool(environment.get('uses_online_dependencies'))}",
+        f"- Readiness：`{readiness}`",
+        f"- Core ready：{format_bool(environment.get('core_ready'))}",
+        f"- Demo ready：{format_bool(environment.get('demo_ready'))}",
+        f"- Enhanced ready：{format_bool(environment.get('enhanced_ready'))}",
+        f"- Tracking 统计口径：`{environment.get('tracking_summary_scope', 'latest_plan')}`",
+        "",
+    ]
+
+
+def build_markdown_scenario_table(
+    results: list[Any],
+    dependency_by_scenario: dict[Any, dict[str, Any]],
+) -> list[str]:
+    lines = [
+        "## 3. 场景明细",
+        "",
+        "| 场景 ID | 标题 | 状态 | 节点数 | 阶段数 | 总时长 | 依赖满足率 | 失败检查 |",
+        "|---|---|---:|---:|---:|---:|---:|---|",
+    ]
+    for result in results:
+        if isinstance(result, dict):
+            lines.append(build_markdown_scenario_row(result, dependency_by_scenario))
+    return lines + [""]
+
+
+def build_markdown_scenario_row(
+    result: dict[str, Any],
+    dependency_by_scenario: dict[Any, dict[str, Any]],
+) -> str:
+    scenario_id = result.get("scenario_id")
+    plan_response = result.get("plan_response", {}) if isinstance(result.get("plan_response"), dict) else {}
+    stage_summary = result.get("stage_summary", []) if isinstance(result.get("stage_summary"), list) else []
+    dependency_summary = dependency_by_scenario.get(scenario_id, {})
+    total_hours = round(sum(stage.get("estimated_hours", 0) for stage in stage_summary), 1)
+    failed_checks = ", ".join(result.get("failed_checks") or []) or "-"
+    cells = [
+        scenario_id,
+        result.get("scenario_title"),
+        get_scenario_report_status(result),
+        plan_response.get("node_count", len(extract_plan_node_ids(plan_response))),
+        len(stage_summary),
+        total_hours,
+        format_percent(dependency_summary.get("dependency_satisfaction_ratio")),
+        failed_checks,
+    ]
+    return "| " + " | ".join(markdown_cell(cell) for cell in cells) + " |"
+
+
+def build_markdown_evidence_boundary() -> list[str]:
+    return [
+        "## 4. 可引用证据边界",
+        "",
+        "- 本报告由固定场景矩阵通过 API 自动生成，原始证据保存在 `latest.json`。",
+        "- `paper_metrics.json` 保留论文可引用的结构化指标，Markdown 报告只做可读化汇总。",
+        "- 依赖正确性以 Domain Pack 的 `REQUIRES` 边为基准，检查路径内前置节点是否早于目标节点出现。",
+        "- 路径正确性仍由知识图谱、项目快照、拓扑排序和规则评分保证，LLM/搜索只作为增强证据记录。",
+        "",
+    ]
+
+
+def build_markdown_report(evidence: dict[str, Any], paper_metrics: dict[str, Any]) -> str:
+    run_metadata = evidence.get("run_metadata", {}) if isinstance(evidence, dict) else {}
+    summary = evidence.get("summary", {}) if isinstance(evidence, dict) else {}
+    results = evidence.get("results", []) if isinstance(evidence, dict) else []
+    dependency = paper_metrics.get("dependency_correctness", {}) if isinstance(paper_metrics, dict) else {}
+    stage_evidence = paper_metrics.get("stage_evidence", {}) if isinstance(paper_metrics, dict) else {}
+    environment = paper_metrics.get("environment_state", {}) if isinstance(paper_metrics, dict) else {}
+    dependency_by_scenario = {
+        item.get("scenario_id"): item
+        for item in dependency.get("scenario_breakdown", [])
+        if isinstance(item, dict)
+    }
+    sections = [
+        *build_markdown_header({
+            "evidence": evidence,
+            "paper_metrics": paper_metrics,
+            "run_metadata": run_metadata,
+        }),
+        *build_markdown_conclusion(summary, stage_evidence),
+        *build_markdown_environment(environment, run_metadata),
+        *build_markdown_scenario_table(results, dependency_by_scenario),
+        *build_markdown_evidence_boundary(),
+    ]
+    return "\n".join(sections)
+
+
 def build_summary(
     results: list[dict[str, Any]],
     context_errors: list[str],
@@ -1054,6 +1199,7 @@ async def generate_evidence(
     summary_file: Path,
     runtime_mode: str,
     requires_file: Path,
+    report_file: Path | None = None,
 ) -> int:
     started_at = datetime.now(timezone.utc)
     matrix = load_matrix(matrix_file)
@@ -1130,9 +1276,17 @@ async def generate_evidence(
         json.dumps(paper_metrics, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if report_file is not None:
+        report_file.parent.mkdir(parents=True, exist_ok=True)
+        report_file.write_text(
+            build_markdown_report(evidence, paper_metrics),
+            encoding="utf-8",
+        )
 
     print(f"\nEvidence written to: {output_file}")
     print(f"Paper metrics written to: {summary_file}")
+    if report_file is not None:
+        print(f"Markdown report written to: {report_file}")
     print(
         "Summary: "
         f"{summary['successful_scenarios']}/{len(results)} scenarios passed"
@@ -1169,6 +1323,11 @@ if __name__ == "__main__":
         help="Path to paper metrics JSON",
     )
     parser.add_argument(
+        "--report-file",
+        default=str(DEFAULT_REPORT_FILE),
+        help="Path to Markdown report output",
+    )
+    parser.add_argument(
         "--requires-file",
         default=str(DEFAULT_REQUIRES_FILE),
         help="Path to requires_edges.json used for dependency correctness metrics",
@@ -1183,6 +1342,7 @@ if __name__ == "__main__":
             summary_file=Path(args.summary_file),
             runtime_mode=args.runtime_mode,
             requires_file=Path(args.requires_file),
+            report_file=Path(args.report_file) if args.report_file else None,
         )
     )
     sys.exit(exit_code)

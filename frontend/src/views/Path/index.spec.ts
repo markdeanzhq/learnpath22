@@ -1,4 +1,4 @@
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick } from 'vue'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PathIndex from './index.vue'
@@ -164,7 +164,16 @@ vi.mock('@/api/modules/resource', () => ({
 }))
 
 const slotStub = (tag: string) => defineComponent({
-  template: `<${tag}><slot /></${tag}>`,
+  props: ['title', 'description', 'subTitle'],
+  template: `
+    <${tag}>
+      <span v-if="title">{{ title }}</span>
+      <span v-if="description">{{ description }}</span>
+      <span v-if="subTitle">{{ subTitle }}</span>
+      <slot />
+      <slot name="extra" />
+    </${tag}>
+  `,
 })
 
 function mountPathIndex() {
@@ -310,8 +319,15 @@ function createGraphOptionPreviewResponse(overrides: Record<string, any> = {}) {
         excluded_node_ids: [],
         added_node_ids: [],
         removed_node_ids: [],
+        visible_overlay_node_ids: [],
+        visible_overlay_edge_ids: [],
+        path_overlay_node_ids: [],
+        path_overlay_edge_ids: [],
         overlay_node_ids: [],
         overlay_edge_ids: [],
+        order_changed: false,
+        stage_changed: false,
+        budget_changed: false,
         project_graph_hash: 'graph-hash-baseline',
         audit_summary: { nodes_missing_vs_enhanced: ['po:project-001:n:rf'] },
       },
@@ -328,8 +344,15 @@ function createGraphOptionPreviewResponse(overrides: Record<string, any> = {}) {
         excluded_node_ids: [],
         added_node_ids: ['po:project-001:n:rf'],
         removed_node_ids: [],
+        visible_overlay_node_ids: ['po:project-001:n:rf'],
+        visible_overlay_edge_ids: [],
+        path_overlay_node_ids: ['po:project-001:n:rf'],
+        path_overlay_edge_ids: [],
         overlay_node_ids: ['po:project-001:n:rf'],
         overlay_edge_ids: [],
+        order_changed: true,
+        stage_changed: false,
+        budget_changed: true,
         project_graph_hash: 'graph-hash-enhanced',
         audit_summary: { nodes_added_vs_baseline: ['po:project-001:n:rf'] },
       },
@@ -384,6 +407,14 @@ function createReplanResult(overrides: Record<string, any> = {}) {
     diff: null,
     ...overrides,
   }
+}
+
+function findButtonByText(wrapper: ReturnType<typeof mountPathIndex>, text: string) {
+  const matched = wrapper.findAll('button').find((button) => button.text().includes(text))
+  if (!matched) {
+    throw new Error(`Button not found: ${text}`)
+  }
+  return matched
 }
 
 function createDeferred<T>() {
@@ -459,6 +490,102 @@ describe('Path page goal reconfirm flow', () => {
     })
     planApiConfirmFeedbackMock.mockResolvedValue(createReplanResult({ mode: 'feedback_confirm' }))
     resourceGetPlanResourcesMock.mockResolvedValue({ path_id: 'plan-001', stages: [] })
+  })
+
+  it('renders path dashboard summary and primary actions', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('学习路径驾驶舱')
+    expect(wrapper.text()).toContain('机器学习基础学习计划')
+    expect(wrapper.text()).toContain('目标：我想系统学习机器学习基础')
+    expect(wrapper.text()).toContain('阶段数')
+    expect(wrapper.text()).toContain('知识点')
+    expect(wrapper.text()).toContain('预计投入')
+    expect(wrapper.text()).toContain('12 小时')
+    expect(wrapper.text()).toContain('时间预算')
+    expect(wrapper.text()).toContain('继续学习')
+    expect(wrapper.text()).toContain('调整路径')
+    expect(wrapper.text()).toContain('查看解释')
+
+    await findButtonByText(wrapper, '调整路径').trigger('click')
+    expect((wrapper.vm as any).activeTab).toBe('previews')
+  })
+
+  it('renders the path adjustment workbench with guided options', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('路径调整中心')
+    expect(wrapper.text()).toContain('先预览影响，再决定是否生成新版本')
+    expect(wrapper.text()).toContain('1 选择调整方式')
+    expect(wrapper.text()).toContain('2 查看差异和预算')
+    expect(wrapper.text()).toContain('3 确认后保存新版')
+    expect(wrapper.text()).toContain('立即生成新版')
+    expect(wrapper.text()).toContain('先比较，再应用')
+    expect(wrapper.text()).toContain('学习节奏')
+    expect(wrapper.text()).toContain('适合：想改变学习投入或侧重点')
+    expect(wrapper.text()).toContain('图谱范围')
+    expect(wrapper.text()).toContain('适合：目标涉及项目级扩展知识')
+    expect(wrapper.text()).toContain('自然语言')
+    expect(wrapper.text()).toContain('适合：不知道该选哪个参数')
+    expect(wrapper.text()).toContain('还没有生成变体预览')
+    expect(wrapper.text()).toContain('搜索资料会绑定到当前知识点')
+  })
+
+  it('renders guided empty states for no project, no path, and load failure', async () => {
+    currentProjectState.value = null as any
+    currentPlanState.value = null as any
+    const noProjectWrapper = mountPathIndex()
+    await flushPromises()
+    expect(noProjectWrapper.text()).toContain('请先选择学习项目')
+    expect(noProjectWrapper.text()).toContain('学习路径需要依附于项目')
+
+    currentProjectState.value = {
+      id: 'project-empty',
+      title: '空项目',
+      goal_text: '我想学习机器学习',
+      goal_type: 'domain',
+      domain: 'machine_learning',
+      status: 'draft',
+      created_at: '2026-04-22T09:00:00Z',
+      updated_at: '2026-04-22T09:00:00Z',
+    }
+    currentPlanState.value = null as any
+    loadLatestMock.mockRejectedValueOnce({ response: { status: 404 } })
+    const noPathWrapper = mountPathIndex()
+    await flushPromises()
+    expect(noPathWrapper.text()).toContain('还没有生成学习路径')
+    expect(noPathWrapper.text()).toContain('先回到项目页完成画像并生成路径')
+
+    loadLatestMock.mockRejectedValueOnce({ response: { data: { error: '路径读取失败' } } })
+    const errorWrapper = mountPathIndex()
+    await flushPromises()
+    expect(errorWrapper.text()).toContain('路径加载失败')
+    expect(errorWrapper.text()).toContain('路径读取失败')
+    expect(errorWrapper.text()).toContain('重试加载')
+  })
+
+  it('updates the display mode hint for simple, defense, and debug modes', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(wrapper.text()).toContain('普通模式：隐藏审计细节')
+    expect(wrapper.text()).toContain('切换模式只影响展示，不会修改正式路径')
+
+    vm.displayMode = 'defense'
+    await nextTick()
+    expect(wrapper.text()).toContain('答辩模式：显示算法依据与可解释链路')
+    expect(wrapper.text()).toContain('生成流程、audit 摘要、overlay 计数')
+
+    vm.displayMode = 'debug'
+    await nextTick()
+    expect(wrapper.text()).toContain('调试模式：显示 hash、审计字段与内部追溯信息')
+    expect(wrapper.text()).toContain('graph drift、preview 过期和解释 DTO')
+
+    vm.displayMode = 'simple'
+    await nextTick()
   })
 
   it('uses llmExplanationPolish from settings store on initial explanation load', async () => {
@@ -561,6 +688,60 @@ describe('Path page goal reconfirm flow', () => {
     expect(elMessageErrorMock).toHaveBeenCalledWith('资源读取失败')
   })
 
+  it('renders node-first resource workbench and missing resource guidance', async () => {
+    resourceGetPlanResourcesMock.mockResolvedValueOnce({
+      path_id: 'plan-001',
+      stages: [
+        {
+          stage_name: '基础准备',
+          stage_resources: [],
+          nodes: [
+            {
+              node_id: 'ml-a01',
+              node_name: '机器学习导论',
+              resources: [
+                {
+                  id: 'resource-intro',
+                  title: '机器学习导论资源',
+                  url: 'https://example.com/ml-intro',
+                  snippet: '适合入门的机器学习导论资料。',
+                  score: 0.91,
+                  source_type: 'tavily_auto',
+                },
+              ],
+            },
+            {
+              node_id: 'ml-a02',
+              node_name: '监督学习',
+              resources: [],
+            },
+          ],
+        },
+      ],
+    })
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(wrapper.text()).toContain('知识点资源工作台')
+    expect(wrapper.text()).toContain('资源默认跟随知识点展示')
+    expect(wrapper.text()).toContain('总资源')
+    expect(wrapper.text()).toContain('待补充知识点')
+    expect(wrapper.text()).toContain('机器学习导论资源')
+    expect(wrapper.text()).toContain('在线增强')
+    expect(vm.totalResourceCount).toBe(1)
+    expect(vm.selectedNodeResourceCount).toBe(1)
+    expect(vm.missingResourceNodeCount).toBe(1)
+
+    await wrapper.findAll('.resource-node-button')[1].trigger('click')
+    await nextTick()
+
+    expect(vm.selectedNodeId).toBe('ml-a02')
+    expect(vm.selectedNodeResourceCount).toBe(0)
+    expect(wrapper.text()).toContain('该知识点暂无资源，可自动补充或搜索绑定')
+  })
+
   it('redirects to project-level reconfirm when replan hits GOAL_TARGETS_REMOVED', async () => {
     replanMock.mockRejectedValue({
       response: {
@@ -653,6 +834,239 @@ describe('Path page goal reconfirm flow', () => {
     expect(currentPlanState.value.id).toBe('plan-001')
   })
 
+  it('explains when enhanced graph has overlay but does not change current path', async () => {
+    const unchangedPreview: any = createGraphOptionPreviewResponse({
+      variants: [
+        {
+          variant_id: 'baseline-standard',
+          path_mode: 'standard',
+          preview_kind: 'graph_option',
+          graph_option: 'baseline',
+          option_label: '基础图谱路径',
+          option_description: '不纳入项目级扩展草稿。',
+          status: 'available',
+          budget_summary: { status: 'feasible', total_hours: 12 },
+          included_node_ids: ['ml-a01'],
+          excluded_node_ids: [],
+          added_node_ids: [],
+          removed_node_ids: [],
+          visible_overlay_node_ids: [],
+          visible_overlay_edge_ids: [],
+          path_overlay_node_ids: [],
+          path_overlay_edge_ids: [],
+          overlay_node_ids: [],
+          overlay_edge_ids: [],
+          order_changed: false,
+          stage_changed: false,
+          budget_changed: false,
+          project_graph_hash: 'graph-hash-baseline',
+          audit_summary: {},
+        },
+        {
+          variant_id: 'enhanced-standard',
+          path_mode: 'standard',
+          preview_kind: 'graph_option',
+          graph_option: 'enhanced',
+          option_label: '增强图谱路径',
+          option_description: '纳入已审核的项目级扩展草稿。',
+          status: 'available',
+          budget_summary: { status: 'feasible', total_hours: 12 },
+          included_node_ids: ['ml-a01'],
+          excluded_node_ids: [],
+          added_node_ids: [],
+          removed_node_ids: [],
+          visible_overlay_node_ids: ['po:project-001:n:not-hit'],
+          visible_overlay_edge_ids: [],
+          path_overlay_node_ids: [],
+          path_overlay_edge_ids: [],
+          overlay_node_ids: ['po:project-001:n:not-hit'],
+          overlay_edge_ids: [],
+          order_changed: false,
+          stage_changed: false,
+          budget_changed: false,
+          project_graph_hash: 'graph-hash-enhanced',
+          audit_summary: {},
+        },
+      ],
+    })
+    planApiPreviewGraphOptionsMock.mockResolvedValueOnce(unchangedPreview)
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewGraphOptions()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('增强图谱已纳入 1 个已审核扩展知识点和 0 条关系')
+    expect(wrapper.text()).toContain('最终路径节点与基础方案一致')
+    expect(wrapper.text()).not.toContain('po:project-001:n:not-hit')
+  })
+
+  it('explains edge/order/budget changes even when enhanced graph keeps the same node set', async () => {
+    const edgeOnlyPreview: any = createGraphOptionPreviewResponse({
+      variants: [
+        {
+          variant_id: 'baseline-standard',
+          path_mode: 'standard',
+          preview_kind: 'graph_option',
+          graph_option: 'baseline',
+          option_label: '基础图谱路径',
+          option_description: '不纳入项目级扩展草稿。',
+          status: 'available',
+          budget_summary: { status: 'feasible', total_hours: 12 },
+          included_node_ids: ['ml-a01', 'ml-b01'],
+          excluded_node_ids: [],
+          added_node_ids: [],
+          removed_node_ids: [],
+          visible_overlay_node_ids: [],
+          visible_overlay_edge_ids: [],
+          path_overlay_node_ids: [],
+          path_overlay_edge_ids: [],
+          overlay_node_ids: [],
+          overlay_edge_ids: [],
+          order_changed: false,
+          stage_changed: false,
+          budget_changed: false,
+          project_graph_hash: 'graph-hash-baseline',
+          audit_summary: {},
+        },
+        {
+          variant_id: 'enhanced-standard',
+          path_mode: 'standard',
+          preview_kind: 'graph_option',
+          graph_option: 'enhanced',
+          option_label: '增强图谱路径',
+          option_description: '纳入已审核的项目级扩展草稿。',
+          status: 'available',
+          budget_summary: { status: 'tight', total_hours: 14 },
+          included_node_ids: ['ml-a01', 'ml-b01'],
+          excluded_node_ids: [],
+          added_node_ids: [],
+          removed_node_ids: [],
+          visible_overlay_node_ids: [],
+          visible_overlay_edge_ids: ['po:project-001:e:dep'],
+          path_overlay_node_ids: [],
+          path_overlay_edge_ids: ['po:project-001:e:dep'],
+          overlay_node_ids: [],
+          overlay_edge_ids: ['po:project-001:e:dep'],
+          order_changed: true,
+          stage_changed: false,
+          budget_changed: true,
+          project_graph_hash: 'graph-hash-enhanced',
+          audit_summary: {},
+        },
+      ],
+    })
+    planApiPreviewGraphOptionsMock.mockResolvedValueOnce(edgeOnlyPreview)
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewGraphOptions()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('增强方案已命中当前路径')
+    expect(wrapper.text()).toContain('路径命中 0 个扩展知识点 / 1 条扩展关系')
+    expect(wrapper.text()).toContain('学习顺序变化')
+    expect(wrapper.text()).toContain('预算估算变化')
+    expect(wrapper.text()).toContain('即使节点集合一致')
+    expect(wrapper.text()).not.toContain('po:project-001:e:dep')
+  })
+
+  it('explains when no reviewed overlay is available for graph option comparison', async () => {
+    const noOverlayPreview: any = createGraphOptionPreviewResponse({
+      project_graph_hash: 'graph-hash-baseline',
+      variants: [
+        {
+          variant_id: 'baseline-standard',
+          path_mode: 'standard',
+          preview_kind: 'graph_option',
+          graph_option: 'baseline',
+          option_label: '基础图谱路径',
+          option_description: '不纳入项目级扩展草稿。',
+          status: 'available',
+          budget_summary: { status: 'feasible', total_hours: 12 },
+          included_node_ids: ['ml-a01'],
+          excluded_node_ids: [],
+          added_node_ids: [],
+          removed_node_ids: [],
+          visible_overlay_node_ids: [],
+          visible_overlay_edge_ids: [],
+          path_overlay_node_ids: [],
+          path_overlay_edge_ids: [],
+          overlay_node_ids: [],
+          overlay_edge_ids: [],
+          order_changed: false,
+          stage_changed: false,
+          budget_changed: false,
+          project_graph_hash: 'graph-hash-baseline',
+          audit_summary: {},
+        },
+        {
+          variant_id: 'enhanced-standard',
+          path_mode: 'standard',
+          preview_kind: 'graph_option',
+          graph_option: 'enhanced',
+          option_label: '增强图谱路径',
+          option_description: '纳入已审核的项目级扩展草稿。',
+          status: 'available',
+          budget_summary: { status: 'feasible', total_hours: 12 },
+          included_node_ids: ['ml-a01'],
+          excluded_node_ids: [],
+          added_node_ids: [],
+          removed_node_ids: [],
+          visible_overlay_node_ids: [],
+          visible_overlay_edge_ids: [],
+          path_overlay_node_ids: [],
+          path_overlay_edge_ids: [],
+          overlay_node_ids: [],
+          overlay_edge_ids: [],
+          order_changed: false,
+          stage_changed: false,
+          budget_changed: false,
+          project_graph_hash: 'graph-hash-baseline',
+          audit_summary: {},
+        },
+      ],
+    })
+    planApiPreviewGraphOptionsMock.mockResolvedValueOnce(noOverlayPreview)
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewGraphOptions()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('当前没有已审核、校验通过且开启规划的扩展图谱')
+    expect(wrapper.text()).toContain('基础方案与增强方案会完全一致')
+  })
+
+  it('reveals graph option audit and hash details by display mode', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.previewGraphOptions()
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('overlay 1 节点 / 0 边')
+    expect(wrapper.text()).not.toContain('po:project-001:n:rf')
+    expect(wrapper.text()).not.toContain('当前 graph：')
+
+    vm.displayMode = 'defense'
+    await nextTick()
+    expect(wrapper.text()).toContain('overlay 1 节点 / 0 边')
+    expect(wrapper.text()).toContain('po:project-001:n:rf')
+    expect(wrapper.text()).not.toContain('当前 graph：')
+
+    vm.displayMode = 'debug'
+    await nextTick()
+    expect(wrapper.text()).toContain('当前 graph：')
+
+    vm.displayMode = 'simple'
+    await nextTick()
+  })
+
   it('does not select unavailable graph options', async () => {
     const unavailablePreview: any = createGraphOptionPreviewResponse()
     unavailablePreview.variants[0] = {
@@ -697,7 +1111,11 @@ describe('Path page goal reconfirm flow', () => {
     await vm.confirmGraphOption()
     await flushPromises()
 
-    expect(planApiConfirmVariantMock).toHaveBeenCalledWith('project-001', 'graph-option-preview-001', 'enhanced-standard')
+    expect(planApiConfirmVariantMock).toHaveBeenCalledWith(
+      'project-001',
+      'graph-option-preview-001',
+      'enhanced-standard',
+    )
     expect(vm.graphOptionPreview).toBeNull()
     expect(vm.variantPreview).toBeNull()
     expect(vm.feedbackPreview).toBeNull()

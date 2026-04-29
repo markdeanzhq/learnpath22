@@ -1,24 +1,28 @@
 <template>
   <el-card shadow="hover" class="task-card" :class="difficultyClass">
-    <div class="task-header">
-      <span class="task-name">{{ task.name }}</span>
-      <el-tag :type="importanceType" size="small">
-        {{ task.importance >= 4 ? '重要' : task.importance >= 2 ? '一般' : '了解' }}
-      </el-tag>
+    <div class="task-topline">
+      <span class="task-order">第 {{ taskNumber }} 项</span>
+      <el-tag :type="importanceType" size="small" effect="light">{{ importanceLabel }}</el-tag>
     </div>
-    <div class="task-meta">
+
+    <h4 class="task-name">{{ task.name }}</h4>
+
+    <div class="task-meta" aria-label="任务学习属性">
       <span class="meta-item">
         <el-icon><Star /></el-icon>
-        难度 {{ task.difficulty }}/5
+        {{ difficultyLabel }}
       </span>
-      <span v-if="task.estimated_hours" class="meta-item">
+      <span class="meta-item">
         <el-icon><Clock /></el-icon>
-        约 {{ task.estimated_hours }} 小时
+        {{ estimatedTimeLabel }}
       </span>
     </div>
+
+    <p class="task-guidance">{{ guidanceLabel }}</p>
+
     <div class="task-actions">
       <el-button link type="primary" size="small" @click="emit('locateNode', task.node_id)">
-        在图谱中定位
+        查看图谱位置
       </el-button>
     </div>
   </el-card>
@@ -29,7 +33,12 @@ import { computed } from 'vue'
 import { Star, Clock } from '@element-plus/icons-vue'
 import type { PathTask } from '@/api/modules/plan'
 
-const props = defineProps<{ task: PathTask }>()
+const props = withDefaults(defineProps<{
+  task: PathTask
+  taskNumber?: number
+}>(), {
+  taskNumber: 1,
+})
 
 const emit = defineEmits<{
   locateNode: [nodeId: string]
@@ -46,39 +55,88 @@ const importanceType = computed(() => {
   if (props.task.importance >= 2) return ''
   return 'info'
 })
+
+const importanceLabel = computed(() => {
+  if (props.task.importance >= 4) return '关键知识点'
+  if (props.task.importance >= 2) return '常规知识点'
+  return '了解即可'
+})
+
+const difficultyLabel = computed(() => {
+  if (props.task.difficulty <= 2) return `入门难度 ${props.task.difficulty}/5`
+  if (props.task.difficulty <= 3) return `中等难度 ${props.task.difficulty}/5`
+  return `较高难度 ${props.task.difficulty}/5`
+})
+
+const estimatedTimeLabel = computed(() => (
+  props.task.estimated_hours ? `约 ${props.task.estimated_hours} 小时` : '时长待估算'
+))
+
+const guidanceLabel = computed(() => {
+  if (props.task.importance >= 4) return '建议完成笔记和练习后再进入下一项。'
+  if (props.task.difficulty >= 4) return '建议拆成小目标学习，必要时回看前置概念。'
+  return '理解核心概念后即可继续推进。'
+})
 </script>
 
 <style scoped>
 .task-card {
-  border-left: 3px solid #dcdfe6;
+  height: 100%;
+  border-left: 4px solid var(--el-border-color);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
-.task-card.diff-easy { border-left-color: #67C23A; }
-.task-card.diff-medium { border-left-color: #409EFF; }
-.task-card.diff-hard { border-left-color: #E6A23C; }
 
-.task-header {
+.task-card:hover {
+  transform: translateY(-2px);
+}
+
+.task-card.diff-easy { border-left-color: var(--el-color-success); }
+.task-card.diff-medium { border-left-color: var(--el-color-primary); }
+.task-card.diff-hard { border-left-color: var(--el-color-warning); }
+
+.task-topline {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
   gap: 8px;
+  margin-bottom: 10px;
 }
+
+.task-order {
+  color: var(--el-color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .task-name {
-  font-weight: 500;
-  font-size: 14px;
+  margin: 0 0 10px;
+  color: var(--el-text-color-primary);
+  font-size: 15px;
+  line-height: 1.5;
 }
+
 .task-meta {
   display: flex;
-  gap: 16px;
-  color: #909399;
+  gap: 12px;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
   flex-wrap: wrap;
 }
+
 .meta-item {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
 }
+
+.task-guidance {
+  min-height: 40px;
+  margin: 10px 0 0;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .task-actions {
   display: flex;
   justify-content: flex-end;
@@ -86,9 +144,13 @@ const importanceType = computed(() => {
 }
 
 @media (max-width: 768px) {
-  .task-header {
+  .task-topline {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .task-guidance {
+    min-height: auto;
   }
 }
 </style>

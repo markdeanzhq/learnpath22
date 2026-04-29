@@ -46,9 +46,13 @@ from app.services.graph_service import (
     get_graph_entity_metadata,
     get_path_subgraph,
 )
-from app.services.project_goal_extension_draft_service import create_goal_extension_draft_from_resolution
+from app.services.project_goal_extension_draft_service import (
+    create_goal_extension_draft_from_resolution,
+    preview_goal_extension_draft_proposal,
+)
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 from app.services.project_overlay_extraction_service import MAX_TEXT_CHARS, create_extraction_session_from_sources
+from app.services.project_overlay_llm_extraction_service import preview_overlay_extraction_payload_from_sources
 from app.services.project_overlay_projection_service import (
     get_project_overlay_projection_status,
     sync_project_overlay_projection,
@@ -133,12 +137,20 @@ class OverlaySourceUpdateRequest(BaseModel):
     metadata_json: str | None = None
 
 
+class OverlayExtractionPayloadPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_ids: list[str] = Field(min_length=1)
+    mode: Literal["default", "custom_extension"] = "default"
+
+
 class OverlayExtractionSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_ids: list[str] = Field(min_length=1)
     mode: Literal["default", "custom_extension"] = "default"
     extraction_payload: Any | None = None
+    session_provenance: dict[str, Any] | None = None
 
 
 class GoalExtensionDraftRequest(BaseModel):
@@ -582,7 +594,7 @@ async def create_overlay_source(
         if excerpt is not None and len(excerpt) > MAX_TEXT_CHARS:
             raise AppError(code=422, message="TEXT_LIMIT_EXCEEDED")
         content_hash = hashlib.sha256(req.raw_text.encode("utf-8")).hexdigest()
-        excerpt = excerpt or req.raw_text[:500]
+        excerpt = excerpt or req.raw_text[:MAX_TEXT_CHARS]
 
     source = await create_source(
         db,
@@ -634,6 +646,28 @@ async def update_overlay_source_endpoint(
     return _source_response(source)
 
 
+@router.post("/projects/{project_id}/graph/overlay/extraction-payload/preview")
+async def preview_overlay_extraction_payload(
+    project_id: str,
+    req: OverlayExtractionPayloadPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+
+    try:
+        return await preview_overlay_extraction_payload_from_sources(
+            db,
+            project_id=project_id,
+            source_ids=req.source_ids,
+            mode=req.mode,
+            domain=project.domain,
+        )
+    except ValueError as exc:
+        raise AppError(code=422, message=str(exc)) from exc
+
+
 @router.post("/projects/{project_id}/graph/overlay/extraction-sessions")
 async def create_overlay_extraction_session(
     project_id: str,
@@ -652,6 +686,7 @@ async def create_overlay_extraction_session(
             mode=req.mode,
             extraction_payload=req.extraction_payload,
             domain=project.domain,
+            session_provenance=req.session_provenance,
         )
     except ValueError as exc:
         raise AppError(code=422, message=str(exc)) from exc
@@ -664,6 +699,22 @@ async def create_overlay_extraction_session(
         resources=created["resources"],
         bindings=[],
         warnings=created["warnings"],
+    )
+
+
+@router.get("/projects/{project_id}/goal-resolution/extension-drafts/{resolution_session_id}/proposal")
+async def get_goal_extension_draft_proposal(
+    project_id: str,
+    resolution_session_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+    return await preview_goal_extension_draft_proposal(
+        db,
+        project_id=project_id,
+        resolution_session_id=resolution_session_id,
     )
 
 
@@ -696,6 +747,7 @@ async def create_goal_extension_draft(
     response["gap_analysis"] = created["gap_analysis"]
     response["review_notes"] = created["review_notes"]
     response["draft_metadata"] = created["draft_metadata"]
+    response["draft_proposal"] = created.get("draft_proposal")
     return response
 
 

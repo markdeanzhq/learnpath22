@@ -7,7 +7,9 @@ const {
   graphGetGraphMock,
   graphCreateOverlaySourceMock,
   graphCreateOverlayExtractionSessionMock,
+  graphPreviewOverlayExtractionPayloadMock,
   graphCreateGoalExtensionDraftMock,
+  graphGetGoalExtensionDraftProposalMock,
   graphSetOverlayPlanningMock,
   graphGetOverlayExtractionSessionMock,
   graphPreviewOverlayPromotionMock,
@@ -24,7 +26,9 @@ const {
   graphGetGraphMock: vi.fn(),
   graphCreateOverlaySourceMock: vi.fn(),
   graphCreateOverlayExtractionSessionMock: vi.fn(),
+  graphPreviewOverlayExtractionPayloadMock: vi.fn(),
   graphCreateGoalExtensionDraftMock: vi.fn(),
+  graphGetGoalExtensionDraftProposalMock: vi.fn(),
   graphSetOverlayPlanningMock: vi.fn(),
   graphGetOverlayExtractionSessionMock: vi.fn(),
   graphPreviewOverlayPromotionMock: vi.fn(),
@@ -102,7 +106,9 @@ vi.mock('@/api/modules/graph', () => {
     reviewNode: vi.fn(),
     reviewEdge: vi.fn(),
     createOverlaySource: graphCreateOverlaySourceMock,
+    previewOverlayExtractionPayload: graphPreviewOverlayExtractionPayloadMock,
     createOverlayExtractionSession: graphCreateOverlayExtractionSessionMock,
+    getGoalExtensionDraftProposal: graphGetGoalExtensionDraftProposalMock,
     createGoalExtensionDraft: graphCreateGoalExtensionDraftMock,
     setOverlayPlanning: graphSetOverlayPlanningMock,
     getOverlayExtractionSession: graphGetOverlayExtractionSessionMock,
@@ -180,6 +186,22 @@ describe('Knowledge overlay entry', () => {
       is_empty: true,
     })
     graphCreateOverlaySourceMock.mockResolvedValue({ source_id: 'src-001' })
+    graphPreviewOverlayExtractionPayloadMock.mockImplementation((_projectId: string, payload: any) => Promise.resolve({
+      source_ids: payload.source_ids,
+      mode: payload.mode || 'default',
+      extraction_payload: {
+        nodes: [],
+        edges: [],
+        resources: [],
+        warnings: ['llm_generated'],
+      },
+      warnings: ['llm_generated'],
+      counts: { nodes: 0, edges: 0, resources: 0 },
+      provenance: {
+        draft_origin: 'llm_overlay_extraction',
+        prompt_version: 'overlay-extraction-v1',
+      },
+    }))
     const sessionResponse = {
       session: {
         session_id: 'sess-001',
@@ -199,6 +221,23 @@ describe('Knowledge overlay entry', () => {
     }
     graphCreateOverlayExtractionSessionMock.mockResolvedValue(sessionResponse)
     graphCreateGoalExtensionDraftMock.mockResolvedValue(sessionResponse)
+    graphGetGoalExtensionDraftProposalMock.mockResolvedValue({
+      resolution_session_id: 'resolution-001',
+      project_id: 'project-001',
+      session_status: 'draft_previewed',
+      expires_at: '2026-04-22T10:00:00Z',
+      draft_proposal: {
+        missing_concepts: ['随机森林'],
+        nodes: [{ name: '随机森林', summary: '系统推荐节点候选' }],
+        edges: [{ source_name_or_id: '随机森林', target_node_id: 'ml_c12', relation_type: 'RELATED_TO', legality_rationale: '关联决策树基础' }],
+        resources: [],
+        counts: { nodes: 1, edges: 1, resources: 0 },
+        warnings: ['goal_extension_draft_requires_review'],
+        requires_user_review: true,
+        writes_formal_graph: false,
+        writes_formal_path: false,
+      },
+    })
     graphGetOverlayExtractionSessionMock.mockResolvedValue(sessionResponse)
     graphPreviewOverlayPromotionMock.mockResolvedValue({
       status: 'ready',
@@ -251,11 +290,64 @@ describe('Knowledge overlay entry', () => {
       raw_text_excerpt: '逻辑回归扩展资料',
       summary: null,
     })
-    expect(graphCreateOverlayExtractionSessionMock).toHaveBeenCalledWith('project-001', {
+    expect(graphPreviewOverlayExtractionPayloadMock).toHaveBeenCalledWith('project-001', {
       source_ids: ['src-001'],
       mode: 'default',
     })
+    expect(graphCreateOverlayExtractionSessionMock).toHaveBeenCalledWith('project-001', {
+      source_ids: ['src-001'],
+      mode: 'default',
+      extraction_payload: {
+        nodes: [],
+        edges: [],
+        resources: [],
+        warnings: ['llm_generated'],
+      },
+      session_provenance: {
+        draft_origin: 'llm_overlay_extraction',
+        prompt_version: 'overlay-extraction-v1',
+        selected_counts: { nodes: 0, edges: 0, resources: 0 },
+        filtered_by_user: true,
+      },
+    })
     expect(successMock).toHaveBeenCalled()
+  })
+
+  it('creates extraction session with only selected preview candidates', async () => {
+    graphPreviewOverlayExtractionPayloadMock.mockImplementation((_projectId: string, payload: any) => Promise.resolve({
+      source_ids: payload.source_ids,
+      mode: 'default',
+      extraction_payload: {
+        nodes: [{ name: '保留节点', summary: '保留' }, { name: '移除节点', summary: '移除' }],
+        edges: [{ source_name_or_id: '保留节点', target_node_id: 'ml_c01', relation_type: 'RELATED_TO' }],
+        resources: [{ title: '移除资源', url: 'https://example.com/remove' }],
+        warnings: ['llm_generated'],
+      },
+      warnings: ['llm_generated'],
+      counts: { nodes: 2, edges: 1, resources: 1 },
+      provenance: { draft_origin: 'llm_overlay_extraction' },
+    }))
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).overlayForm.rawText = '扩展资料'
+    await (wrapper.vm as any).previewOverlayExtractionPayload()
+    ;(wrapper.vm as any).togglePreviewCandidate('nodes', 1, false)
+    ;(wrapper.vm as any).togglePreviewCandidate('resources', 0, false)
+    await (wrapper.vm as any).submitOverlayDraft()
+
+    expect(graphCreateOverlayExtractionSessionMock).toHaveBeenCalledWith('project-001', expect.objectContaining({
+      extraction_payload: {
+        nodes: [{ name: '保留节点', summary: '保留' }],
+        edges: [{ source_name_or_id: '保留节点', target_node_id: 'ml_c01', relation_type: 'RELATED_TO' }],
+        resources: [],
+        warnings: ['llm_generated'],
+      },
+      session_provenance: expect.objectContaining({
+        selected_counts: { nodes: 1, edges: 1, resources: 0 },
+        filtered_by_user: true,
+      }),
+    }))
   })
 
   it('opens the latest path graph by default', async () => {
@@ -445,6 +537,7 @@ describe('Knowledge overlay entry', () => {
     await flushPromises()
 
     expect((wrapper.vm as any).overlayDrawerVisible).toBe(true)
+    expect(graphGetGoalExtensionDraftProposalMock).toHaveBeenCalledWith('project-001', 'resolution-001')
     expect(graphCreateGoalExtensionDraftMock).not.toHaveBeenCalled()
     expect(graphCreateOverlayExtractionSessionMock).not.toHaveBeenCalled()
 
@@ -463,7 +556,7 @@ describe('Knowledge overlay entry', () => {
     expect(wrapper.text()).toContain('目标缺口分析')
     expect(wrapper.text()).toContain('随机森林')
     expect(wrapper.text()).toContain('当前机器学习基础图谱尚未覆盖')
-    expect(wrapper.text()).toContain('目标扩展入口')
+    expect(wrapper.text()).toContain('系统推荐草稿收件箱')
     expect(wrapper.text()).not.toContain('rules / goal-extension-draft-v1')
     expect(wrapper.text()).not.toContain('需人工审核：是；可直接规划：否')
   })
@@ -505,9 +598,25 @@ describe('Knowledge overlay entry', () => {
 
     expect(searchBridgeOverlaySourcesMock).toHaveBeenCalledWith('project-001', ['result-001'])
     expect(graphCreateOverlaySourceMock).not.toHaveBeenCalled()
+    expect(graphPreviewOverlayExtractionPayloadMock).toHaveBeenCalledWith('project-001', {
+      source_ids: ['src-saved-001'],
+      mode: 'default',
+    })
     expect(graphCreateOverlayExtractionSessionMock).toHaveBeenCalledWith('project-001', {
       source_ids: ['src-saved-001'],
       mode: 'default',
+      extraction_payload: {
+        nodes: [],
+        edges: [],
+        resources: [],
+        warnings: ['llm_generated'],
+      },
+      session_provenance: {
+        draft_origin: 'llm_overlay_extraction',
+        prompt_version: 'overlay-extraction-v1',
+        selected_counts: { nodes: 0, edges: 0, resources: 0 },
+        filtered_by_user: true,
+      },
     })
     expect(graphCreateOverlayExtractionSessionMock.mock.calls[0][1]).not.toHaveProperty('result_ids')
   })

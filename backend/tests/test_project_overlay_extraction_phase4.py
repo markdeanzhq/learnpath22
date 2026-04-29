@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from sqlalchemy import select
 
+from app.core.config import replace_runtime_settings
 from app.models.sqlite_models import ProjectOverlayExtractionSession
 from app.repositories.project_overlay_repository import (
     create_source,
@@ -59,6 +61,61 @@ async def _create_overlay_source_via_api(client, project_id: str) -> dict:
     )
     assert resp.status_code == 200
     return resp.json()
+
+
+class _MockLLMResponse:
+    def __init__(self, content: str):
+        self.content = content
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {"choices": [{"message": {"content": self.content}}]}
+
+
+class _MockAsyncLLMClient:
+    def __init__(self, content: str, captured: dict | None = None):
+        self.content = content
+        self.captured = captured
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def post(self, url, *, headers=None, json=None):
+        if self.captured is not None:
+            self.captured.update({"url": url, "headers": headers, "json": json})
+        return _MockLLMResponse(self.content)
+
+
+def _llm_payload(source_id: str) -> str:
+    return json.dumps({
+        "nodes": [_valid_node("随机森林扩展")],
+        "edges": [
+            {
+                "source_name_or_id": "随机森林扩展",
+                "target_name_or_id": "ml_c01",
+                "relation_type": "RELATED_TO",
+                "confidence": 0.74,
+                "legality_rationale": "资料把随机森林作为机器学习基础扩展概念。",
+            }
+        ],
+        "resources": [
+            {
+                "title": "随机森林扩展资料",
+                "url": "https://example.com/random-forest",
+                "resource_type": "article",
+                "summary": "介绍随机森林基础概念。",
+                "quality_score": 0.82,
+                "confidence": 0.8,
+                "evidence_source_id": source_id,
+            }
+        ],
+        "warnings": ["llm_generated"],
+    }, ensure_ascii=False)
 
 
 def _planned_node_ids(plan_payload: dict) -> list[str]:
@@ -131,6 +188,69 @@ async def test_create_and_get_overlay_extraction_session_endpoints(client, proje
     assert resource["planning_enabled"] is True
     assert resource["promotion_status"] == "not_promoted"
     assert resource["binding_summary"] == {"count": 0, "project_node_ids": [], "path_stage_ids": []}
+
+
+async def test_preview_overlay_extraction_payload_uses_llm_without_creating_session(client, project, db_session):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    replace_runtime_settings({
+        "llm_api_key": "sk-test",
+        "llm_base_url": "https://llm.example.com/v1",
+        "llm_model": "test-model",
+    })
+    captured: dict = {}
+
+    with patch(
+        "app.services.project_overlay_llm_extraction_service.httpx.AsyncClient",
+        return_value=_MockAsyncLLMClient(_llm_payload(source["source_id"]), captured),
+    ):
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/graph/overlay/extraction-payload/preview",
+            json={"source_ids": [source["source_id"]]},
+        )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["counts"] == {"nodes": 1, "edges": 1, "resources": 1}
+    assert payload["warnings"] == ["llm_generated"]
+    assert payload["provenance"]["draft_origin"] == "llm_overlay_extraction"
+    assert payload["provenance"]["writes_formal_graph"] is False
+    assert payload["extraction_payload"]["nodes"][0]["name"] == "随机森林扩展"
+    assert captured["url"] == "https://llm.example.com/v1/chat/completions"
+    assert captured["json"]["model"] == "test-model"
+
+    sessions = (await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all()
+    assert sessions == []
+
+
+async def test_preview_overlay_extraction_payload_rejects_invalid_llm_json(client, project, db_session):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    replace_runtime_settings({"llm_api_key": "sk-test"})
+
+    with patch(
+        "app.services.project_overlay_llm_extraction_service.httpx.AsyncClient",
+        return_value=_MockAsyncLLMClient("not json"),
+    ):
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/graph/overlay/extraction-payload/preview",
+            json={"source_ids": [source["source_id"]]},
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "INVALID_LLM_EXTRACTION_JSON"
+    sessions = (await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all()
+    assert sessions == []
+
+
+async def test_preview_overlay_extraction_payload_requires_llm(client, project):
+    source = await _create_overlay_source_via_api(client, project["id"])
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/extraction-payload/preview",
+        json={"source_ids": [source["source_id"]]},
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "LLM_NOT_READY"
 
 
 async def test_resource_binding_detail_and_target_validation(client, project):

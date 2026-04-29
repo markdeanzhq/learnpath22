@@ -44,7 +44,7 @@ from app.schemas.explanation import (
 logger = logging.getLogger(__name__)
 
 POLISH_MAX_LENGTH = 200
-POLISH_TIMEOUT_SECONDS = 30.0
+POLISH_TIMEOUT_SECONDS = 60.0
 ASK_MAX_LENGTH = 800
 ASK_TIMEOUT_SECONDS = 8.0
 

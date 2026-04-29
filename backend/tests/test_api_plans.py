@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
+from app.api.v1.plans import _apply_graph_option_diff
 from app.models.sqlite_models import GoalResolutionSession, LearnerProfile, LearningPath, LearningProject, PlanExplanationCache, VariantPreviewSession
 from app.services.domain_pack_service import get_domain_pack_service
 
@@ -58,6 +59,51 @@ async def _create_overlay_target(client, project_id: str, *, name: str, confirm_
         )
         assert review_resp.status_code == 200
     return node
+
+
+def test_apply_graph_option_diff_reports_order_stage_budget_and_path_overlay_hits():
+    variants = [
+        {
+            "graph_option": "baseline",
+            "included_node_ids": ["a", "b", "c"],
+            "budget_summary": {"status": "feasible", "total_hours": 6, "estimated_weeks": 2},
+            "audit_summary": {},
+            "plan_result": {
+                "stage_plan": {
+                    "基础阶段": [{"node_id": "a"}, {"node_id": "b"}],
+                    "进阶阶段": [{"node_id": "c"}],
+                },
+            },
+        },
+        {
+            "graph_option": "enhanced",
+            "included_node_ids": ["a", "c", "b"],
+            "budget_summary": {"status": "tight", "total_hours": 8, "estimated_weeks": 2.7},
+            "path_overlay_node_ids": [],
+            "path_overlay_edge_ids": ["edge-overlay-001"],
+            "audit_summary": {},
+            "plan_result": {
+                "stage_plan": {
+                    "基础阶段": [{"node_id": "a"}],
+                    "进阶阶段": [{"node_id": "c"}, {"node_id": "b"}],
+                },
+            },
+        },
+    ]
+
+    _apply_graph_option_diff(variants)
+
+    enhanced = variants[1]
+    assert enhanced["added_node_ids"] == []
+    assert enhanced["removed_node_ids"] == []
+    assert enhanced["order_changed"] is True
+    assert enhanced["order_changed_node_ids"] == ["b", "c"]
+    assert enhanced["stage_changed"] is True
+    assert enhanced["stage_changed_node_ids"] == ["b"]
+    assert enhanced["budget_changed"] is True
+    assert enhanced["budget_delta"]["total_hours"] == {"from": 6, "to": 8, "delta": 2}
+    assert enhanced["budget_delta"]["status"] == {"from": "feasible", "to": "tight"}
+    assert enhanced["audit_summary"]["graph_option_diff"]["path_overlay_edge_ids"] == ["edge-overlay-001"]
 
 
 async def test_generate_plan(client, project, profile):
@@ -213,13 +259,38 @@ async def test_graph_option_preview_compares_baseline_and_enhanced_overlay(clien
     assert overlay_node["node_id"] in enhanced["included_node_ids"]
     assert overlay_node["node_id"] in enhanced["added_node_ids"]
     assert overlay_node["node_id"] in enhanced["overlay_node_ids"]
+    assert overlay_node["node_id"] in enhanced["visible_overlay_node_ids"]
+    assert overlay_node["node_id"] in enhanced["path_overlay_node_ids"]
     assert overlay_node["node_id"] in enhanced["audit_summary"]["nodes_added_vs_baseline"]
+    assert enhanced["audit_summary"]["path_overlay_node_ids"] == enhanced["path_overlay_node_ids"]
     assert baseline["project_graph_hash"] != enhanced["project_graph_hash"]
 
     after_paths = (
         await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
     ).scalars().all()
     assert len(after_paths) == len(before_paths)
+
+
+async def test_graph_option_preview_reports_visible_overlay_even_when_path_unchanged(client, project, profile):
+    overlay_node = await _create_overlay_target(client, project["id"], name="未命中路径的 Overlay 目标")
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans/graph-options/preview",
+        json={"path_mode": "standard"},
+    )
+
+    assert resp.status_code == 200
+    variants = {variant["graph_option"]: variant for variant in resp.json()["variants"]}
+    baseline = variants["baseline"]
+    enhanced = variants["enhanced"]
+    assert overlay_node["node_id"] in enhanced["overlay_node_ids"]
+    assert overlay_node["node_id"] in enhanced["visible_overlay_node_ids"]
+    assert overlay_node["node_id"] not in baseline["overlay_node_ids"]
+    assert overlay_node["node_id"] not in enhanced["included_node_ids"]
+    assert overlay_node["node_id"] not in enhanced["path_overlay_node_ids"]
+    assert enhanced["added_node_ids"] == []
+    assert enhanced["path_overlay_edge_ids"] == []
+    assert baseline["project_graph_hash"] != enhanced["project_graph_hash"]
 
 
 async def test_graph_option_preview_ignores_unreviewed_overlay(client, db_session, project, profile):
@@ -247,6 +318,8 @@ async def test_graph_option_preview_ignores_unreviewed_overlay(client, db_sessio
     enhanced = variants["enhanced"]
     assert pending_node["node_id"] not in enhanced["included_node_ids"]
     assert pending_node["node_id"] not in enhanced["overlay_node_ids"]
+    assert pending_node["node_id"] not in enhanced["visible_overlay_node_ids"]
+    assert pending_node["node_id"] not in enhanced["path_overlay_node_ids"]
     assert enhanced["added_node_ids"] == []
 
 

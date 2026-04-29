@@ -1,5 +1,8 @@
 import request from '../request'
 
+export type LearningGoalOrientation = 'foundation' | 'exam' | 'project' | 'research' | 'career'
+export type ResourcePreference = 'mixed' | 'text' | 'video' | 'code' | 'paper'
+
 export interface LearnerProfile {
   id: string
   project_id: string
@@ -10,6 +13,13 @@ export interface LearnerProfile {
   practice_weight: number
   weekly_hours: number
   deadline_weeks: number | null
+  path_mode_preference?: string | null
+  learning_goal_orientation?: LearningGoalOrientation | null
+  resource_preference?: ResourcePreference | null
+  practice_intensity?: number
+  persona_label?: string | null
+  persona_summary?: string | null
+  persona_evidence?: string | null
 }
 
 export interface SubmitProfileDto {
@@ -20,12 +30,16 @@ export interface SubmitProfileDto {
   practice_weight: number
   weekly_hours: number
   deadline_weeks?: number
+  path_mode_preference?: string | null
+  learning_goal_orientation?: LearningGoalOrientation | null
+  resource_preference?: ResourcePreference | null
+  practice_intensity?: number
   raw_answers_json?: string
 }
 
 export interface QuestionOption {
   label: string
-  value: number
+  value: number | string
 }
 
 export interface QuestionItem {
@@ -42,7 +56,7 @@ export interface QuestionResponse {
 
 export interface SubmitAnswersDto {
   source?: string
-  answers: Array<{ question_id: string; field: string; value: number }>
+  answers: Array<{ question_id: string; field: string; value: number | string }>
 }
 
 export const profileApi = {

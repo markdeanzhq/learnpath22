@@ -7,6 +7,8 @@ from typing import Optional, Union
 from pydantic import BaseModel, Field
 
 PATH_MODE_PATTERN = "^(standard|compressed|theory_first|practice_first)$"
+GOAL_ORIENTATION_PATTERN = "^(foundation|exam|project|research|career)$"
+RESOURCE_PREFERENCE_PATTERN = "^(mixed|text|video|code|paper)$"
 
 
 class SubmitProfileRequest(BaseModel):
@@ -18,6 +20,9 @@ class SubmitProfileRequest(BaseModel):
     weekly_hours: float = Field(default=10.0, gt=0)
     deadline_weeks: Optional[int] = Field(default=None, ge=1)
     path_mode_preference: Optional[str] = Field(default=None, pattern=PATH_MODE_PATTERN)
+    learning_goal_orientation: Optional[str] = Field(default="foundation", pattern=GOAL_ORIENTATION_PATTERN)
+    resource_preference: Optional[str] = Field(default="mixed", pattern=RESOURCE_PREFERENCE_PATTERN)
+    practice_intensity: int = Field(default=3, ge=1, le=5)
     persona_label: Optional[str] = Field(default=None, max_length=100)
     persona_summary: Optional[str] = None
     persona_evidence: Optional[str] = None
@@ -36,6 +41,9 @@ class ProfileResponse(BaseModel):
     weekly_hours: float
     deadline_weeks: Optional[int]
     path_mode_preference: Optional[str] = None
+    learning_goal_orientation: Optional[str] = None
+    resource_preference: Optional[str] = None
+    practice_intensity: int = 3
     persona_label: Optional[str] = None
     persona_summary: Optional[str] = None
     persona_evidence: Optional[str] = None

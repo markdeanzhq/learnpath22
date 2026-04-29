@@ -46,7 +46,11 @@
         "theory_weight": 0.6,
         "practice_weight": 0.4,
         "weekly_hours": 10,
-        "deadline_weeks": 12
+        "deadline_weeks": 12,
+        "path_mode_preference": "theory_first",
+        "learning_goal_orientation": "foundation",
+        "resource_preference": "text",
+        "practice_intensity": 2
       }
     },
     {
@@ -59,7 +63,11 @@
         "theory_weight": 0.4,
         "practice_weight": 0.6,
         "weekly_hours": 15,
-        "deadline_weeks": 8
+        "deadline_weeks": 8,
+        "path_mode_preference": "practice_first",
+        "learning_goal_orientation": "project",
+        "resource_preference": "code",
+        "practice_intensity": 5
       }
     },
     {
@@ -72,7 +80,11 @@
         "theory_weight": 0.7,
         "practice_weight": 0.3,
         "weekly_hours": 8,
-        "deadline_weeks": 6
+        "deadline_weeks": 6,
+        "path_mode_preference": "compressed",
+        "learning_goal_orientation": "exam",
+        "resource_preference": "video",
+        "practice_intensity": 4
       }
     }
   ],

@@ -29,6 +29,7 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 | POST | /projects/{id}/goal-resolution/preview | 已有项目目标重新确认预览 |
 | POST | /projects/{id}/goal-resolution/clarifications/{clarification_session_id}/answers | 回答已有项目澄清问题 |
 | PUT | /projects/{id}/goal-resolution | 使用已确认候选更新项目目标 |
+| GET | /projects/{id}/goal-resolution/extension-drafts/{resolution_session_id}/proposal | 读取 in-domain uncovered 推荐草稿 proposal，不写 overlay session |
 | POST | /projects/{id}/goal-resolution/extension-drafts | 为 in-domain uncovered 目标显式创建 overlay 草稿 |
 
 **目标预览请求体:**
@@ -116,8 +117,12 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 | `select_candidate` | `covered` / `adjacent_domain` | `session_id`、`expires_at`、`recommended_candidate_id`、`candidates[]` | 选择候选后创建项目或更新项目目标 |
 | `confirm_partial` | `partial` | `session_id`、`covered_target_node_ids[]`、`missing_concepts[]`、`candidates[]`、`available_actions[]` | 勾选 partial acceptance 后只规划 covered targets，或选择生成扩展草稿 |
 | `answer_clarification` | `ambiguous` / `cross_domain` | `clarification_session_id`、`turn_count`、`max_turns`、`questions[]` | 调用 clarification answer 端点，直到 resolved 后获得新的 coverage response |
-| `review_extension_draft` | `in_domain_uncovered` | `missing_concepts[]`、`draft_entry`、`available_actions[]`、可选 `session_id` | 创建待扩展项目后，用户显式请求创建项目级 overlay 草稿 |
+| `review_extension_draft` | `in_domain_uncovered` | `missing_concepts[]`、`draft_entry`、`draft_proposal`、`available_actions[]`、可选 `session_id` | 创建待扩展项目后进入草稿收件箱，用户显式确认后才物化为项目级 overlay 草稿 |
 | `boundary_reject` | `out_of_domain` / `adjacent_domain` | `reason_code`、`reason_text`、`rewrite_suggestions[]` | 展示边界说明，不调用 planner，不写正式路径 |
+
+`draft_proposal` 是项目创建前的推荐草稿预览，用于把 `in_domain_uncovered` 的缺口转成可审核的 nodes / edges / resources 候选摘要。它只描述推荐内容和安全边界，不创建 overlay source/session，不写正式图谱，不写正式路径；项目以 `creation_mode=extension_review` 创建后，Knowledge 页通过草稿收件箱读取该 proposal，用户点击“创建推荐草稿”后才调用创建端点物化为 overlay extraction session。
+
+`draft_proposal` 关键字段包括：`source_id/source_ids`、`goal_trace`、`missing_concepts[]`、`gap_analysis`、`review_notes[]`、`draft_metadata`、`extraction_payload`、`nodes[]`、`edges[]`、`resources[]`、`warnings[]`、`counts`、`requires_user_review`、`writes_formal_graph=false`、`writes_formal_path=false`。规则型目标扩展目前只生成保守的 `RELATED_TO` 候选关系，不自动生成高风险 `REQUIRES` 硬依赖。
 
 **候选选择响应示例:**
 ```json
@@ -254,6 +259,38 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 
 项目级 reconfirm 会额外校验 `project_id` 与当前项目图谱 hash，避免图谱审核状态变化后复用旧候选。
 
+**Extension draft proposal 只读响应:**
+
+`GET /projects/{id}/goal-resolution/extension-drafts/{resolution_session_id}/proposal` 用于 Knowledge 草稿收件箱加载系统推荐草稿。该端点只读取目标解析会话中的推荐 proposal，不创建 overlay source，不创建 extraction session，不改变 review/planning 状态。
+
+```json
+{
+  "resolution_session_id": "<resolution_session_id>",
+  "project_id": "<project_id>",
+  "session_status": "active",
+  "expires_at": "2026-04-24T12:00:00",
+  "draft_proposal": {
+    "schema_version": "v1",
+    "draft_origin": "rules_goal_extension",
+    "draft_engine": "rules",
+    "prompt_version": "goal-extension-draft-v1",
+    "source_id": "goal_extension_draft_proposal",
+    "source_ids": ["goal_extension_draft_proposal"],
+    "missing_concepts": ["随机森林"],
+    "nodes": [{"name": "随机森林", "source_id": "goal_extension_draft_proposal"}],
+    "edges": [{"source_name_or_id": "随机森林", "target_node_id": "ml_c12", "relation_type": "RELATED_TO"}],
+    "resources": [],
+    "warnings": ["goal_extension_draft_requires_review"],
+    "counts": {"nodes": 1, "edges": 1, "resources": 0},
+    "requires_user_review": true,
+    "writes_formal_graph": false,
+    "writes_formal_path": false
+  }
+}
+```
+
+`source_id=goal_extension_draft_proposal` 只是 proposal 阶段的占位来源；真正创建 overlay 草稿时，后端会先创建项目级 source，再用真实 `source_id` 重建 `extraction_payload` 并进入既有校验管线。
+
 **Extension draft 创建请求体:**
 ```json
 {
@@ -261,7 +298,7 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 }
 ```
 
-该端点只为 `coverage_status=in_domain_uncovered` 的已保存目标解析会话创建项目级 overlay source/session/candidate 草稿；打开 Knowledge 深链本身不会创建草稿、不会改变 review/planning 状态，也不会写入 Domain Pack。响应在通用 overlay extraction session 结构外额外返回：
+该端点只为 `coverage_status=in_domain_uncovered` 的已保存目标解析会话创建项目级 overlay source/session/candidate 草稿；打开 Knowledge 深链本身不会创建草稿、不会改变 review/planning 状态，也不会写入 Domain Pack。响应在通用 overlay extraction session 结构外额外返回 `goal_trace`、`missing_concepts`、`gap_analysis`、`review_notes`、`draft_metadata`、`draft_proposal` 以及本次物化后的 nodes / edges / resources 摘要：
 
 ```json
 {
@@ -287,6 +324,15 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
     "recommended_review_focus": ["确认新增概念是否确实属于本次学习目标，而不是相邻或过大的主题。"]
   },
   "review_notes": ["请先审核“随机森林”这些扩展概念；未确认前它们只保留在项目级草稿区。"],
+  "draft_proposal": {
+    "counts": {"nodes": 1, "edges": 2, "resources": 0},
+    "requires_user_review": true,
+    "writes_formal_graph": false,
+    "writes_formal_path": false
+  },
+  "edges": [
+    {"source_name_or_id": "随机森林", "target_node_id": "ml_c12", "relation_type": "RELATED_TO"}
+  ],
   "draft_metadata": {
     "draft_origin": "rules_goal_extension",
     "draft_engine": "rules",
@@ -304,7 +350,7 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 }
 ```
 
-`gap_analysis` / `review_notes` / `draft_metadata` 会写入 overlay source metadata 与 extraction session provenance，便于审计；`extraction_payload` 仍只包含 nodes / edges / resources / warnings，保证草稿候选继续走既有 overlay 校验管线。
+`gap_analysis` / `review_notes` / `draft_metadata` 会写入 overlay source metadata 与 extraction session provenance，便于审计；`draft_proposal` 用于前端回显创建前推荐内容；`extraction_payload` 仍只包含 nodes / edges / resources / warnings，保证草稿候选继续走既有 overlay 校验管线。推荐草稿物化后仍默认 planner-invisible，只有候选通过 validation、人工 confirmed 且开启 planning 后才进入增强图谱方案。
 
 **目标理解相关错误码:**
 
@@ -344,11 +390,14 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 
 画像字段分为两类：
 - 规划权威输入：`math_level`、`coding_level`、`ml_level`、`theory_weight`、`practice_weight`、`weekly_hours`、`deadline_weeks`
-- 展示与解释字段：`path_mode_preference`、`persona_label`、`persona_summary`、`persona_evidence`
+- 展示与解释字段：`path_mode_preference`、`learning_goal_orientation`、`resource_preference`、`practice_intensity`、`persona_label`、`persona_summary`、`persona_evidence`
 
 说明：
 - `path_mode_preference` 支持 `standard`、`compressed`、`theory_first`、`practice_first`
-- persona 字段只进入展示、解释与 audit 快照，不改变同一 numeric profile 下的规划排序
+- `learning_goal_orientation` 支持 `foundation`、`exam`、`project`、`research`、`career`
+- `resource_preference` 支持 `mixed`、`text`、`video`、`code`、`paper`
+- `practice_intensity` 为 1-5 的练习强度证据字段
+- 展示与解释字段进入展示、解释与 audit 快照，不改变同一 numeric profile 下的规划排序
 - LLM 自适应问卷必须输出 schema-constrained 结构；失败时回退静态问卷
 
 ## 路径规划
@@ -658,7 +707,8 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | /projects/{id}/graph/overlay/sources | 创建 pasted text 或 search URL source |
-| POST | /projects/{id}/graph/overlay/extraction-sessions | 从 source IDs 创建抽取会话 |
+| POST | /projects/{id}/graph/overlay/extraction-payload/preview | 用 LLM 从 source IDs 生成可审阅 extraction payload，不写 session |
+| POST | /projects/{id}/graph/overlay/extraction-sessions | 从 source IDs 和可选 extraction payload 创建抽取会话 |
 | GET | /projects/{id}/graph/overlay/extraction-sessions/{session_id} | 读取抽取会话详情 |
 | PATCH | /projects/{id}/graph/overlay/nodes/{element_id}/review | 只更新 overlay node 的 review 状态 |
 | PATCH | /projects/{id}/graph/overlay/edges/{element_id}/review | 只更新 overlay edge 的 review 状态 |
@@ -672,6 +722,8 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 - `review_status` 与 `planning_enabled` 独立更新，互不隐式改写 validation/source/provenance/promotion 字段
 - unknown origin 或 unknown lifecycle status 在前端以安全未知状态展示，并禁用会影响审核或规划的操作
 - resource `planning_enabled` 只影响 resource 自身显示/推广资格，不改变 node/edge planner-visible 集合、`ProjectGraphSnapshot`、path graph、goal resolution、planner、replan 或 `project_graph_hash`
+- `extraction-payload/preview` 需要 LLM 配置；未配置返回 `503 LLM_NOT_READY`，LLM 返回非 JSON/越界结构返回 `422 INVALID_LLM_EXTRACTION_JSON`
+- LLM preview 只生成 `{nodes, edges, resources, warnings}` payload 与 provenance，不写正式图谱、正式路径或 extraction session；前端可在预览中勾选 nodes / edges / resources，创建 session 时只提交用户保留的候选，并在 `session_provenance.selected_counts` 记录过滤结果；创建 session 仍复用既有字段校验、重复检测、DAG 校验、人工审核和 planning 开关
 - `custom_extension` mode 在创建 extraction session 前检查搜索 readiness；未就绪返回 `503 SEARCH_NOT_READY`
 - 搜索未就绪只阻断 custom extension，baseline/project graph 浏览仍可用
 - overlay ID 使用 `po:{project_id}:n|e|r:{hash}` 格式并做 collision 检查

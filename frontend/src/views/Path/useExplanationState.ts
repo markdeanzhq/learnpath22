@@ -35,12 +35,41 @@ function buildExplanationCacheKey(
   return `${projectId}:${scopeId}:${polish ? 'polished' : 'rule'}`
 }
 
+function shouldRememberExplanation(data: ExplanationResponse, polish: boolean) {
+  return !polish || data.meta?.polish?.applied === true
+}
+
 function isCanceledRequest(error: unknown) {
   if (!error || typeof error !== 'object') {
     return false
   }
   const maybeError = error as { code?: string; name?: string }
   return maybeError.code === 'ERR_CANCELED' || maybeError.name === 'CanceledError' || maybeError.name === 'AbortError'
+}
+
+function isTimeoutRequest(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false
+  }
+  const maybeError = error as { code?: string; message?: string }
+  const message = maybeError.message?.toLowerCase() || ''
+  return maybeError.code === 'ECONNABORTED' || message.includes('timeout') || message.includes('exceeded')
+}
+
+function explanationLoadErrorMessage(error: any, polish: boolean, hasExplanation: boolean) {
+  const backendMessage = error?.response?.data?.error || error?.response?.data?.detail
+  if (backendMessage) {
+    return backendMessage
+  }
+  if (isTimeoutRequest(error)) {
+    if (!polish) {
+      return '规划解释加载超时，请稍后重试。'
+    }
+    return hasExplanation
+      ? 'AI 润色超时，已保留当前可用的规则解释；可关闭 AI 润色后重试。'
+      : 'AI 润色超时，请关闭 AI 润色后先加载规则解释。'
+  }
+  return '加载解释失败'
 }
 
 export function useExplanationState(projectId: Ref<string | undefined>, scopeId?: Ref<string | undefined>) {
@@ -108,7 +137,7 @@ export function useExplanationState(projectId: Ref<string | undefined>, scopeId?
         return
       }
       explanation.value = data
-      if (cacheKey) {
+      if (cacheKey && shouldRememberExplanation(data, polish)) {
         rememberExplanation(cacheKey, data)
       }
     } catch (e: any) {
@@ -119,7 +148,7 @@ export function useExplanationState(projectId: Ref<string | undefined>, scopeId?
         explanation.value = null
         return
       }
-      error.value = e?.response?.data?.error || '加载解释失败'
+      error.value = explanationLoadErrorMessage(e, polish, Boolean(explanation.value))
     } finally {
       if (requestId.value === nextRequestId) {
         loading.value = false

@@ -291,7 +291,7 @@ describe('GoalForm', () => {
     vm.form.goal_text = '我想系统学习机器学习基础'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
 
     expect(previewMock).toHaveBeenCalledWith({
@@ -307,8 +307,10 @@ describe('GoalForm', () => {
     expect(wrapper.text()).toContain('当前知识图谱可以较可靠地支持')
     expect(wrapper.text()).toContain('确认学习目标')
     expect(wrapper.text()).toContain('高置信')
+    expect(wrapper.text()).toContain('当前推荐')
     expect(wrapper.text()).toContain('学习方案：系统学习｜系统学习机器学习基础')
-    expect(wrapper.text()).toContain('路径将围绕这些内容展开')
+    expect(wrapper.text()).toContain('路径目标：')
+    expect(wrapper.text()).toContain('查看或调整学习方案细节')
     expect(wrapper.text()).toContain('系统较可靠地将你的目标映射到机器学习主干')
     expect(wrapper.text()).not.toContain('命中预设目标模板，并通过当前知识图谱节点校验。')
     expect(wrapper.text()).not.toContain('目标模板：强')
@@ -317,10 +319,27 @@ describe('GoalForm', () => {
   it('keeps the initial goal input user-friendly and hides technical options by default', () => {
     const wrapper = mountGoalForm()
 
-    expect(wrapper.text()).toContain('用一句自然语言描述想学什么即可')
+    expect(wrapper.text()).toContain('用一句自然语言描述想学什么')
     expect(wrapper.text()).toContain('高级选项：手动指定目标类型')
     expect(wrapper.text()).not.toContain('reason_code')
     expect(wrapper.text()).not.toContain('reason_text')
+  })
+
+  it('shows operation error when goal preview fails', async () => {
+    previewMock.mockRejectedValueOnce(new Error('failed'))
+    const wrapper = mountGoalForm()
+    const vm = wrapper.vm as any
+
+    vm.form.title = '机器学习基础学习计划'
+    vm.form.goal_text = '我想系统学习机器学习基础'
+    await nextTick()
+
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('操作未完成')
+    expect(wrapper.text()).toContain('目标解析暂时失败，请稍后重试')
+    expect(vm.previewState).toBeNull()
   })
 
   it('creates project when create preview has no project graph hash', async () => {
@@ -349,7 +368,7 @@ describe('GoalForm', () => {
     vm.form.goal_text = '我想系统学习机器学习基础'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
     expect(wrapper.text()).not.toContain('project_graph_hash：新建项目暂不适用')
     expect(wrapper.text()).not.toContain('知识包哈希一致')
@@ -386,7 +405,7 @@ describe('GoalForm', () => {
     vm.form.goal_text = '我想系统学习机器学习基础'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
 
     vm.form.goal_type = 'concept'
@@ -394,7 +413,7 @@ describe('GoalForm', () => {
 
     expect(wrapper.text()).toContain('请重新预览候选')
 
-    await findButtonByText(wrapper, '重新预览候选').trigger('click')
+    await findButtonByText(wrapper, '重新解析学习目标').trigger('click')
     await flushPromises()
 
     expect(previewMock).toHaveBeenLastCalledWith({
@@ -419,7 +438,7 @@ describe('GoalForm', () => {
     expect(vm.form.goal_text).toBe('我想系统学习机器学习基础')
     expect(vm.form.goal_type).toBe('domain')
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
 
     expect(previewForProjectMock).toHaveBeenCalledWith('project-001', {
@@ -450,7 +469,7 @@ describe('GoalForm', () => {
       reconfirmReason: 'goal-targets-removed',
     })
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
     await findButtonByText(wrapper, '确认并更新项目目标').trigger('click')
     await flushPromises()
@@ -520,7 +539,7 @@ describe('GoalForm', () => {
     vm.form.goal_text = '我想学习机器学习和深度学习'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('你可以怎么继续')
     expect(wrapper.text()).toContain('按已有图谱生成路径')
@@ -583,7 +602,7 @@ describe('GoalForm', () => {
     vm.form.goal_text = '学习机器学习的数学基础'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
 
     expect(vm.selectedCandidateId).toBe('')
@@ -608,11 +627,11 @@ describe('GoalForm', () => {
     vm.form.goal_text = '我想系统学习机器学习基础'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
     expect(vm.previewState).not.toBeNull()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
 
     expect(vm.previewState).toBeNull()
@@ -692,7 +711,7 @@ describe('GoalForm', () => {
     vm.form.goal_text = '想要学习基础物理'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('边界判断：领域外')
@@ -740,7 +759,7 @@ describe('GoalForm', () => {
     vm.form.goal_text = '学习新能源预测中的机器学习'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('跨领域目标')
@@ -788,15 +807,16 @@ describe('GoalForm', () => {
       projectTitle: '机器学习基础学习计划',
     })
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('生成可审核的扩展草稿')
+    expect(wrapper.text()).toContain('这个目标需要先扩展图谱')
+    expect(wrapper.text()).toContain('安全扩展流程')
     expect(wrapper.text()).toContain('你可以怎么继续')
     expect(wrapper.text()).toContain('生成扩展草稿并审核')
     expect(wrapper.text()).toContain('需要先审核草稿；审核前不会进入正式路径。')
     expect(wrapper.text()).toContain('为什么不能直接生成路径？')
     expect(wrapper.text()).toContain('待补充概念：')
-    await findButtonByText(wrapper, '预览扩展草稿').trigger('click')
+    await findButtonByText(wrapper, '进入草稿收件箱').trigger('click')
 
     expect(pushMock).toHaveBeenCalledWith({
       name: 'Knowledge',
@@ -806,6 +826,47 @@ describe('GoalForm', () => {
         resolutionSessionId: 'session-draft',
       },
     })
+  })
+
+  it('shows operation error when creating an extension-review project fails', async () => {
+    previewMock.mockResolvedValue({
+      ...previewResponse,
+      result_type: 'review_extension_draft',
+      coverage_status: 'in_domain_uncovered',
+      session_id: 'session-new-draft',
+      expires_at: '2026-04-23T09:00:00Z',
+      goal_frame: {
+        ...previewResponse.goal_frame,
+        raw_text: '我想学习深度学习入门',
+        target_concepts: ['深度学习入门'],
+        target_node_ids: [],
+      },
+      goal_understanding: {
+        ...previewResponse.goal_understanding,
+        raw_text: '我想学习深度学习入门',
+        target_concepts: ['深度学习入门'],
+      },
+      missing_concepts: ['深度学习入门'],
+      draft_entry: { action: 'create_project_overlay_draft', requires_explicit_request: true },
+      available_actions: [],
+      candidates: [],
+    })
+    createMock.mockRejectedValueOnce(new Error('failed'))
+    const wrapper = mountGoalForm()
+    const vm = wrapper.vm as any
+
+    vm.form.title = '深度学习入门计划'
+    vm.form.goal_text = '我想学习深度学习入门'
+    await nextTick()
+
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
+    await flushPromises()
+    await findButtonByText(wrapper, '创建待扩展项目').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('操作未完成')
+    expect(wrapper.text()).toContain('待扩展项目创建失败，请稍后重试。')
+    expect(pushMock).not.toHaveBeenCalled()
   })
 
   it('creates an extension-review project from an uncovered goal preview', async () => {
@@ -858,7 +919,7 @@ describe('GoalForm', () => {
     vm.form.goal_text = '我想学习深度学习入门'
     await nextTick()
 
-    await findButtonByText(wrapper, '解析目标候选').trigger('click')
+    await findButtonByText(wrapper, '解析学习目标').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('创建待扩展项目')
 

@@ -217,6 +217,18 @@ function mountExplanationState() {
   }))
 }
 
+function mountExplanationStateWithScope(scope = 'plan-001') {
+  return mount(defineComponent({
+    setup(_, { expose }) {
+      const projectId = ref<string | undefined>('project-001')
+      const scopeId = ref<string | undefined>(scope)
+      const state = useExplanationState(projectId, scopeId)
+      expose({ projectId, scopeId, ...state })
+      return () => null
+    },
+  }))
+}
+
 describe('Explanation component', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -234,6 +246,24 @@ describe('Explanation component', () => {
     expect(second.html()).toBe(first.html())
     expect(planApiGetExplanationMock).not.toHaveBeenCalled()
     expect(planApiAskExplanationMock).not.toHaveBeenCalled()
+  })
+
+  it('renders a defense-friendly guide before detailed explanation cards', () => {
+    const wrapper = mountExplanation()
+
+    expect(wrapper.text()).toContain('答辩导览')
+    expect(wrapper.text()).toContain('路径为何成立')
+    expect(wrapper.text()).toContain('系统按目标、前置依赖和时间预算生成路径。')
+    expect(wrapper.text()).toContain('目标锁定')
+    expect(wrapper.text()).toContain('机器学习基础')
+    expect(wrapper.text()).toContain('依赖闭包')
+    expect(wrapper.text()).toContain('0 个前置')
+    expect(wrapper.text()).toContain('画像补强')
+    expect(wrapper.text()).toContain('0 个补强')
+    expect(wrapper.text()).toContain('阶段与预算')
+    expect(wrapper.text()).toContain('1 阶段 / 6 小时')
+    expect(wrapper.text()).toContain('推荐讲述顺序')
+    expect(wrapper.text()).toContain('先说明学习目标如何映射到目标知识点')
   })
 
   it('shows AI polish waiting feedback while polished explanation is loading', () => {
@@ -255,7 +285,7 @@ describe('Explanation component', () => {
       explanation: null,
     })
 
-    expect(wrapper.text()).toContain('AI 润色通常需要十几秒')
+    expect(wrapper.text()).toContain('AI 润色最长可能需要约 1 分钟')
     expect(wrapper.find('.polish-skeleton').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('路径解释摘要')
   })
@@ -335,6 +365,42 @@ describe('Explanation component', () => {
     expect(wrapper.text()).not.toContain('来源：audit.ordering_logs')
   })
 
+  it('shows raw rule text comparison only in debug mode', () => {
+    const explanation = createExplanationResponse({
+      node_explanations: [
+        {
+          node_id: 'ml-c01',
+          node_name: '机器学习概览',
+          reason: '润色后的纳入理由',
+          raw_reason: '规则原始纳入理由',
+          decision_type: 'target',
+        },
+      ],
+      stage_explanations: [
+        {
+          node_id: 'ml-c01',
+          node_name: '机器学习概览',
+          assigned_stage: '基础阶段',
+          reasons: ['基础类别'],
+          rationale: '润色后的阶段说明',
+          raw_rationale: '规则原始阶段说明',
+        },
+      ],
+    })
+
+    const defenseWrapper = mountExplanation({ displayMode: 'defense', explanation })
+    expect(defenseWrapper.text()).not.toContain('原始规则文本对照')
+    expect(defenseWrapper.text()).not.toContain('规则原始纳入理由')
+
+    const debugWrapper = mountExplanation({ displayMode: 'debug', explanation })
+    expect(debugWrapper.text()).toContain('原始规则文本对照')
+    expect(debugWrapper.text()).toContain('节点纳入原因：机器学习概览')
+    expect(debugWrapper.text()).toContain('阶段划分说明：机器学习概览')
+    expect(debugWrapper.text()).toContain('当前展示：润色后的纳入理由')
+    expect(debugWrapper.text()).toContain('规则原始纳入理由')
+    expect(debugWrapper.text()).toContain('规则原始阶段说明')
+  })
+
   it('keeps advanced audit collapsed in debug mode and ignores unknown DTO fields', () => {
     const wrapper = mountExplanation({
       displayMode: 'debug',
@@ -395,6 +461,69 @@ describe('Explanation component', () => {
 describe('useExplanationState', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('does not cache failed polish fallback responses in memory', async () => {
+    const fallbackResponse = createExplanationResponse({
+      meta: {
+        provenance: {
+          truth_source: 'plan_audit_snapshot',
+          fallback_used: false,
+          fallback_reasons: [],
+          live_pack_fields: [],
+        },
+        polish: {
+          requested: true,
+          applied: false,
+          scope: [],
+          fallback_reason: 'timeout',
+        },
+      },
+      node_explanations: [
+        {
+          node_id: 'fallback-node',
+          node_name: 'Fallback',
+          reason: 'fallback',
+          decision_type: 'target',
+        },
+      ],
+    })
+    planApiGetExplanationMock.mockResolvedValueOnce(fallbackResponse)
+
+    const firstWrapper = mountExplanationStateWithScope('plan-failed-polish-cache')
+    const firstVm = firstWrapper.vm as any
+    await firstVm.load(true)
+    await flushPromises()
+    expect(firstVm.explanation.node_explanations[0].node_id).toBe('fallback-node')
+
+    const deferred = createDeferred<any>()
+    planApiGetExplanationMock.mockImplementationOnce(() => deferred.promise)
+    const secondWrapper = mountExplanationStateWithScope('plan-failed-polish-cache')
+    const secondVm = secondWrapper.vm as any
+    const reload = secondVm.load(true)
+    await flushPromises()
+
+    expect(secondVm.explanation).toBeNull()
+
+    deferred.resolve(createExplanationResponse())
+    await reload
+  })
+
+  it('shows actionable timeout copy when polished explanation exceeds request budget', async () => {
+    planApiGetExplanationMock.mockRejectedValueOnce({
+      code: 'ECONNABORTED',
+      message: 'timeout of 30000ms exceeded',
+    })
+
+    const wrapper = mountExplanationState()
+    const vm = wrapper.vm as any
+
+    await vm.load(true)
+    await flushPromises()
+
+    expect(vm.error).toContain('AI 润色超时')
+    expect(vm.error).toContain('关闭 AI 润色')
+    expect(vm.loading).toBe(false)
   })
 
   it('suppresses stale responses without overriding explanation, loading, or error', async () => {

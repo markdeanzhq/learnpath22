@@ -19,7 +19,6 @@ from app.repositories.project_overlay_repository import (
     list_session_resources,
 )
 from app.repositories.project_repository import get_project
-from app.services.goal_resolution_service import build_project_graph_hash
 from app.services.project_overlay_extraction_service import create_extraction_session_from_sources
 
 
@@ -42,6 +41,42 @@ def _json_dumps(value: Any) -> str:
 
 DRAFT_PROMPT_VERSION = "goal-extension-draft-v1"
 DRAFT_ORIGIN = "rules_goal_extension"
+PROPOSAL_SOURCE_ID = "goal_extension_draft_proposal"
+
+_RELATED_EDGE_RULES = [
+    {
+        "terms": ("随机森林", "bagging"),
+        "targets": (
+            ("ml_c12", "随机森林通常建立在决策树基础之上，适合作为项目级 RELATED_TO 候选。"),
+            ("ml_b02", "随机森林属于监督学习常见算法家族，适合作为审核关系候选。"),
+            ("ml_e07", "随机森林常用于分类实践，可与小型分类案例实践关联审核。"),
+        ),
+    },
+    {
+        "terms": ("svm", "支持向量机"),
+        "targets": (
+            ("ml_a02", "支持向量机依赖向量空间表达，适合作为数学支撑关系候选。"),
+            ("ml_b02", "支持向量机属于监督学习分类/回归方法，适合作为审核关系候选。"),
+            ("ml_e04", "支持向量机实践常依赖特征标准化，适合作为实践关联候选。"),
+        ),
+    },
+    {
+        "terms": ("集成学习", "boosting", "xgboost"),
+        "targets": (
+            ("ml_b02", "集成学习通常用于监督学习任务，适合作为审核关系候选。"),
+            ("ml_c12", "树模型是常见集成学习基学习器，适合作为审核关系候选。"),
+            ("ml_d08", "集成方法需要通过模型选择比较效果，适合作为审核关系候选。"),
+        ),
+    },
+    {
+        "terms": ("深度学习",),
+        "targets": (
+            ("ml_a02", "深度学习基础理解通常需要向量与矩阵表达，适合作为扩展审核候选。"),
+            ("ml_a04", "深度学习训练依赖梯度优化思想，适合作为扩展审核候选。"),
+            ("ml_c05", "梯度下降是深度学习训练的核心优化入口，适合作为扩展审核候选。"),
+        ),
+    },
+]
 
 
 def _normalize_missing_concepts(value: Any) -> list[str]:
@@ -138,14 +173,14 @@ def _build_review_notes(missing_concepts: list[str]) -> list[str]:
     ]
 
 
-def _build_draft_metadata(session: GoalResolutionSession) -> dict[str, Any]:
+def _build_draft_metadata_from_session_id(resolution_session_id: str | None) -> dict[str, Any]:
     return {
         "schema_version": "v1",
         "draft_origin": DRAFT_ORIGIN,
         "draft_engine": "rules",
         "prompt_version": DRAFT_PROMPT_VERSION,
         "model": None,
-        "resolution_session_id": session.session_id,
+        "resolution_session_id": resolution_session_id,
         "requires_user_review": True,
         "can_directly_plan": False,
         "requires_planning_enabled": True,
@@ -155,6 +190,10 @@ def _build_draft_metadata(session: GoalResolutionSession) -> dict[str, Any]:
             "formal_path_source": "graph_algorithm_after_user_review",
         },
     }
+
+
+def _build_draft_metadata(session: GoalResolutionSession) -> dict[str, Any]:
+    return _build_draft_metadata_from_session_id(session.session_id)
 
 
 def _draft_node_candidate(
@@ -194,6 +233,108 @@ def _draft_node_candidate(
     }
 
 
+def _draft_edge_candidates(missing_concepts: list[str]) -> list[dict[str, Any]]:
+    edges: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for concept in missing_concepts:
+        normalized = concept.lower()
+        for rule in _RELATED_EDGE_RULES:
+            if not any(term in normalized for term in rule["terms"]):
+                continue
+            for target_node_id, rationale in rule["targets"]:
+                key = (concept, target_node_id, "RELATED_TO")
+                if key in seen:
+                    continue
+                seen.add(key)
+                edges.append({
+                    "source_name_or_id": concept,
+                    "target_node_id": target_node_id,
+                    "relation_type": "RELATED_TO",
+                    "confidence": 0.42,
+                    "legality_rationale": rationale,
+                })
+    return edges
+
+
+def build_goal_extension_draft_payload(
+    *,
+    goal_text: str,
+    missing_concepts: list[str],
+    source_id: str,
+    trace: dict[str, Any],
+    draft_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "nodes": [
+            _draft_node_candidate(
+                concept=concept,
+                source_id=source_id,
+                goal_text=goal_text,
+                trace=trace,
+                draft_metadata=draft_metadata,
+            )
+            for concept in missing_concepts
+        ],
+        "edges": _draft_edge_candidates(missing_concepts),
+        "resources": [],
+        "warnings": ["goal_extension_draft_requires_review"],
+    }
+
+
+def build_goal_extension_draft_proposal(
+    *,
+    goal_text: str,
+    missing_concepts: list[str],
+    coverage_response: dict[str, Any],
+    trace: dict[str, Any] | None = None,
+    resolution_session_id: str | None = None,
+    source_id: str = PROPOSAL_SOURCE_ID,
+) -> dict[str, Any]:
+    normalized_concepts = _normalize_missing_concepts(missing_concepts)
+    draft_trace = trace or {}
+    draft_metadata = _build_draft_metadata_from_session_id(resolution_session_id)
+    gap_analysis = _build_gap_analysis(
+        goal_text=goal_text,
+        missing_concepts=normalized_concepts,
+        coverage_response=coverage_response,
+    )
+    review_notes = _build_review_notes(normalized_concepts)
+    extraction_payload = build_goal_extension_draft_payload(
+        goal_text=goal_text,
+        missing_concepts=normalized_concepts,
+        source_id=source_id,
+        trace=draft_trace,
+        draft_metadata=draft_metadata,
+    )
+    return {
+        "schema_version": "v1",
+        "draft_origin": DRAFT_ORIGIN,
+        "draft_engine": "rules",
+        "prompt_version": DRAFT_PROMPT_VERSION,
+        "model": None,
+        "source_id": source_id,
+        "source_ids": [source_id],
+        "goal_trace": draft_trace,
+        "missing_concepts": normalized_concepts,
+        "gap_analysis": gap_analysis,
+        "review_notes": review_notes,
+        "draft_metadata": draft_metadata,
+        "extraction_payload": extraction_payload,
+        "nodes": extraction_payload["nodes"],
+        "edges": extraction_payload["edges"],
+        "resources": extraction_payload["resources"],
+        "warnings": extraction_payload["warnings"],
+        "counts": {
+            "nodes": len(extraction_payload["nodes"]),
+            "edges": len(extraction_payload["edges"]),
+            "resources": len(extraction_payload["resources"]),
+        },
+        "requires_user_review": True,
+        "writes_formal_graph": False,
+        "writes_formal_path": False,
+    }
+
+
 async def _validate_resolution_session(
     db: AsyncSession,
     *,
@@ -214,6 +355,8 @@ async def _validate_resolution_session(
         raise AppError(code=422, message="INVALID_COVERAGE_TRANSITION")
     if session.pack_hash is None:
         raise AppError(code=409, message=error_codes.STALE_RESOLUTION_SESSION)
+    from app.services.goal_resolution_service import build_project_graph_hash
+
     current_graph_hash = await build_project_graph_hash(db, project_id, session.pack_hash)
     if session.project_graph_hash != current_graph_hash:
         raise AppError(
@@ -222,6 +365,39 @@ async def _validate_resolution_session(
             details={"reason_code": error_codes.PROJECT_GRAPH_DRIFT},
         )
     return session, coverage_response
+
+
+async def preview_goal_extension_draft_proposal(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    resolution_session_id: str,
+) -> dict[str, Any]:
+    session, coverage_response = await _validate_resolution_session(
+        db,
+        project_id=project_id,
+        resolution_session_id=resolution_session_id,
+    )
+    missing_concepts = _normalize_missing_concepts(coverage_response.get("missing_concepts"))
+    if not missing_concepts:
+        raise AppError(code=422, message="MISSING_CONCEPTS_REQUIRED")
+    goal_text = _goal_text_from_session(session, coverage_response)
+    trace = _goal_trace(session)
+    stored_proposal = coverage_response.get("draft_proposal")
+    draft_proposal = stored_proposal if isinstance(stored_proposal, dict) else build_goal_extension_draft_proposal(
+        goal_text=goal_text,
+        missing_concepts=missing_concepts,
+        coverage_response=coverage_response,
+        trace=trace,
+        resolution_session_id=session.session_id,
+    )
+    return {
+        "resolution_session_id": session.session_id,
+        "project_id": project_id,
+        "session_status": session.status,
+        "expires_at": session.expires_at,
+        "draft_proposal": draft_proposal,
+    }
 
 
 async def create_goal_extension_draft_from_resolution(
@@ -243,12 +419,16 @@ async def create_goal_extension_draft_from_resolution(
         raise AppError(code=422, message="MISSING_CONCEPTS_REQUIRED")
     goal_text = _goal_text_from_session(session, coverage_response)
     trace = _goal_trace(session)
-    gap_analysis = _build_gap_analysis(
+    stored_proposal = coverage_response.get("draft_proposal")
+    draft_proposal = stored_proposal if isinstance(stored_proposal, dict) else build_goal_extension_draft_proposal(
         goal_text=goal_text,
         missing_concepts=missing_concepts,
         coverage_response=coverage_response,
+        trace=trace,
+        resolution_session_id=session.session_id,
     )
-    review_notes = _build_review_notes(missing_concepts)
+    gap_analysis = draft_proposal["gap_analysis"]
+    review_notes = draft_proposal["review_notes"]
     draft_metadata = _build_draft_metadata(session)
     existing_session_id = coverage_response.get("overlay_extraction_session_id")
     if session.status == "draft_created" and isinstance(existing_session_id, str):
@@ -276,6 +456,7 @@ async def create_goal_extension_draft_from_resolution(
             "gap_analysis": gap_analysis,
             "review_notes": review_notes,
             "draft_metadata": draft_metadata,
+            "draft_proposal": draft_proposal,
         }
 
     source_text = f"学习目标：{goal_text}\n待扩展概念：{'、'.join(missing_concepts)}"
@@ -299,21 +480,18 @@ async def create_goal_extension_draft_from_resolution(
         }),
         commit=False,
     )
-    extraction_payload = {
-        "nodes": [
-            _draft_node_candidate(
-                concept=concept,
-                source_id=source.source_id,
-                goal_text=goal_text,
-                trace=trace,
-                draft_metadata=draft_metadata,
-            )
-            for concept in missing_concepts
-        ],
-        "edges": [],
-        "resources": [],
-        "warnings": ["goal_extension_draft_requires_review"],
-    }
+    draft_proposal = build_goal_extension_draft_proposal(
+        goal_text=goal_text,
+        missing_concepts=missing_concepts,
+        coverage_response=coverage_response,
+        trace=trace,
+        resolution_session_id=session.session_id,
+        source_id=source.source_id,
+    )
+    gap_analysis = draft_proposal["gap_analysis"]
+    review_notes = draft_proposal["review_notes"]
+    draft_metadata = draft_proposal["draft_metadata"]
+    extraction_payload = draft_proposal["extraction_payload"]
     created = await create_extraction_session_from_sources(
         db,
         project_id=project_id,
@@ -336,6 +514,7 @@ async def create_goal_extension_draft_from_resolution(
     coverage_response["gap_analysis"] = gap_analysis
     coverage_response["review_notes"] = review_notes
     coverage_response["draft_metadata"] = draft_metadata
+    coverage_response["draft_proposal"] = draft_proposal
     session.coverage_response_json = _json_dumps(coverage_response)
     session.status = "draft_created"
     await db.commit()
@@ -347,4 +526,5 @@ async def create_goal_extension_draft_from_resolution(
         "gap_analysis": gap_analysis,
         "review_notes": review_notes,
         "draft_metadata": draft_metadata,
+        "draft_proposal": draft_proposal,
     }

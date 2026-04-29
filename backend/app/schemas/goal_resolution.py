@@ -233,6 +233,7 @@ class ReviewExtensionDraftCoverageResponse(CoverageResponseBase):
     coverage_status: Literal["in_domain_uncovered"]
     missing_concepts: list[str]
     draft_entry: dict[str, Any] = Field(default_factory=dict)
+    draft_proposal: Optional[dict[str, Any]] = None
     available_actions: list[GoalCoverageAction] = Field(default_factory=list)
     session_id: Optional[str] = None
     expires_at: Optional[datetime] = None
@@ -294,8 +295,18 @@ class VariantSummary(BaseModel):
     blocked_reason: Optional[str] = None
     added_node_ids: list[str] = Field(default_factory=list)
     removed_node_ids: list[str] = Field(default_factory=list)
+    visible_overlay_node_ids: list[str] = Field(default_factory=list)
+    visible_overlay_edge_ids: list[str] = Field(default_factory=list)
+    path_overlay_node_ids: list[str] = Field(default_factory=list)
+    path_overlay_edge_ids: list[str] = Field(default_factory=list)
     overlay_node_ids: list[str] = Field(default_factory=list)
     overlay_edge_ids: list[str] = Field(default_factory=list)
+    order_changed: bool = False
+    order_changed_node_ids: list[str] = Field(default_factory=list)
+    stage_changed: bool = False
+    stage_changed_node_ids: list[str] = Field(default_factory=list)
+    budget_changed: bool = False
+    budget_delta: dict[str, Any] = Field(default_factory=dict)
     project_graph_hash: Optional[str] = None
 
 

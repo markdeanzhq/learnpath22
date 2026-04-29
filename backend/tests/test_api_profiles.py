@@ -55,6 +55,9 @@ async def test_submit_profile(client, project):
     assert data["math_level"] == 3
     assert data["coding_level"] == 4
     assert data["project_id"] == project["id"]
+    assert data["learning_goal_orientation"] == "foundation"
+    assert data["resource_preference"] == "mixed"
+    assert data["practice_intensity"] == 3
 
 
 async def test_submit_profile_defaults(client, project):
@@ -282,17 +285,26 @@ async def test_submit_profile_generates_persona_fields(client, project):
             "weekly_hours": 18,
             "deadline_weeks": 6,
             "path_mode_preference": "practice_first",
+            "learning_goal_orientation": "project",
+            "resource_preference": "code",
+            "practice_intensity": 5,
         },
     )
 
     assert resp.status_code == 200
     data = resp.json()
     assert data["path_mode_preference"] == "practice_first"
+    assert data["learning_goal_orientation"] == "project"
+    assert data["resource_preference"] == "code"
+    assert data["practice_intensity"] == 5
     assert data["persona_label"] == "实践驱动型学习者"
     assert "实践驱动型学习者" in data["persona_summary"]
     evidence = json.loads(data["persona_evidence"])
     assert evidence["path_mode_preference"] == "practice_first"
     assert evidence["deadline_weeks"] == 6
+    assert evidence["learning_goal_orientation"] == "project"
+    assert evidence["resource_preference"] == "code"
+    assert evidence["practice_intensity"] == 5
 
 
 async def test_collector_static_questions_include_budget_and_mode_fields(client, project):
@@ -300,7 +312,14 @@ async def test_collector_static_questions_include_budget_and_mode_fields(client,
 
     assert resp.status_code == 200
     fields = {question["field"] for question in resp.json()["questions"]}
-    assert {"weekly_hours", "deadline_weeks", "path_mode_preference"} <= fields
+    assert {
+        "weekly_hours",
+        "deadline_weeks",
+        "path_mode_preference",
+        "learning_goal_orientation",
+        "resource_preference",
+        "practice_intensity",
+    } <= fields
 
 
 async def test_collector_submit_maps_deadline_path_mode_and_persona(client, project):
@@ -315,6 +334,9 @@ async def test_collector_submit_maps_deadline_path_mode_and_persona(client, proj
                 {"question_id": "q_hours", "value": 4},
                 {"question_id": "q_deadline", "value": 4},
                 {"question_id": "q_path_mode", "value": "compressed"},
+                {"question_id": "q_goal_orientation", "value": "exam"},
+                {"question_id": "q_resource_preference", "value": "video"},
+                {"question_id": "q_practice_intensity", "value": 4},
             ],
         },
     )
@@ -323,6 +345,9 @@ async def test_collector_submit_maps_deadline_path_mode_and_persona(client, proj
     data = resp.json()
     assert data["deadline_weeks"] == 4
     assert data["path_mode_preference"] == "compressed"
+    assert data["learning_goal_orientation"] == "exam"
+    assert data["resource_preference"] == "video"
+    assert data["practice_intensity"] == 4
     assert data["persona_label"] == "时间压缩型学习者"
     assert data["persona_summary"]
 
@@ -330,7 +355,13 @@ async def test_collector_submit_maps_deadline_path_mode_and_persona(client, proj
 def test_map_answers_ignores_invalid_path_mode_and_uses_fallback():
     mapped = map_answers_to_profile([
         {"question_id": "q_path_mode", "value": "invalid"},
+        {"question_id": "q_goal_orientation", "value": "invalid"},
+        {"question_id": "q_resource_preference", "value": "invalid"},
+        {"question_id": "q_practice_intensity", "value": 99},
     ])
 
     assert mapped["path_mode_preference"] == "standard"
+    assert mapped["learning_goal_orientation"] == "foundation"
+    assert mapped["resource_preference"] == "mixed"
+    assert mapped["practice_intensity"] == 5
     assert mapped["persona_label"] == "基础补齐型学习者"

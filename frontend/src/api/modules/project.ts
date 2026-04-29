@@ -186,11 +186,35 @@ export interface AnswerClarificationCoverageResponse extends CoverageResponseBas
   questions: ClarificationQuestion[]
 }
 
+export interface GoalExtensionDraftProposal {
+  schema_version?: string
+  draft_origin?: string
+  draft_engine?: string
+  prompt_version?: string
+  model?: string | null
+  source_id?: string
+  source_ids?: string[]
+  missing_concepts?: string[]
+  gap_analysis?: Record<string, unknown>
+  review_notes?: string[]
+  draft_metadata?: Record<string, unknown>
+  extraction_payload?: unknown
+  nodes?: Array<Record<string, unknown>>
+  edges?: Array<Record<string, unknown>>
+  resources?: Array<Record<string, unknown>>
+  warnings?: string[]
+  counts?: { nodes: number; edges: number; resources: number }
+  requires_user_review?: boolean
+  writes_formal_graph?: boolean
+  writes_formal_path?: boolean
+}
+
 export interface ReviewExtensionDraftCoverageResponse extends CoverageResponseBase {
   result_type: 'review_extension_draft'
   coverage_status: 'in_domain_uncovered'
   missing_concepts: string[]
   draft_entry: Record<string, unknown>
+  draft_proposal?: GoalExtensionDraftProposal | null
   available_actions?: GoalCoverageAction[]
   session_id?: string | null
   expires_at?: string | null

@@ -19,6 +19,7 @@ from app.services.domain_pack_service import (
 )
 from app.services.goal_service import UnsupportedGoalTypeError, identify_goal_type, resolve_goal_candidates
 from app.services.llm_goal_interpreter_service import interpret_goal_with_llm
+from app.services.project_goal_extension_draft_service import build_goal_extension_draft_proposal
 from app.services.project_graph_snapshot_service import build_project_graph_snapshot
 
 _AMBIGUOUS_TERMS = ("ai", "人工智能", "学ai", "学习ai", "智能")
@@ -897,7 +898,11 @@ async def create_goal_resolution_preview(
             "pack_hash": session_pack_hash,
             "project_graph_hash": graph_hash,
             "missing_concepts": missing_concepts,
-            "draft_entry": {"action": "create_project_overlay_draft", "requires_explicit_request": True},
+            "draft_entry": {
+                "action": "create_project_overlay_draft",
+                "requires_explicit_request": True,
+                "presentation": "draft_inbox",
+            },
             "available_actions": _goal_coverage_actions("in_domain_uncovered", has_project=project_id is not None),
         }
         session = GoalResolutionSession(
@@ -920,11 +925,19 @@ async def create_goal_resolution_preview(
         db.add(session)
         await db.commit()
         await db.refresh(session)
+        audit_trace = _audit_trace("goal_resolution", session.session_id, session_pack_hash, graph_hash)
         response.update({
-            "audit_trace": _audit_trace("goal_resolution", session.session_id, session_pack_hash, graph_hash),
+            "audit_trace": audit_trace,
             "session_id": session.session_id,
             "expires_at": _ensure_utc(session.expires_at),
         })
+        response["draft_proposal"] = build_goal_extension_draft_proposal(
+            goal_text=goal_text,
+            missing_concepts=missing_concepts,
+            coverage_response=response,
+            trace=audit_trace,
+            resolution_session_id=session.session_id,
+        )
         session.coverage_response_json = _json_dumps(response)
         await db.commit()
         return response

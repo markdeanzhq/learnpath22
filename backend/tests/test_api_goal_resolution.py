@@ -48,6 +48,7 @@ from app.models.sqlite_models import (
     LearningProject,
     PathStage,
     PathTask,
+    ProjectOverlayEdge,
     ProjectOverlayExtractionSession,
     ProjectOverlayNode,
     ProjectOverlaySource,
@@ -841,6 +842,13 @@ async def test_goal_resolution_preview_returns_in_domain_uncovered_draft_entry(c
     assert data["available_actions"][0]["enabled"] is True
     assert data["available_actions"][0]["requires_review"] is True
     assert data["session_id"]
+    assert data["draft_entry"]["presentation"] == "draft_inbox"
+    assert data["draft_proposal"]["requires_user_review"] is True
+    assert data["draft_proposal"]["writes_formal_graph"] is False
+    assert data["draft_proposal"]["counts"]["nodes"] == 1
+    assert data["draft_proposal"]["counts"]["edges"] >= 1
+    assert data["draft_proposal"]["nodes"][0]["name"] == "随机森林"
+    assert {edge["target_node_id"] for edge in data["draft_proposal"]["edges"]} >= {"ml_c12", "ml_b02"}
 
 
 async def test_create_extension_review_project_from_uncovered_goal_preview(client):
@@ -892,6 +900,8 @@ async def test_create_extension_review_project_from_uncovered_goal_preview(clien
     assert draft["review_notes"]
     assert draft["draft_metadata"]["requires_user_review"] is True
     assert draft["draft_metadata"]["can_directly_plan"] is False
+    assert draft["draft_proposal"]["counts"]["edges"] >= 1
+    assert any(edge["relation_type"] == "RELATED_TO" for edge in draft["edges"])
 
 
 async def test_project_goal_extension_draft_requires_explicit_creation(client, db_session, project):
@@ -924,6 +934,16 @@ async def test_project_goal_extension_draft_requires_explicit_creation(client, d
     assert sources_before == []
     assert overlay_sessions_before == []
 
+    proposal_resp = await client.get(
+        f"/api/v1/projects/{project['id']}/goal-resolution/extension-drafts/{preview['session_id']}/proposal"
+    )
+    assert proposal_resp.status_code == 200
+    proposal = proposal_resp.json()["draft_proposal"]
+    assert proposal["counts"]["nodes"] == 1
+    assert proposal["counts"]["edges"] >= 1
+    assert (await db_session.execute(select(ProjectOverlaySource))).scalars().all() == []
+    assert (await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all() == []
+
     draft_resp = await client.post(
         f"/api/v1/projects/{project['id']}/goal-resolution/extension-drafts",
         json={"resolution_session_id": preview["session_id"]},
@@ -952,6 +972,9 @@ async def test_project_goal_extension_draft_requires_explicit_creation(client, d
     assert source_metadata["gap_analysis"]["missing_concepts"] == ["随机森林"]
     assert source_metadata["review_notes"] == draft["review_notes"]
     assert source_metadata["draft_metadata"]["requires_user_review"] is True
+    assert draft["draft_proposal"]["counts"]["edges"] == len(draft["edges"])
+    assert {edge["target_node_id"] for edge in draft["edges"]} >= {"ml_c12", "ml_b02"}
+    assert all(edge["validation_status"] == "valid" for edge in draft["edges"])
 
     duplicate_resp = await client.post(
         f"/api/v1/projects/{project['id']}/goal-resolution/extension-drafts",
@@ -966,6 +989,7 @@ async def test_project_goal_extension_draft_requires_explicit_creation(client, d
     assert len((await db_session.execute(select(ProjectOverlaySource))).scalars().all()) == 1
     assert len((await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all()) == 1
     assert len((await db_session.execute(select(ProjectOverlayNode))).scalars().all()) == 1
+    assert len((await db_session.execute(select(ProjectOverlayEdge))).scalars().all()) == len(draft["edges"])
 
     get_resp = await client.get(
         f"/api/v1/projects/{project['id']}/graph/overlay/extraction-sessions/{draft['session']['session_id']}"

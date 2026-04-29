@@ -1,4 +1,7 @@
-import request from '../request'
+import request, { type RequestConfig } from '../request'
+
+const EXPLANATION_TIMEOUT_MS = 30000
+const POLISHED_EXPLANATION_TIMEOUT_MS = 90000
 
 export interface PathTask {
   node_id: string
@@ -343,8 +346,18 @@ export interface VariantSummary {
   blocked_reason?: string | null
   added_node_ids?: string[]
   removed_node_ids?: string[]
+  visible_overlay_node_ids?: string[]
+  visible_overlay_edge_ids?: string[]
+  path_overlay_node_ids?: string[]
+  path_overlay_edge_ids?: string[]
   overlay_node_ids?: string[]
   overlay_edge_ids?: string[]
+  order_changed?: boolean
+  order_changed_node_ids?: string[]
+  stage_changed?: boolean
+  stage_changed_node_ids?: string[]
+  budget_changed?: boolean
+  budget_delta?: Record<string, unknown>
   project_graph_hash?: string | null
 }
 
@@ -394,8 +407,15 @@ export const planApi = {
     request.post(`/projects/${projectId}/plans`),
   getLatest: (projectId: string): Promise<LearningPlan> =>
     request.get(`/projects/${projectId}/plans/latest`),
-  getExplanation: (projectId: string, polish = false, signal?: AbortSignal): Promise<ExplanationResponse> =>
-    request.get(`/projects/${projectId}/explanation`, { params: { polish }, signal }),
+  getExplanation: (projectId: string, polish = false, signal?: AbortSignal): Promise<ExplanationResponse> => {
+    const config: RequestConfig = {
+      params: { polish },
+      signal,
+      silent: true,
+      timeout: polish ? POLISHED_EXPLANATION_TIMEOUT_MS : EXPLANATION_TIMEOUT_MS,
+    }
+    return request.get(`/projects/${projectId}/explanation`, config)
+  },
   askExplanation: (projectId: string, payload: ExplanationAskRequest): Promise<ExplanationAskResponse> =>
     request.post(`/projects/${projectId}/explanation/ask`, payload),
   replan: (projectId: string, mode: string, reason?: string): Promise<ReplanResult> =>

@@ -26,7 +26,7 @@
       class="section-gap"
     >
       <template #default>
-        解释刷新失败，当前保留最近一次成功结果。
+        {{ explanation ? '解释刷新失败，当前保留最近一次成功结果。' : '解释加载失败，请关闭 AI 润色或稍后重试。' }}
         <el-button link type="primary" @click="emit('retry')">重试</el-button>
       </template>
     </el-alert>
@@ -68,6 +68,27 @@
           {{ polishHint }}
         </span>
       </div>
+
+      <section class="defense-guide section-gap" aria-label="规划解释答辩导览">
+        <div class="defense-guide-main">
+          <p class="defense-eyebrow">答辩导览</p>
+          <h3>路径为何成立</h3>
+          <p>{{ overview.headline }}</p>
+        </div>
+        <div class="defense-card-grid">
+          <article v-for="item in defenseGuideCards" :key="item.title" class="defense-card">
+            <span>{{ item.title }}</span>
+            <strong>{{ item.value }}</strong>
+            <small>{{ item.detail }}</small>
+          </article>
+        </div>
+        <div class="defense-talking-points" aria-label="推荐讲述顺序">
+          <strong>推荐讲述顺序</strong>
+          <ol>
+            <li v-for="point in defenseTalkingPoints" :key="point">{{ point }}</li>
+          </ol>
+        </div>
+      </section>
 
       <el-card shadow="never" class="overview-card section-gap">
         <template #header>
@@ -303,6 +324,27 @@
       <el-card v-if="showTechnicalDetails" shadow="never" class="section-gap">
         <template #header>
           <div class="section-header">
+            <span>原始规则文本对照</span>
+            <el-tag size="small" type="warning">raw_*</el-tag>
+          </div>
+        </template>
+        <el-collapse v-if="rawExplanationEntries.length" v-model="activeRawPanels">
+          <el-collapse-item
+            v-for="item in rawExplanationEntries"
+            :key="item.key"
+            :title="item.title"
+            :name="item.key"
+          >
+            <p class="summary-text">当前展示：{{ item.currentText }}</p>
+            <pre class="audit-value raw-value">{{ item.rawText }}</pre>
+          </el-collapse-item>
+        </el-collapse>
+        <el-empty v-else description="暂无 raw_reason / raw_rationale 对照" />
+      </el-card>
+
+      <el-card v-if="showTechnicalDetails" shadow="never" class="section-gap">
+        <template #header>
+          <div class="section-header">
             <span>高级审计依据</span>
             <el-tag size="small" type="info">默认折叠</el-tag>
           </div>
@@ -368,6 +410,13 @@ interface DisplayNodeRef {
   unresolved: boolean
 }
 
+interface RawExplanationEntry {
+  key: string
+  title: string
+  currentText: string
+  rawText: string
+}
+
 const props = defineProps<{
   explanation: ExplanationResponse | null
   loading: boolean
@@ -386,6 +435,7 @@ const emit = defineEmits<{
 }>()
 
 const activeAuditPanels = ref<string[]>([])
+const activeRawPanels = ref<string[]>([])
 
 const genericQuestions: Array<{ question_id: ExplanationQuestionId; label: string }> = [
   { question_id: 'why_path_order', label: '为什么按这个顺序学习？' },
@@ -415,7 +465,7 @@ const showInitialPolishSkeleton = computed(() => isPolishLoading.value && !expla
 const polishLoadingMessage = computed(() => (
   explanation.value
     ? 'AI 正在基于当前规则解释做自然语言润色，您可以先继续阅读下方规则文本。'
-    : 'AI 润色通常需要十几秒，完成后会自动展示更自然的解释文本。'
+    : 'AI 润色最长可能需要约 1 分钟，请稍等；完成后会自动展示更自然的解释文本。'
 ))
 const readability = computed(() => explanation.value?.readability ?? null)
 const polishMeta = computed(() => explanation.value?.meta?.polish ?? null)
@@ -570,7 +620,64 @@ const budgetSummary = computed<ReadableBudgetSummary | null>(() => {
   }
 })
 const budgetSummaryText = computed(() => budgetSummary.value?.summary || '暂无时间预算说明。')
+const defenseGuideCards = computed(() => {
+  const prerequisiteCount = nodeGroupCount(['prerequisite', 'prerequisites', 'dependency'])
+  const reinforcedCount = nodeGroupCount(['reinforced', 'reinforcement'])
+  const targetNames = overview.value.goalNames.length ? overview.value.goalNames.join('、') : '目标节点待识别'
+  return [
+    {
+      title: '目标锁定',
+      value: targetNames,
+      detail: readability.value?.goal_resolution_summary.final_goal_text || '来自目标解析结果',
+    },
+    {
+      title: '依赖闭包',
+      value: `${prerequisiteCount} 个前置`,
+      detail: '先补齐硬前置，避免跳学关键概念',
+    },
+    {
+      title: '画像补强',
+      value: `${reinforcedCount} 个补强`,
+      detail: '按画像短板补充必要基础',
+    },
+    {
+      title: '阶段与预算',
+      value: `${stageCards.value.length} 阶段 / ${formatHours(budgetSummary.value?.total_hours ?? overview.value.totalHours)}`,
+      detail: formatBudgetStatus(budgetSummary.value?.status ?? overview.value.budgetStatus),
+    },
+  ]
+})
+const defenseTalkingPoints = computed(() => [
+  '先说明学习目标如何映射到目标知识点。',
+  '再说明硬前置闭包如何保证学习顺序正确。',
+  '接着说明画像补强和排序因子如何体现个性化。',
+  '最后用阶段划分与时间预算说明路径可执行。',
+])
 const auditHighlights = computed<AuditHighlight[]>(() => readability.value?.audit_highlights ?? [])
+const rawExplanationEntries = computed<RawExplanationEntry[]>(() => {
+  const entries: RawExplanationEntry[] = []
+  nodeEntries.value.forEach((item, index) => {
+    const rawText = normalizeText(item.raw_reason)
+    if (!rawText) return
+    entries.push({
+      key: `node-${item.node_id || index}`,
+      title: `节点纳入原因：${item.node_name || item.node_id}`,
+      currentText: normalizeText(item.reason) || '当前展示文本为空',
+      rawText,
+    })
+  })
+  stageEntries.value.forEach((item, index) => {
+    const rawText = normalizeText(item.raw_rationale)
+    if (!rawText) return
+    entries.push({
+      key: `stage-${item.node_id || index}`,
+      title: `阶段划分说明：${item.node_name || item.node_id}`,
+      currentText: normalizeText(item.rationale) || item.reasons.join('、') || '当前展示文本为空',
+      rawText,
+    })
+  })
+  return entries
+})
 const traceSourceLabel = computed(() => {
   const provenance = explanation.value?.meta?.provenance
   if (!provenance) return '规则解释'
@@ -630,6 +737,13 @@ function normalizeGroupNodes(nodes: Array<Record<string, unknown>>, fallbackIds:
     node_name: nodeId,
     reason: '',
   }))
+}
+
+function nodeGroupCount(groupIds: string[]) {
+  const targetIds = new Set(groupIds)
+  return displayNodeGroups.value
+    .filter((group) => targetIds.has(group.group_id))
+    .reduce((sum, group) => sum + group.nodes.length, 0)
 }
 
 function buildFallbackNodeGroups() {
@@ -884,6 +998,70 @@ function resolvePolishFallbackReason(reason?: string | null) {
 .node-id-note {
   margin: 8px 0 0;
 }
+.defense-guide {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--el-color-primary-light-9), #ffffff 68%);
+}
+.defense-guide-main h3 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.4;
+}
+.defense-guide-main p:not(.defense-eyebrow) {
+  margin: 8px 0 0;
+  color: #606266;
+  line-height: 1.7;
+}
+.defense-eyebrow {
+  margin: 0 0 6px;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.defense-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.defense-card {
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 78%);
+}
+.defense-card span,
+.defense-card small {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+.defense-card strong {
+  display: block;
+  margin: 6px 0;
+  color: #303133;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.defense-talking-points {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(64, 158, 255, 0.08);
+}
+.defense-talking-points strong {
+  color: #303133;
+}
+.defense-talking-points ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #606266;
+  line-height: 1.8;
+}
 .overview-card {
   background: linear-gradient(135deg, #f5f9ff 0%, #ffffff 60%);
 }
@@ -973,6 +1151,10 @@ function resolvePolishFallbackReason(reason?: string | null) {
   overflow-x: auto;
   white-space: pre-wrap;
 }
+.raw-value {
+  border-left: 3px solid var(--el-color-warning);
+  background: #fff8ec;
+}
 
 @keyframes polish-shimmer {
   0% { transform: translateX(-100%); }
@@ -996,6 +1178,10 @@ function resolvePolishFallbackReason(reason?: string | null) {
   .stage-mini-item {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .defense-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

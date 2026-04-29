@@ -132,7 +132,7 @@
     />
 
     <el-drawer v-model="overlayDrawerVisible" title="创建扩展草稿" :size="520" direction="rtl">
-      <div class="overlay-drawer" v-loading="overlaySubmitting">
+      <div class="overlay-drawer" v-loading="overlaySubmitting || overlayExtractionPreviewLoading">
         <DisplayModeSwitch v-model="displayMode" />
         <el-alert
           class="overlay-alert"
@@ -147,18 +147,56 @@
           type="warning"
           :closable="false"
           show-icon
-          title="来自目标理解的领域内未覆盖概念。页面打开不会写入；点击“创建目标扩展草稿”后才会生成 overlay 草稿。"
+          title="来自目标理解的领域内未覆盖概念。页面打开只展示草稿收件箱；点击创建后才会生成 overlay 草稿。"
         />
 
-        <section v-if="goalDraftResolutionSessionId" class="overlay-subsection goal-draft-entry">
-          <h4>目标扩展入口</h4>
-          <p>当前项目已进入待扩展审核流程。点击下方按钮会基于目标解析结果创建项目级 overlay 草稿，不需要额外粘贴资料。</p>
-          <div v-if="goalDraftMissingConcepts.length" class="review-focus-list">
-            <el-tag v-for="concept in goalDraftMissingConcepts" :key="concept" type="warning" effect="plain">{{ concept }}</el-tag>
+        <section v-if="goalDraftResolutionSessionId" class="overlay-subsection goal-draft-entry" v-loading="goalDraftProposalLoading">
+          <h4>系统推荐草稿收件箱</h4>
+          <p>系统已根据目标理解准备推荐草稿图谱；您也可以忽略推荐，继续使用粘贴文本、搜索 URL 或已保存搜索结果手动补充。</p>
+          <el-radio-group v-model="overlayDraftMode" class="draft-mode-switch">
+            <el-radio-button value="goal_draft">使用系统推荐草稿</el-radio-button>
+            <el-radio-button value="manual">手动补充资料</el-radio-button>
+          </el-radio-group>
+          <div v-if="goalDraftInboxProposal && !goalDraftProposalDismissed" class="draft-inbox-card">
+            <div class="review-focus-list">
+              <el-tag v-for="concept in goalDraftInboxMissingConcepts" :key="concept" type="warning" effect="plain">{{ concept }}</el-tag>
+            </div>
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item label="推荐节点">{{ goalDraftInboxCounts.nodes }}</el-descriptions-item>
+              <el-descriptions-item label="推荐关系">{{ goalDraftInboxCounts.edges }}</el-descriptions-item>
+              <el-descriptions-item label="推荐资源">{{ goalDraftInboxCounts.resources }}</el-descriptions-item>
+              <el-descriptions-item label="安全边界">不写正式图谱，不写正式路径，需人工审核</el-descriptions-item>
+            </el-descriptions>
+            <div v-if="goalDraftInboxNodes.length || goalDraftInboxEdges.length || goalDraftInboxResources.length" class="candidate-card-list compact">
+              <article v-for="(node, index) in goalDraftInboxNodes.slice(0, 3)" :key="`draft-node-${index}`" class="preview-candidate-card">
+                <strong>{{ candidateTitle(node, `节点候选 ${index + 1}`) }}</strong>
+                <p>{{ node.summary || node.legality_rationale || '待审核节点候选' }}</p>
+              </article>
+              <article v-for="(edge, index) in goalDraftInboxEdges.slice(0, 3)" :key="`draft-edge-${index}`" class="preview-candidate-card">
+                <strong>{{ edgeCandidateSummary(edge) }}</strong>
+                <p>{{ edge.legality_rationale || '待审核关系候选' }}</p>
+              </article>
+              <article v-for="(resource, index) in goalDraftInboxResources.slice(0, 2)" :key="`draft-resource-${index}`" class="preview-candidate-card">
+                <strong>{{ candidateTitle(resource, `资源候选 ${index + 1}`) }}</strong>
+                <p>{{ resource.summary || '待审核资源候选' }}</p>
+              </article>
+            </div>
+          </div>
+          <el-alert
+            v-else-if="goalDraftProposalDismissed"
+            class="overlay-alert"
+            type="info"
+            :closable="false"
+            show-icon
+            title="已忽略系统推荐草稿，可在下方继续手动补充资料。"
+          />
+          <div class="draft-inbox-actions">
+            <el-button size="small" plain :loading="goalDraftProposalLoading" @click="loadGoalDraftProposal">刷新推荐草稿</el-button>
+            <el-button size="small" plain @click="dismissGoalDraftProposal">忽略推荐，手动补充</el-button>
           </div>
         </section>
 
-        <el-form v-else label-position="top">
+        <el-form v-if="manualOverlayMode" label-position="top">
           <el-form-item label="来源类型">
             <el-radio-group v-model="overlayForm.sourceType">
               <el-radio-button value="pasted_text">粘贴文本</el-radio-button>
@@ -228,7 +266,70 @@
               <el-radio-button value="custom_extension">自定义扩展</el-radio-button>
             </el-radio-group>
           </el-form-item>
+
+          <el-form-item label="AI 抽取预览">
+            <el-button plain :loading="overlayExtractionPreviewLoading" @click="previewOverlayExtractionPayload">
+              生成候选预览
+            </el-button>
+            <span class="preview-hint">先预览 LLM payload，再勾选候选并复用现有校验创建草稿。</span>
+          </el-form-item>
         </el-form>
+
+        <section v-if="overlayExtractionPreview" class="overlay-preview">
+          <h4>AI 抽取预览</h4>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="节点候选">{{ selectedPreviewCounts.nodes }} / {{ overlayExtractionPreview.counts.nodes }}</el-descriptions-item>
+            <el-descriptions-item label="关系候选">{{ selectedPreviewCounts.edges }} / {{ overlayExtractionPreview.counts.edges }}</el-descriptions-item>
+            <el-descriptions-item label="资源候选">{{ selectedPreviewCounts.resources }} / {{ overlayExtractionPreview.counts.resources }}</el-descriptions-item>
+            <el-descriptions-item label="来源数">{{ overlayExtractionPreview.source_ids.length }}</el-descriptions-item>
+          </el-descriptions>
+          <div class="candidate-card-list">
+            <article v-for="(node, index) in normalizedPreviewPayload.nodes" :key="`preview-node-${index}`" class="preview-candidate-card">
+              <label class="candidate-checkbox-row">
+                <input
+                  type="checkbox"
+                  :checked="isPreviewCandidateSelected('nodes', index)"
+                  @change="togglePreviewCandidate('nodes', index, ($event.target as HTMLInputElement).checked)"
+                />
+                <strong>{{ candidateTitle(node, `节点候选 ${index + 1}`) }}</strong>
+              </label>
+              <p>{{ node.summary || node.legality_rationale || '暂无摘要' }}</p>
+              <el-tag v-if="node.confidence !== undefined" size="small" type="info">置信度 {{ node.confidence }}</el-tag>
+            </article>
+            <article v-for="(edge, index) in normalizedPreviewPayload.edges" :key="`preview-edge-${index}`" class="preview-candidate-card">
+              <label class="candidate-checkbox-row">
+                <input
+                  type="checkbox"
+                  :checked="isPreviewCandidateSelected('edges', index)"
+                  @change="togglePreviewCandidate('edges', index, ($event.target as HTMLInputElement).checked)"
+                />
+                <strong>{{ edgeCandidateSummary(edge) }}</strong>
+              </label>
+              <p>{{ edge.legality_rationale || '暂无合法性说明' }}</p>
+              <el-tag size="small" type="info">{{ edge.relation_type || 'RELATED_TO' }}</el-tag>
+            </article>
+            <article v-for="(resource, index) in normalizedPreviewPayload.resources" :key="`preview-resource-${index}`" class="preview-candidate-card">
+              <label class="candidate-checkbox-row">
+                <input
+                  type="checkbox"
+                  :checked="isPreviewCandidateSelected('resources', index)"
+                  @change="togglePreviewCandidate('resources', index, ($event.target as HTMLInputElement).checked)"
+                />
+                <strong>{{ candidateTitle(resource, `资源候选 ${index + 1}`) }}</strong>
+              </label>
+              <p>{{ resource.summary || resource.url || '暂无摘要' }}</p>
+              <el-tag v-if="resource.resource_type" size="small" type="success">{{ resource.resource_type }}</el-tag>
+            </article>
+          </div>
+          <el-alert
+            v-if="overlayExtractionPreview.warnings.length"
+            class="overlay-alert"
+            type="warning"
+            :closable="false"
+            show-icon
+            :title="overlayExtractionPreview.warnings.join('；')"
+          />
+        </section>
 
         <el-alert
           v-if="overlayError"
@@ -256,6 +357,29 @@
             <el-descriptions-item label="资源候选">{{ lastOverlaySession.resources?.length || 0 }}</el-descriptions-item>
             <el-descriptions-item label="来源数">{{ lastOverlaySession.sources?.length || 0 }}</el-descriptions-item>
           </el-descriptions>
+
+          <section v-if="lastOverlaySession.nodes?.length || lastOverlaySession.edges?.length" class="overlay-subsection">
+            <h4>候选校验明细</h4>
+            <div class="candidate-card-list compact">
+              <article v-for="node in lastOverlaySession.nodes || []" :key="node.node_id" class="preview-candidate-card">
+                <strong>{{ node.name || node.node_id }}</strong>
+                <p>{{ node.summary || node.legality_rationale || '暂无摘要' }}</p>
+                <el-tag size="small" :type="node.validation_status === 'valid' ? 'success' : 'warning'">{{ node.validation_status }}</el-tag>
+                <ul v-if="node.validation_errors?.length" class="validation-errors">
+                  <li v-for="error in node.validation_errors" :key="`${node.node_id}-${error}`">{{ validationErrorMessage(error) }}</li>
+                </ul>
+              </article>
+              <article v-for="edge in lastOverlaySession.edges || []" :key="edge.edge_id" class="preview-candidate-card">
+                <strong>{{ edge.source_node_id }} → {{ edge.target_node_id }}</strong>
+                <p>{{ edge.legality_rationale || '暂无合法性说明' }}</p>
+                <el-tag size="small" :type="edge.validation_status === 'valid' ? 'success' : 'warning'">{{ edge.validation_status }}</el-tag>
+                <el-tag size="small" type="info">{{ edge.relation_type }}</el-tag>
+                <ul v-if="edge.validation_errors?.length" class="validation-errors">
+                  <li v-for="error in edge.validation_errors" :key="`${edge.edge_id}-${error}`">{{ validationErrorMessage(error) }}</li>
+                </ul>
+              </article>
+            </div>
+          </section>
 
           <section v-if="goalExtensionDraftDetails" class="overlay-subsection goal-draft-summary">
             <h4>目标缺口分析</h4>
@@ -299,7 +423,11 @@
               <el-tag size="small" :type="resourceTypeMeta(resource.resource_type || 'resource').tagType" :title="resource.resource_type || 'resource'">
                 {{ resourceTypeMeta(resource.resource_type || 'resource').label }}
               </el-tag>
+              <el-tag size="small" :type="resource.validation_status === 'valid' ? 'success' : 'warning'">{{ resource.validation_status }}</el-tag>
               <el-tag size="small" type="success">绑定 {{ resource.binding_summary?.count || 0 }}</el-tag>
+              <ul v-if="resource.validation_errors?.length" class="validation-errors">
+                <li v-for="error in resource.validation_errors" :key="`${resource.resource_id}-${error}`">{{ validationErrorMessage(error) }}</li>
+              </ul>
             </article>
           </section>
 
@@ -387,7 +515,7 @@
         <div class="drawer-actions">
           <el-button @click="overlayDrawerVisible = false">关闭</el-button>
           <el-button type="primary" :loading="overlaySubmitting" @click="submitOverlayDraft">
-            {{ goalDraftResolutionSessionId ? '创建目标扩展草稿' : '创建草稿' }}
+            {{ goalDraftResolutionSessionId && overlayDraftMode === 'goal_draft' ? '创建推荐草稿' : '创建手动草稿' }}
           </el-button>
         </div>
       </div>
@@ -413,9 +541,12 @@ import {
   type GraphEntityMetadata,
   type GraphNodeData,
   type GraphScope,
+  type GoalExtensionDraftProposal,
+  type GoalExtensionDraftProposalResponse,
   type GoalExtensionDraftResponse,
   type OverlayProjectionStatusResponse,
   type OverlayElementGroup,
+  type OverlayExtractionPayloadPreviewResponse,
   type OverlayExtractionSessionResponse,
   type OverlayReviewStatus,
   type OverlaySourceRequest,
@@ -439,7 +570,16 @@ type GraphState = 'loading' | 'ready' | 'empty' | 'error'
 type GraphLayout = 'cose' | 'breadthfirst'
 type OverlaySourceType = 'pasted_text' | 'search_url' | 'saved_search'
 type OverlayExtractionMode = 'default' | 'custom_extension'
+type OverlayDraftMode = 'goal_draft' | 'manual'
+type OverlayPreviewGroup = 'nodes' | 'edges' | 'resources'
 type OverlaySessionView = OverlayExtractionSessionResponse & Partial<GoalExtensionDraftResponse>
+
+type PreviewPayload = {
+  nodes: Array<Record<string, any>>
+  edges: Array<Record<string, any>>
+  resources: Array<Record<string, any>>
+  warnings: string[]
+}
 
 type SelectedAdjacentEdge = GraphEdgeData & {
   direction: 'incoming' | 'outgoing'
@@ -513,9 +653,16 @@ const entityMetadata = ref<GraphEntityMetadata | null>(null)
 const projectionStatus = ref<OverlayProjectionStatusResponse | null>(null)
 const overlayDrawerVisible = ref(false)
 const overlaySubmitting = ref(false)
+const overlayExtractionPreviewLoading = ref(false)
 const overlayError = ref('')
 const overlayBridgeMessage = ref('')
 const overlayForm = ref(createOverlayForm())
+const overlayDraftMode = ref<OverlayDraftMode>('manual')
+const overlayExtractionPreview = ref<OverlayExtractionPayloadPreviewResponse | null>(null)
+const selectedPreviewCandidates = ref<Record<OverlayPreviewGroup, number[]>>({ nodes: [], edges: [], resources: [] })
+const goalDraftProposal = ref<GoalExtensionDraftProposalResponse | null>(null)
+const goalDraftProposalLoading = ref(false)
+const goalDraftProposalDismissed = ref(false)
 const persistedSearchResults = ref<PersistedSearchResult[]>([])
 const lastOverlaySession = ref<OverlaySessionView | null>(null)
 const promotionPreview = ref<any | null>(null)
@@ -567,6 +714,19 @@ const goalDraftMissingConcepts = computed(() => (
 ))
 const goalDraftReviewNotes = computed(() => goalExtensionDraftDetails.value?.review_notes || [])
 const goalDraftReviewFocus = computed(() => goalExtensionDraftDetails.value?.gap_analysis?.recommended_review_focus || [])
+const manualOverlayMode = computed(() => !goalDraftResolutionSessionId.value || overlayDraftMode.value === 'manual')
+const goalDraftInboxProposal = computed<GoalExtensionDraftProposal | null>(() => goalDraftProposal.value?.draft_proposal || null)
+const goalDraftInboxCounts = computed(() => goalDraftInboxProposal.value?.counts || { nodes: 0, edges: 0, resources: 0 })
+const goalDraftInboxMissingConcepts = computed(() => goalDraftInboxProposal.value?.missing_concepts || goalDraftMissingConcepts.value)
+const goalDraftInboxNodes = computed(() => goalDraftInboxProposal.value?.nodes || [])
+const goalDraftInboxEdges = computed(() => goalDraftInboxProposal.value?.edges || [])
+const goalDraftInboxResources = computed(() => goalDraftInboxProposal.value?.resources || [])
+const normalizedPreviewPayload = computed(() => normalizePreviewPayload(overlayExtractionPreview.value?.extraction_payload))
+const selectedPreviewCounts = computed(() => ({
+  nodes: selectedPreviewCandidates.value.nodes.length,
+  edges: selectedPreviewCandidates.value.edges.length,
+  resources: selectedPreviewCandidates.value.resources.length,
+}))
 const graphQuery = computed(() => buildGraphQuery({
   scope: scope.value,
   path_id: requestedPathId.value,
@@ -579,6 +739,19 @@ function isNodeElement(element: GraphElement): element is Extract<GraphElement, 
 
 function isEdgeElement(element: GraphElement): element is Extract<GraphElement, { group: 'edges' }> {
   return element.group === 'edges'
+}
+
+function normalizePreviewPayload(payload: unknown): PreviewPayload {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { nodes: [], edges: [], resources: [], warnings: [] }
+  }
+  const record = payload as Record<string, unknown>
+  return {
+    nodes: Array.isArray(record.nodes) ? record.nodes.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [],
+    edges: Array.isArray(record.edges) ? record.edges.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [],
+    resources: Array.isArray(record.resources) ? record.resources.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [],
+    warnings: Array.isArray(record.warnings) ? record.warnings.filter((item): item is string => typeof item === 'string') : [],
+  }
 }
 
 const nodes = computed(() => elements.value.filter(isNodeElement).map((element) => element.data))
@@ -614,6 +787,20 @@ watch(nodes, (nextNodes) => {
   }
 })
 
+watch(overlayForm, () => {
+  overlayExtractionPreview.value = null
+  selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
+}, { deep: true })
+
+watch(overlayDraftMode, (nextMode) => {
+  overlayError.value = ''
+  overlayExtractionPreview.value = null
+  selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
+  if (nextMode === 'goal_draft') {
+    goalDraftProposalDismissed.value = false
+  }
+})
+
 function resetGraphState() {
   elements.value = []
   selectedNodeId.value = null
@@ -627,9 +814,16 @@ function resetGraphState() {
 function resetOverlayState() {
   overlayDrawerVisible.value = false
   overlaySubmitting.value = false
+  overlayExtractionPreviewLoading.value = false
   overlayError.value = ''
   overlayBridgeMessage.value = ''
   overlayForm.value = createOverlayForm()
+  overlayDraftMode.value = goalDraftResolutionSessionId.value ? 'goal_draft' : 'manual'
+  overlayExtractionPreview.value = null
+  selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
+  goalDraftProposal.value = null
+  goalDraftProposalLoading.value = false
+  goalDraftProposalDismissed.value = false
   lastOverlaySession.value = null
   promotionPreview.value = null
   promotionResult.value = null
@@ -1017,6 +1211,7 @@ async function onSetOverlayPlanning(data: GraphNodeData | GraphEdgeData, enabled
 
 async function openOverlayDrawer() {
   overlayDrawerVisible.value = true
+  overlayDraftMode.value = goalDraftResolutionSessionId.value ? overlayDraftMode.value : 'manual'
   overlayError.value = ''
   overlayBridgeMessage.value = ''
   await loadPersistedSearchResults()
@@ -1025,10 +1220,100 @@ async function openOverlayDrawer() {
 async function openGoalDraftEntry() {
   if (!goalDraftResolutionSessionId.value) return
   overlayDrawerVisible.value = true
+  overlayDraftMode.value = 'goal_draft'
   overlayError.value = ''
   overlayBridgeMessage.value = ''
   overlayForm.value = createOverlayForm()
   await loadPersistedSearchResults()
+  await loadGoalDraftProposal()
+}
+
+async function loadGoalDraftProposal() {
+  if (!projectId.value || !goalDraftResolutionSessionId.value) return
+  goalDraftProposalLoading.value = true
+  try {
+    goalDraftProposal.value = await graphApi.getGoalExtensionDraftProposal(
+      projectId.value,
+      goalDraftResolutionSessionId.value,
+    )
+  } catch (error: any) {
+    overlayError.value = getOverlayErrorMessage(error)
+  } finally {
+    goalDraftProposalLoading.value = false
+  }
+}
+
+function dismissGoalDraftProposal() {
+  goalDraftProposalDismissed.value = true
+  overlayDraftMode.value = 'manual'
+}
+
+function selectAllPreviewCandidates(payload: PreviewPayload) {
+  selectedPreviewCandidates.value = {
+    nodes: payload.nodes.map((_, index) => index),
+    edges: payload.edges.map((_, index) => index),
+    resources: payload.resources.map((_, index) => index),
+  }
+}
+
+function togglePreviewCandidate(group: OverlayPreviewGroup, index: number, checked: boolean) {
+  const current = new Set(selectedPreviewCandidates.value[group])
+  if (checked) {
+    current.add(index)
+  } else {
+    current.delete(index)
+  }
+  selectedPreviewCandidates.value = {
+    ...selectedPreviewCandidates.value,
+    [group]: [...current].sort((a, b) => a - b),
+  }
+}
+
+function isPreviewCandidateSelected(group: OverlayPreviewGroup, index: number) {
+  return selectedPreviewCandidates.value[group].includes(index)
+}
+
+function filteredPreviewPayload(preview: OverlayExtractionPayloadPreviewResponse) {
+  const payload = normalizePreviewPayload(preview.extraction_payload)
+  return {
+    nodes: payload.nodes.filter((_, index) => selectedPreviewCandidates.value.nodes.includes(index)),
+    edges: payload.edges.filter((_, index) => selectedPreviewCandidates.value.edges.includes(index)),
+    resources: payload.resources.filter((_, index) => selectedPreviewCandidates.value.resources.includes(index)),
+    warnings: payload.warnings,
+  }
+}
+
+function candidateTitle(candidate: Record<string, any>, fallback: string) {
+  return candidate.name || candidate.title || candidate.relation_type || fallback
+}
+
+function edgeCandidateSummary(candidate: Record<string, any>) {
+  const source = candidate.source_name_or_id || candidate.source_node_id || '未知来源'
+  const target = candidate.target_name_or_id || candidate.target_node_id || '未知目标'
+  return `${source} → ${target}`
+}
+
+const VALIDATION_ERROR_HINTS: Record<string, { label: string; suggestion: string }> = {
+  missing_summary: { label: '缺少摘要', suggestion: '补充一句说明该候选的学习含义。' },
+  missing_legality_rationale: { label: '缺少合法性理由', suggestion: '说明为什么该候选属于机器学习基础扩展范围。' },
+  invalid_weight_sum: { label: '理论/实践权重不等于 1', suggestion: '调整 theory_weight 与 practice_weight，使总和为 1。' },
+  invalid_relation_type: { label: '关系类型不受支持', suggestion: '只保留 REQUIRES 或 RELATED_TO。' },
+  self_loop: { label: '关系不能指向自身', suggestion: '改选不同的来源节点或目标节点。' },
+  dangling_source: { label: '关系来源节点不存在', suggestion: '先补充来源节点，或改为已有节点 ID。' },
+  dangling_target: { label: '关系目标节点不存在', suggestion: '先补充目标节点，或改为已有节点 ID。' },
+  requires_cycle: { label: 'REQUIRES 会形成环', suggestion: '改为 RELATED_TO，或调整依赖方向。' },
+  invalid_evidence_source_id: { label: '资源证据来源无效', suggestion: '选择本次草稿使用的 source_id 作为证据来源。' },
+  missing_endpoint: { label: '关系端点不完整', suggestion: '补齐 source 和 target。' },
+  missing_evidence_source_id: { label: '缺少资源证据来源', suggestion: '为资源候选关联一个来源。' },
+}
+
+function validationErrorMessage(code: string) {
+  if (code.startsWith('missing_fields:')) {
+    const fields = code.slice('missing_fields:'.length).split(',').filter(Boolean).join('、')
+    return `缺少规划字段：${fields}。建议补齐难度、重要性、时间和画像需求字段。`
+  }
+  const hint = VALIDATION_ERROR_HINTS[code]
+  return hint ? `${hint.label}。${hint.suggestion}` : code
 }
 
 function buildOverlaySourcePayload(): OverlaySourceRequest | null {
@@ -1042,7 +1327,7 @@ function buildOverlaySourcePayload(): OverlaySourceRequest | null {
     return {
       source_type: 'pasted_text',
       raw_text: rawText,
-      raw_text_excerpt: rawText.slice(0, 500),
+      raw_text_excerpt: rawText.slice(0, 12000),
       summary: form.summary.trim() || null,
     }
   }
@@ -1090,7 +1375,42 @@ function getOverlayErrorMessage(error: any) {
   if (code === SEARCH_NOT_READY) {
     return '搜索服务尚未就绪，自定义扩展暂不可用；领域基线图谱浏览不受影响。'
   }
+  if (code === 'LLM_NOT_READY') {
+    return 'LLM 尚未配置，无法生成扩展抽取预览。'
+  }
+  if (code === 'LLM_EXTRACTION_FAILED') {
+    return 'LLM 抽取暂时失败，请稍后重试或缩短资料内容。'
+  }
+  if (code === 'INVALID_LLM_EXTRACTION_JSON') {
+    return 'LLM 返回的抽取结构不符合要求，请重新生成预览。'
+  }
   return code || error?.message || '扩展草稿创建失败'
+}
+
+async function previewOverlayExtractionPayload() {
+  if (!projectId.value || !manualOverlayMode.value) return null
+
+  overlayExtractionPreviewLoading.value = true
+  overlayError.value = ''
+  overlayBridgeMessage.value = ''
+
+  try {
+    const sourceIds = await resolveOverlaySourceIds()
+    if (!sourceIds) return null
+    const preview = await graphApi.previewOverlayExtractionPayload(projectId.value, {
+      source_ids: sourceIds,
+      mode: overlayForm.value.mode,
+    })
+    overlayExtractionPreview.value = preview
+    selectAllPreviewCandidates(normalizePreviewPayload(preview.extraction_payload))
+    ElMessage.success('AI 抽取预览已生成，创建草稿时仍会经过校验。')
+    return preview
+  } catch (error: any) {
+    overlayError.value = getOverlayErrorMessage(error)
+    return null
+  } finally {
+    overlayExtractionPreviewLoading.value = false
+  }
 }
 
 async function bindOverlayResource() {
@@ -1163,20 +1483,29 @@ async function submitOverlayDraft() {
   overlayBridgeMessage.value = ''
 
   try {
-    if (goalDraftResolutionSessionId.value) {
+    if (goalDraftResolutionSessionId.value && overlayDraftMode.value === 'goal_draft') {
       lastOverlaySession.value = await graphApi.createGoalExtensionDraft(
         projectId.value,
         goalDraftResolutionSessionId.value,
       ) as GoalExtensionDraftResponse
     } else {
-      const sourceIds = await resolveOverlaySourceIds()
-      if (!sourceIds) return
+      const preview = overlayExtractionPreview.value || await previewOverlayExtractionPayload()
+      if (!preview) return
       lastOverlaySession.value = await graphApi.createOverlayExtractionSession(projectId.value, {
-        source_ids: sourceIds,
+        source_ids: preview.source_ids,
         mode: overlayForm.value.mode,
+        extraction_payload: filteredPreviewPayload(preview),
+        session_provenance: {
+          ...preview.provenance,
+          selected_counts: selectedPreviewCounts.value,
+          filtered_by_user: true,
+        },
       })
     }
     overlayForm.value = createOverlayForm()
+    overlayExtractionPreview.value = null
+    selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
+    goalDraftProposalDismissed.value = Boolean(goalDraftResolutionSessionId.value)
     ElMessage.success('扩展草稿已创建，请在项目图谱中审核候选节点和关系')
     scope.value = 'project'
     await replaceGraphRoute('project', null, lastOverlaySession.value.session.session_id)
@@ -1335,6 +1664,82 @@ function toggleFullscreen() {
   color: #606266;
   font-size: 13px;
   line-height: 1.7;
+}
+
+.draft-mode-switch,
+.draft-inbox-actions {
+  margin-top: 10px;
+}
+
+.draft-inbox-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.draft-inbox-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.candidate-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.candidate-card-list.compact {
+  gap: 8px;
+}
+
+.preview-candidate-card {
+  padding: 10px;
+  border: 1px solid #d9ecff;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.preview-candidate-card p {
+  margin: 6px 0;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.candidate-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.validation-errors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #b88230;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.preview-hint {
+  margin-left: 10px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.overlay-preview {
+  padding: 12px;
+  border: 1px solid #d9ecff;
+  border-radius: 10px;
+  background: #f4faff;
+}
+
+.overlay-preview h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #303133;
 }
 
 .overlay-result {

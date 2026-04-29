@@ -95,6 +95,42 @@ STATIC_QUESTIONS: list[dict[str, Any]] = [
             {"label": "实践优先，尽快进入练习", "value": "practice_first"},
         ],
     },
+    {
+        "id": "q_goal_orientation",
+        "field": "learning_goal_orientation",
+        "question": "你学习机器学习基础的主要目的是什么？",
+        "options": [
+            {"label": "打牢基础，系统理解核心概念", "value": "foundation"},
+            {"label": "应对课程、考试或答辩", "value": "exam"},
+            {"label": "尽快完成项目或实验", "value": "project"},
+            {"label": "为阅读论文或科研打基础", "value": "research"},
+            {"label": "面向实习、求职或业务应用", "value": "career"},
+        ],
+    },
+    {
+        "id": "q_resource_preference",
+        "field": "resource_preference",
+        "question": "你更偏好的学习资料形态是什么？",
+        "options": [
+            {"label": "图文、视频和代码混合", "value": "mixed"},
+            {"label": "文字讲义或教材式资料", "value": "text"},
+            {"label": "视频课程讲解", "value": "video"},
+            {"label": "代码示例和 Notebook", "value": "code"},
+            {"label": "论文、文档和扩展阅读", "value": "paper"},
+        ],
+    },
+    {
+        "id": "q_practice_intensity",
+        "field": "practice_intensity",
+        "question": "你希望学习过程中安排多少练习和实践？",
+        "options": [
+            {"label": "很少练习，先理解概念", "value": 1},
+            {"label": "少量练习辅助理解", "value": 2},
+            {"label": "理论和练习均衡", "value": 3},
+            {"label": "较多练习巩固", "value": 4},
+            {"label": "高强度实践和项目驱动", "value": 5},
+        ],
+    },
 ]
 
 # 字段池：LLM 生成的问题只能映射到这些字段
@@ -106,8 +142,13 @@ ALLOWED_FIELDS = {
     "weekly_hours",
     "deadline_weeks",
     "path_mode_preference",
+    "learning_goal_orientation",
+    "resource_preference",
+    "practice_intensity",
 }
 ALLOWED_PATH_MODE_PREFERENCES = {"standard", "compressed", "theory_first", "practice_first"}
+ALLOWED_GOAL_ORIENTATIONS = {"foundation", "exam", "project", "research", "career"}
+ALLOWED_RESOURCE_PREFERENCES = {"mixed", "text", "video", "code", "paper"}
 
 
 def get_static_questions() -> list[dict[str, Any]]:
@@ -158,6 +199,7 @@ def map_answers_to_profile(answers: list[dict[str, Any]]) -> dict[str, Any]:
         "theory_weight": (0.0, 1.0),
         "weekly_hours": (1, 60),
         "deadline_weeks": (1, 52),
+        "practice_intensity": (1, 5),
     }
 
     for ans in answers:
@@ -181,6 +223,12 @@ def map_answers_to_profile(answers: list[dict[str, Any]]) -> dict[str, Any]:
         elif field == "path_mode_preference":
             if value not in ALLOWED_PATH_MODE_PREFERENCES:
                 continue
+        elif field == "learning_goal_orientation":
+            if value not in ALLOWED_GOAL_ORIENTATIONS:
+                continue
+        elif field == "resource_preference":
+            if value not in ALLOWED_RESOURCE_PREFERENCES:
+                continue
 
         profile[field] = value
 
@@ -192,6 +240,9 @@ def map_answers_to_profile(answers: list[dict[str, Any]]) -> dict[str, Any]:
     profile.setdefault("practice_weight", 1.0 - profile.get("theory_weight", 0.5))
     profile.setdefault("weekly_hours", 10.0)
     profile.setdefault("path_mode_preference", "standard")
+    profile.setdefault("learning_goal_orientation", "foundation")
+    profile.setdefault("resource_preference", "mixed")
+    profile.setdefault("practice_intensity", 3)
     profile.update(build_persona_fields(profile))
 
     return profile
@@ -205,6 +256,9 @@ def build_persona_fields(profile: dict[str, Any]) -> dict[str, str]:
     weekly_hours = float(profile.get("weekly_hours") or 10.0)
     deadline_weeks = profile.get("deadline_weeks")
     path_mode = profile.get("path_mode_preference") or "standard"
+    goal_orientation = profile.get("learning_goal_orientation") or "foundation"
+    resource_preference = profile.get("resource_preference") or "mixed"
+    practice_intensity = int(profile.get("practice_intensity") or 3)
 
     if ml_level <= 2 and math_level <= 2:
         label = "基础补齐型学习者"
@@ -214,6 +268,8 @@ def build_persona_fields(profile: dict[str, Any]) -> dict[str, str]:
         label = "理论理解型学习者"
     elif weekly_hours <= 5 or path_mode == "compressed":
         label = "时间压缩型学习者"
+    elif goal_orientation == "research" or resource_preference == "paper":
+        label = "研究准备型学习者"
     else:
         label = "均衡推进型学习者"
 
@@ -225,11 +281,15 @@ def build_persona_fields(profile: dict[str, Any]) -> dict[str, str]:
         "weekly_hours": weekly_hours,
         "deadline_weeks": deadline_weeks,
         "path_mode_preference": path_mode,
+        "learning_goal_orientation": goal_orientation,
+        "resource_preference": resource_preference,
+        "practice_intensity": practice_intensity,
     }
     deadline_text = f"，计划约 {deadline_weeks} 周完成" if deadline_weeks else ""
     summary = (
         f"{label}：当前数学/编程/机器学习基础为 "
-        f"{math_level}/{coding_level}/{ml_level}，每周约 {weekly_hours:g} 小时{deadline_text}。"
+        f"{math_level}/{coding_level}/{ml_level}，每周约 {weekly_hours:g} 小时{deadline_text}，"
+        f"目标取向为 {goal_orientation}，资料偏好为 {resource_preference}，练习强度 {practice_intensity}/5。"
     )
     return {
         "persona_label": label,
@@ -263,7 +323,7 @@ async def generate_llm_questions(
     "field": "字段名",
     "question": "问题文本",
     "options": [
-      {{"label": "选项文本", "value": 数值}}
+      {{"label": "选项文本", "value": 数值或枚举字符串}}
     ]
   }}
 ]"""

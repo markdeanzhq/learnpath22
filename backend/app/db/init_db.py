@@ -38,6 +38,9 @@ _RESOLUTION_COLUMNS = [
 
 _PROFILE_COLUMNS = [
     ("path_mode_preference", "VARCHAR(30)"),
+    ("learning_goal_orientation", "VARCHAR(40)"),
+    ("resource_preference", "VARCHAR(40)"),
+    ("practice_intensity", "INTEGER DEFAULT 3"),
     ("persona_label", "VARCHAR(100)"),
     ("persona_summary", "TEXT"),
     ("persona_evidence", "TEXT"),

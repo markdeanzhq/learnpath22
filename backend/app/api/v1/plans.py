@@ -104,6 +104,9 @@ def _profile_to_dict(profile_row) -> dict[str, Any]:
         "weekly_hours": profile_row.weekly_hours,
         "deadline_weeks": profile_row.deadline_weeks,
         "path_mode_preference": profile_row.path_mode_preference,
+        "learning_goal_orientation": profile_row.learning_goal_orientation,
+        "resource_preference": profile_row.resource_preference,
+        "practice_intensity": profile_row.practice_intensity,
         "persona_label": profile_row.persona_label,
         "persona_summary": profile_row.persona_summary,
         "persona_evidence": profile_row.persona_evidence,
@@ -168,16 +171,42 @@ def _graph_option_labels(graph_option: str) -> tuple[str, str]:
     )
 
 
-def _overlay_ids_from_snapshot(snapshot, plan_result: dict[str, Any] | None = None) -> tuple[list[str], list[str]]:
+def _overlay_ids_from_snapshot(snapshot) -> tuple[list[str], list[str]]:
     overlay_lineage = getattr(snapshot, "overlay_lineage", {}) or {}
     overlay_nodes = overlay_lineage.get("nodes") if isinstance(overlay_lineage, dict) else {}
     overlay_edges = overlay_lineage.get("edges") if isinstance(overlay_lineage, dict) else {}
     node_ids = sorted(overlay_nodes) if isinstance(overlay_nodes, dict) else []
-    if plan_result is not None:
-        planned = set(plan_result.get("ordered_ids") or [])
-        node_ids = [node_id for node_id in node_ids if node_id in planned]
     edge_ids = sorted(overlay_edges) if isinstance(overlay_edges, dict) else []
     return node_ids, edge_ids
+
+
+def _path_overlay_edge_ids_from_snapshot(snapshot, included_node_ids: list[str]) -> list[str]:
+    included = set(included_node_ids)
+    if not included:
+        return []
+    overlay_lineage = getattr(snapshot, "overlay_lineage", {}) or {}
+    overlay_edges = overlay_lineage.get("edges") if isinstance(overlay_lineage, dict) else {}
+    if not isinstance(overlay_edges, dict):
+        return []
+
+    edge_ids: list[str] = []
+    for edge_id, edge in overlay_edges.items():
+        if not isinstance(edge_id, str) or not isinstance(edge, dict):
+            continue
+        edge_snapshot = edge.get("edge_snapshot") if isinstance(edge.get("edge_snapshot"), dict) else {}
+        source = edge.get("source_node_id") or edge_snapshot.get("source")
+        target = edge.get("target_node_id") or edge_snapshot.get("target")
+        if source in included and target in included:
+            edge_ids.append(edge_id)
+    return sorted(edge_ids)
+
+
+def _path_overlay_ids_from_snapshot(snapshot, included_node_ids: list[str]) -> tuple[list[str], list[str]]:
+    visible_node_ids, _ = _overlay_ids_from_snapshot(snapshot)
+    included = set(included_node_ids)
+    path_node_ids = sorted(node_id for node_id in visible_node_ids if node_id in included)
+    path_edge_ids = _path_overlay_edge_ids_from_snapshot(snapshot, included_node_ids)
+    return path_node_ids, path_edge_ids
 
 
 def _build_graph_option_goal_result(project, snapshot, confirmed_goal_result: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -236,14 +265,28 @@ def _build_unavailable_graph_option(
         "excluded_node_ids": [],
         "added_node_ids": [],
         "removed_node_ids": [],
+        "visible_overlay_node_ids": overlay_node_ids,
+        "visible_overlay_edge_ids": overlay_edge_ids,
+        "path_overlay_node_ids": [],
+        "path_overlay_edge_ids": [],
         "overlay_node_ids": overlay_node_ids,
         "overlay_edge_ids": overlay_edge_ids,
+        "order_changed": False,
+        "order_changed_node_ids": [],
+        "stage_changed": False,
+        "stage_changed_node_ids": [],
+        "budget_changed": False,
+        "budget_delta": {"changed": False},
         "project_graph_hash": snapshot.project_graph_hash,
         "audit_summary": {
             "path_mode": path_mode,
             "graph_option": graph_option,
             "project_graph_hash": snapshot.project_graph_hash,
             "blocked_reason": blocked_reason,
+            "visible_overlay_node_ids": overlay_node_ids,
+            "visible_overlay_edge_ids": overlay_edge_ids,
+            "path_overlay_node_ids": [],
+            "path_overlay_edge_ids": [],
         },
     }
 
@@ -264,7 +307,11 @@ def _build_graph_option_summary(
         "project_graph_hash": snapshot.project_graph_hash,
     }
     summary = _build_variant_summary(path_mode, plan_result, parameter_hash)
-    overlay_node_ids, overlay_edge_ids = _overlay_ids_from_snapshot(snapshot, plan_result)
+    overlay_node_ids, overlay_edge_ids = _overlay_ids_from_snapshot(snapshot)
+    path_overlay_node_ids, path_overlay_edge_ids = _path_overlay_ids_from_snapshot(
+        snapshot,
+        summary["included_node_ids"],
+    )
     summary.update({
         "variant_id": _graph_option_variant_id(graph_option, path_mode, parameter_hash),
         "preview_kind": "graph_option",
@@ -275,33 +322,141 @@ def _build_graph_option_summary(
         "blocked_reason": None,
         "added_node_ids": [],
         "removed_node_ids": [],
+        "visible_overlay_node_ids": overlay_node_ids,
+        "visible_overlay_edge_ids": overlay_edge_ids,
+        "path_overlay_node_ids": path_overlay_node_ids,
+        "path_overlay_edge_ids": path_overlay_edge_ids,
         "overlay_node_ids": overlay_node_ids,
         "overlay_edge_ids": overlay_edge_ids,
+        "order_changed": False,
+        "order_changed_node_ids": [],
+        "stage_changed": False,
+        "stage_changed_node_ids": [],
+        "budget_changed": False,
+        "budget_delta": {"changed": False},
         "project_graph_hash": snapshot.project_graph_hash,
     })
     summary["audit_summary"].update({
         "graph_option": graph_option,
         "option_label": option_label,
         "project_graph_hash": snapshot.project_graph_hash,
+        "visible_overlay_node_ids": overlay_node_ids,
+        "visible_overlay_edge_ids": overlay_edge_ids,
+        "path_overlay_node_ids": path_overlay_node_ids,
+        "path_overlay_edge_ids": path_overlay_edge_ids,
         "overlay_node_ids": overlay_node_ids,
         "overlay_edge_ids": overlay_edge_ids,
     })
     return summary
 
 
+def _stage_assignment_map(plan_result: dict[str, Any]) -> dict[str, str]:
+    stage_plan = plan_result.get("stage_plan") or {}
+    if not isinstance(stage_plan, dict):
+        return {}
+
+    result: dict[str, str] = {}
+    for stage_name, tasks in stage_plan.items():
+        if not isinstance(stage_name, str) or not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if isinstance(task, dict) and isinstance(task.get("node_id"), str):
+                result[task["node_id"]] = stage_name
+    return result
+
+
+def _changed_order_node_ids(baseline_order: list[str], enhanced_order: list[str]) -> list[str]:
+    baseline_positions = {node_id: index for index, node_id in enumerate(baseline_order)}
+    enhanced_positions = {node_id: index for index, node_id in enumerate(enhanced_order)}
+    common_ids = set(baseline_positions) & set(enhanced_positions)
+    return sorted(
+        node_id
+        for node_id in common_ids
+        if baseline_positions[node_id] != enhanced_positions[node_id]
+    )
+
+
+def _numeric_delta(before: Any, after: Any) -> float | int | None:
+    if isinstance(before, bool) or isinstance(after, bool):
+        return None
+    if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+        return after - before
+    return None
+
+
+def _graph_option_budget_delta(baseline: dict[str, Any], enhanced: dict[str, Any]) -> dict[str, Any]:
+    baseline_budget = baseline.get("budget_summary") or {}
+    enhanced_budget = enhanced.get("budget_summary") or {}
+    result: dict[str, Any] = {"changed": False}
+    for field in ("total_hours", "estimated_weeks", "status"):
+        before = baseline_budget.get(field)
+        after = enhanced_budget.get(field)
+        if before == after:
+            continue
+        entry = {"from": before, "to": after}
+        delta = _numeric_delta(before, after)
+        if delta is not None:
+            entry["delta"] = delta
+        result[field] = entry
+        result["changed"] = True
+    return result
+
+
 def _apply_graph_option_diff(variants: list[dict[str, Any]]) -> None:
+    for variant in variants:
+        variant.setdefault("order_changed", False)
+        variant.setdefault("order_changed_node_ids", [])
+        variant.setdefault("stage_changed", False)
+        variant.setdefault("stage_changed_node_ids", [])
+        variant.setdefault("budget_changed", False)
+        variant.setdefault("budget_delta", {"changed": False})
+
     by_option = {variant.get("graph_option"): variant for variant in variants}
-    baseline_ids = set(by_option.get("baseline", {}).get("included_node_ids") or [])
-    enhanced_ids = set(by_option.get("enhanced", {}).get("included_node_ids") or [])
+    baseline = by_option.get("baseline")
+    enhanced = by_option.get("enhanced")
+    baseline_ids = set((baseline or {}).get("included_node_ids") or [])
+    enhanced_ids = set((enhanced or {}).get("included_node_ids") or [])
     added_by_enhanced = sorted(enhanced_ids - baseline_ids)
     removed_by_enhanced = sorted(baseline_ids - enhanced_ids)
-    if "baseline" in by_option:
-        by_option["baseline"].setdefault("audit_summary", {})["nodes_missing_vs_enhanced"] = added_by_enhanced
-    if "enhanced" in by_option:
-        by_option["enhanced"]["added_node_ids"] = added_by_enhanced
-        by_option["enhanced"]["removed_node_ids"] = removed_by_enhanced
-        by_option["enhanced"].setdefault("audit_summary", {})["nodes_added_vs_baseline"] = added_by_enhanced
-        by_option["enhanced"].setdefault("audit_summary", {})["nodes_removed_vs_baseline"] = removed_by_enhanced
+    if baseline:
+        baseline.setdefault("audit_summary", {})["nodes_missing_vs_enhanced"] = added_by_enhanced
+    if not enhanced:
+        return
+
+    baseline_order = list((baseline or {}).get("included_node_ids") or [])
+    enhanced_order = list(enhanced.get("included_node_ids") or [])
+    baseline_stage_map = _stage_assignment_map((baseline or {}).get("plan_result") or {})
+    enhanced_stage_map = _stage_assignment_map(enhanced.get("plan_result") or {})
+    common_stage_ids = set(baseline_stage_map) & set(enhanced_stage_map)
+    stage_changed_node_ids = sorted(
+        node_id
+        for node_id in common_stage_ids
+        if baseline_stage_map[node_id] != enhanced_stage_map[node_id]
+    )
+    budget_delta = _graph_option_budget_delta(baseline or {}, enhanced)
+
+    enhanced["added_node_ids"] = added_by_enhanced
+    enhanced["removed_node_ids"] = removed_by_enhanced
+    enhanced["order_changed"] = baseline_order != enhanced_order
+    enhanced["order_changed_node_ids"] = _changed_order_node_ids(baseline_order, enhanced_order)
+    enhanced["stage_changed"] = bool(stage_changed_node_ids)
+    enhanced["stage_changed_node_ids"] = stage_changed_node_ids
+    enhanced["budget_changed"] = bool(budget_delta.get("changed"))
+    enhanced["budget_delta"] = budget_delta
+
+    audit_summary = enhanced.setdefault("audit_summary", {})
+    audit_summary["nodes_added_vs_baseline"] = added_by_enhanced
+    audit_summary["nodes_removed_vs_baseline"] = removed_by_enhanced
+    audit_summary["graph_option_diff"] = {
+        "order_changed": enhanced["order_changed"],
+        "order_changed_node_ids": enhanced["order_changed_node_ids"],
+        "stage_changed": enhanced["stage_changed"],
+        "stage_changed_node_ids": stage_changed_node_ids,
+        "budget_changed": enhanced["budget_changed"],
+        "budget_delta": budget_delta,
+        "path_overlay_node_ids": enhanced.get("path_overlay_node_ids", []),
+        "path_overlay_edge_ids": enhanced.get("path_overlay_edge_ids", []),
+    }
 
 
 def _public_variant(variant: dict[str, Any]) -> dict[str, Any]:
@@ -322,8 +477,18 @@ def _public_variant(variant: dict[str, Any]) -> dict[str, Any]:
         "blocked_reason",
         "added_node_ids",
         "removed_node_ids",
+        "visible_overlay_node_ids",
+        "visible_overlay_edge_ids",
+        "path_overlay_node_ids",
+        "path_overlay_edge_ids",
         "overlay_node_ids",
         "overlay_edge_ids",
+        "order_changed",
+        "order_changed_node_ids",
+        "stage_changed",
+        "stage_changed_node_ids",
+        "budget_changed",
+        "budget_delta",
         "project_graph_hash",
     ):
         if key in variant:
@@ -845,6 +1010,9 @@ async def generate_plan(
         "weekly_hours": profile_row.weekly_hours,
         "deadline_weeks": profile_row.deadline_weeks,
         "path_mode_preference": profile_row.path_mode_preference,
+        "learning_goal_orientation": profile_row.learning_goal_orientation,
+        "resource_preference": profile_row.resource_preference,
+        "practice_intensity": profile_row.practice_intensity,
         "persona_label": profile_row.persona_label,
         "persona_summary": profile_row.persona_summary,
         "persona_evidence": profile_row.persona_evidence,

@@ -11,6 +11,7 @@ import pytest
 from scripts.generate_thesis_validation_evidence import (
     DEFAULT_BASE_URL,
     RequestJsonError,
+    build_markdown_report,
     build_paper_metrics,
     build_run_metadata,
     build_summary,
@@ -282,6 +283,70 @@ def test_build_summary_includes_dependency_metrics():
         "total_required_edges": 1,
         "dependency_satisfaction_ratio": 1.0,
     }
+
+
+def test_build_markdown_report_includes_citation_ready_metrics():
+    report = build_markdown_report(
+        {
+            "matrix_id": "matrix-1",
+            "change": "phase-1",
+            "run_metadata": {
+                "finished_at_utc": "2026-04-28T10:00:00Z",
+                "resolved_runtime_mode": "offline",
+                "readiness_status": "ready",
+            },
+            "summary": {
+                "scenario_count": 1,
+                "successful_scenarios": 1,
+                "all_scenarios_passed": True,
+                "dependency_satisfaction_ratio": 1.0,
+            },
+            "results": [
+                {
+                    "scenario_id": "scenario-1",
+                    "scenario_title": "领域型目标 × 基础薄弱画像",
+                    "status": "ok",
+                    "scenario_passed": True,
+                    "plan_response": {"node_count": 2, "stages": []},
+                    "stage_summary": [
+                        {"stage_name": "基础", "task_count": 2, "estimated_hours": 6}
+                    ],
+                    "failed_checks": [],
+                }
+            ],
+        },
+        {
+            "citation_ready": True,
+            "dependency_correctness": {
+                "scenario_breakdown": [
+                    {
+                        "scenario_id": "scenario-1",
+                        "dependency_satisfaction_ratio": 1.0,
+                    }
+                ]
+            },
+            "stage_evidence": {
+                "average_stage_count": 1,
+                "average_total_stage_hours": 6,
+            },
+            "environment_state": {
+                "resolved_runtime_mode": "offline",
+                "uses_online_dependencies": False,
+                "readiness_status": "ready",
+                "core_ready": True,
+                "demo_ready": True,
+                "enhanced_ready": False,
+                "tracking_summary_scope": "latest_plan",
+            },
+        },
+    )
+
+    assert "# LearnPath-KG 论文验证自动评估报告" in report
+    assert "- 场景通过：1/1" in report
+    assert "- 依赖满足率：100.0%" in report
+    assert "| scenario-1 | 领域型目标 × 基础薄弱画像 | ok | 2 | 1 | 6 | 100.0% | - |" in report
+    assert "`paper_metrics.json`" in report
+
 
 
 def test_metrics_keep_partial_plan_evidence_when_checks_fail():
@@ -942,6 +1007,7 @@ async def test_generate_evidence_auto_mode_uses_search_runtime_when_only_search_
     requires_file.write_text("[]", encoding="utf-8")
     output_file = tmp_path / "latest.json"
     summary_file = tmp_path / "paper_metrics.json"
+    report_file = tmp_path / "report.md"
 
     with patch(
         "scripts.generate_thesis_validation_evidence.capture_context",
@@ -1004,12 +1070,14 @@ async def test_generate_evidence_auto_mode_uses_search_runtime_when_only_search_
             summary_file=summary_file,
             runtime_mode="auto",
             requires_file=requires_file,
+            report_file=report_file,
         )
 
     assert exit_code == 0
     assert run_scenario_mock.await_args.kwargs["runtime_mode"] == "search"
     evidence = json.loads(output_file.read_text(encoding="utf-8"))
     assert evidence["run_metadata"]["resolved_runtime_mode"] == "search"
+    assert "# LearnPath-KG 论文验证自动评估报告" in report_file.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

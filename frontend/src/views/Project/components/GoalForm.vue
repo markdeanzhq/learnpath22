@@ -1,19 +1,37 @@
 <template>
-  <el-form :model="form" :rules="rules" ref="formRef" label-position="top">
-    <el-form-item label="项目标题" prop="title">
-      <el-input v-model="form.title" placeholder="例如：机器学习基础学习计划" />
-    </el-form-item>
+  <el-form :model="form" :rules="rules" ref="formRef" label-position="top" class="goal-form">
+    <section class="goal-form-intro">
+      <p class="form-eyebrow">第一步：描述目标</p>
+      <h2>{{ mode === 'reconfirm' ? '重新确认学习目标' : '创建新的学习项目' }}</h2>
+      <p>用一句自然语言描述想学什么，系统会先判断覆盖情况，再推荐创建、澄清或扩展草稿流程。</p>
+    </section>
 
-    <el-form-item label="学习目标" prop="goal_text">
+    <el-form-item label="学习目标" prop="goal_text" class="primary-goal-field">
       <el-input
         v-model="form.goal_text"
         type="textarea"
-        :rows="3"
-        placeholder="描述你想学什么，例如：我想系统学习机器学习基础"
+        :rows="4"
+        placeholder="例如：我想系统学习机器学习基础"
       />
-      <div class="form-hint">
-        用一句自然语言描述想学什么即可；系统会先判断是否属于机器学习基础范围，再给出下一步建议。
+      <div class="goal-example-row" aria-label="学习目标示例">
+        <button
+          v-for="example in goalExamples"
+          :key="example.goal"
+          type="button"
+          class="goal-example-chip"
+          @click="applyGoalExample(example)"
+        >
+          {{ example.label }}
+        </button>
       </div>
+      <div class="form-hint">
+        推荐先保持自然表达；系统会根据机器学习基础图谱判断是否可直接规划。
+      </div>
+    </el-form-item>
+
+    <el-form-item label="项目标题" prop="title">
+      <el-input v-model="form.title" placeholder="例如：机器学习基础学习计划" />
+      <div class="form-hint">标题用于区分多个学习计划，不影响目标解析结果。</div>
     </el-form-item>
 
     <details class="advanced-options">
@@ -45,12 +63,27 @@
       <template #default>{{ reasonMessage }}</template>
     </el-alert>
 
-    <div class="actions">
+    <details class="display-options">
+      <summary>显示设置</summary>
       <DisplayModeSwitch v-model="displayMode" />
-      <el-button type="primary" @click="handlePreview" :loading="previewLoading">
+    </details>
+
+    <div class="actions">
+      <el-button type="primary" size="large" @click="handlePreview" :loading="previewLoading">
         {{ previewButtonLabel }}
       </el-button>
     </div>
+
+    <el-alert
+      v-if="operationErrorMessage"
+      title="操作未完成"
+      type="error"
+      :closable="false"
+      show-icon
+      class="operation-error-alert"
+    >
+      <template #default>{{ operationErrorMessage }}</template>
+    </el-alert>
   </el-form>
 
   <GoalPreviewPanel
@@ -102,12 +135,19 @@ import {
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
+import { formatErrorCode } from '@/utils/displayLabels'
 import GoalPreviewPanel from './GoalPreviewPanel.vue'
 
 interface GoalFormState {
   title: string
   goal_text: string
   goal_type: GoalTypeSelection
+}
+
+interface GoalExample {
+  label: string
+  goal: string
+  title: string
 }
 
 interface ClarificationAnswerState {
@@ -121,6 +161,12 @@ const STALE_GOAL_ERRORS = new Set([
   'PROJECT_GRAPH_DRIFT',
   'PACK_HASH_DRIFT',
 ])
+
+const goalExamples: GoalExample[] = [
+  { label: '系统学习机器学习基础', goal: '我想系统学习机器学习基础', title: '机器学习基础学习计划' },
+  { label: '理解梯度下降', goal: '我想理解梯度下降', title: '梯度下降学习计划' },
+  { label: '搞懂逻辑回归分类', goal: '我想搞懂逻辑回归为什么能做分类', title: '逻辑回归分类学习计划' },
+]
 
 const props = withDefaults(defineProps<{
   mode?: 'create' | 'reconfirm'
@@ -138,7 +184,11 @@ const props = withDefaults(defineProps<{
   reconfirmReason: '',
 })
 
-const emit = defineEmits<{ created: [project: Project], updated: [project: Project] }>()
+const emit = defineEmits<{
+  created: [project: Project]
+  updated: [project: Project]
+  dirtyStateChanged: [dirty: boolean]
+}>()
 const router = useRouter()
 const projectStore = useProjectStore()
 const { displayMode } = useDisplayMode()
@@ -153,6 +203,7 @@ const previewRequestedGoalType = ref<GoalType | null>(null)
 const previewProjectId = ref('')
 const previewMode = ref<'create' | 'reconfirm'>('create')
 const unsafeStateMessage = ref('')
+const operationErrorMessage = ref('')
 const acceptPartial = ref(false)
 const showAllCandidates = ref(false)
 const clarificationAnswers = reactive<Record<string, ClarificationAnswerState>>({})
@@ -192,6 +243,14 @@ const requestedGoalType = computed<GoalType | undefined>(() =>
 )
 const normalizedGoalText = computed(() => form.goal_text.trim())
 const expectedProjectId = computed(() => (props.mode === 'reconfirm' ? props.projectId : ''))
+const createFormDirty = computed(() => (
+  props.mode === 'create' && (
+    Boolean(form.title.trim()) ||
+    Boolean(normalizedGoalText.value) ||
+    form.goal_type !== 'auto' ||
+    Boolean(previewState.value)
+  )
+))
 
 const previewDirty = computed(() => {
   if (!previewState.value) {
@@ -244,7 +303,7 @@ const canOpenExtensionDraft = computed(() => (
   contextMatches.value &&
   hashesAgree.value
 ))
-const previewButtonLabel = computed(() => (previewState.value && previewDirty.value ? '重新预览候选' : '解析目标候选'))
+const previewButtonLabel = computed(() => (previewState.value && previewDirty.value ? '重新解析学习目标' : '解析学习目标'))
 const submitButtonLabel = computed(() => {
   if (isPartialResponse(previewState.value)) {
     return props.mode === 'reconfirm' ? '接受部分覆盖并更新目标' : '接受部分覆盖并创建项目'
@@ -278,6 +337,11 @@ const reasonMessage = computed(() => {
   }
   return ''
 })
+
+watch(createFormDirty, (dirty) => {
+  emit('dirtyStateChanged', dirty)
+}, { immediate: true })
+
 function isSelectCandidateResponse(value: GoalResolutionPreviewResponse | null): value is SelectCandidateCoverageResponse {
   return value?.result_type === 'select_candidate'
 }
@@ -308,6 +372,14 @@ function applyRewriteSuggestion(suggestion: string) {
   clearPreviewState('已替换为建议目标，请重新解析。')
 }
 
+function applyGoalExample(example: GoalExample) {
+  form.goal_text = example.goal
+  if (!form.title.trim()) {
+    form.title = example.title
+  }
+  clearPreviewState('已填入示例目标，请解析学习目标。')
+}
+
 function resetClarificationAnswers(questions: ClarificationQuestion[]) {
   Object.keys(clarificationAnswers).forEach((key) => delete clarificationAnswers[key])
   questions.forEach((question) => {
@@ -326,9 +398,30 @@ function clearPreviewState(message = '') {
   previewProjectId.value = ''
   previewMode.value = props.mode
   unsafeStateMessage.value = message
+  operationErrorMessage.value = ''
   acceptPartial.value = false
   showAllCandidates.value = false
   resetClarificationAnswers([])
+}
+
+function errorMessageFromResponse(error: any, fallback: string) {
+  const data = error?.response?.data
+  const code = data?.error || data?.reason_code || data?.details?.reason_code
+  const formatted = formatErrorCode(code)
+  if (formatted) {
+    return formatted
+  }
+  if (typeof data?.message === 'string' && data.message.trim()) {
+    return data.message.trim()
+  }
+  if (typeof data?.detail === 'string' && data.detail.trim()) {
+    return data.detail.trim()
+  }
+  return fallback
+}
+
+function setOperationError(error: any, fallback: string) {
+  operationErrorMessage.value = errorMessageFromResponse(error, fallback)
 }
 
 function isStaleGoalError(error: any) {
@@ -345,6 +438,7 @@ function handleUnsafeError(error: any) {
 }
 
 function applyPreview(preview: GoalResolutionPreviewResponse) {
+  operationErrorMessage.value = ''
   if (preview.goal_frame?.raw_text && preview.goal_frame.raw_text !== normalizedGoalText.value) {
     form.goal_text = preview.goal_frame.raw_text
   }
@@ -389,6 +483,7 @@ async function handlePreview() {
     return
   }
   previewLoading.value = true
+  operationErrorMessage.value = ''
   try {
     const valid = await validateForm()
     if (!valid) {
@@ -406,6 +501,7 @@ async function handlePreview() {
   } catch (error: any) {
     if (!handleUnsafeError(error)) {
       unsafeStateMessage.value = ''
+      setOperationError(error, '目标解析暂时失败，请稍后重试，或检查后端与 LLM 运行时配置。')
     }
   } finally {
     previewLoading.value = false
@@ -431,6 +527,7 @@ async function handleClarificationAnswer() {
 
   clarificationLoading.value = true
   unsafeStateMessage.value = ''
+  operationErrorMessage.value = ''
   try {
     const response = props.mode === 'reconfirm' && props.projectId
       ? await projectApi.answerProjectClarification(props.projectId, previewState.value.clarification_session_id, { answers })
@@ -455,7 +552,9 @@ async function handleClarificationAnswer() {
 
     clearPreviewState('澄清会话未返回可继续的目标预览，请重新解析目标。')
   } catch (error: any) {
-    handleUnsafeError(error)
+    if (!handleUnsafeError(error)) {
+      setOperationError(error, '澄清答案提交失败，请稍后重试。')
+    }
   } finally {
     clarificationLoading.value = false
   }
@@ -466,6 +565,7 @@ async function handleCreate() {
     return
   }
   createLoading.value = true
+  operationErrorMessage.value = ''
   try {
     const valid = await validateForm()
     const state = previewState.value
@@ -496,7 +596,9 @@ async function handleCreate() {
     })
     emit('created', project)
   } catch (error: any) {
-    handleUnsafeError(error)
+    if (!handleUnsafeError(error)) {
+      setOperationError(error, '项目创建失败，请稍后重试。')
+    }
   } finally {
     createLoading.value = false
   }
@@ -507,6 +609,7 @@ async function handleCreateExtensionProject() {
     return
   }
   createLoading.value = true
+  operationErrorMessage.value = ''
   try {
     const valid = await validateForm()
     if (!valid) {
@@ -528,7 +631,9 @@ async function handleCreateExtensionProject() {
       },
     })
   } catch (error: any) {
-    handleUnsafeError(error)
+    if (!handleUnsafeError(error)) {
+      setOperationError(error, '待扩展项目创建失败，请稍后重试。')
+    }
   } finally {
     createLoading.value = false
   }
@@ -550,12 +655,74 @@ function goToExtensionDraftEntry() {
 </script>
 
 <style scoped>
+.goal-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.goal-form-intro {
+  margin-bottom: 18px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--el-fill-color-light);
+}
+
+.form-eyebrow {
+  margin: 0 0 6px;
+  color: var(--el-color-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.goal-form-intro h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.goal-form-intro p {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.7;
+}
+
+.primary-goal-field :deep(.el-textarea__inner) {
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.goal-example-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.goal-example-chip {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 999px;
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.goal-example-chip:hover,
+.goal-example-chip:focus-visible {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+  box-shadow: 0 0 0 2px var(--el-color-primary-light-9);
+  outline: none;
+}
+
 .type-desc,
 .form-hint {
   margin-top: 8px;
 }
 
 .advanced-options,
+.display-options,
 .debug-details {
   margin: 12px 0;
   color: var(--el-text-color-secondary);
@@ -563,12 +730,14 @@ function goToExtensionDraftEntry() {
 }
 
 .advanced-options summary,
+.display-options summary,
 .debug-details summary {
   cursor: pointer;
   user-select: none;
 }
 
-.advanced-options :deep(.el-form-item) {
+.advanced-options :deep(.el-form-item),
+.display-options :deep(.display-mode-switch) {
   margin-top: 12px;
   margin-bottom: 0;
 }
@@ -583,10 +752,18 @@ function goToExtensionDraftEntry() {
   margin-bottom: 16px;
 }
 
+.operation-error-alert {
+  margin-top: 16px;
+}
+
 .actions {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.actions :deep(.el-button) {
+  min-height: 44px;
 }
 
 </style>

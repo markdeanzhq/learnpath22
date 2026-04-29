@@ -198,6 +198,7 @@ export interface OverlaySessionSummary {
   session_status: string
   source_ids: string[]
   warnings: string[]
+  provenance?: Record<string, unknown>
   error_message?: string | null
   created_at: string
   updated_at: string
@@ -212,10 +213,29 @@ export interface OverlayExtractionSessionResponse {
   warnings: string[]
 }
 
+export interface PreviewOverlayExtractionPayloadRequest {
+  source_ids: string[]
+  mode?: 'default' | 'custom_extension'
+}
+
+export interface OverlayExtractionPayloadPreviewResponse {
+  source_ids: string[]
+  mode: 'default' | 'custom_extension' | string
+  extraction_payload: unknown
+  warnings: string[]
+  counts: {
+    nodes: number
+    edges: number
+    resources: number
+  }
+  provenance: Record<string, unknown>
+}
+
 export interface CreateOverlayExtractionSessionRequest {
   source_ids: string[]
   mode?: 'default' | 'custom_extension'
   extraction_payload?: unknown
+  session_provenance?: Record<string, unknown> | null
 }
 
 export interface GoalExtensionGapAnalysis {
@@ -246,12 +266,49 @@ export interface GoalExtensionDraftMetadata {
   safety_policy?: Record<string, unknown>
 }
 
+export interface GoalExtensionDraftProposal {
+  schema_version?: string
+  draft_origin?: string
+  draft_engine?: string
+  prompt_version?: string
+  model?: string | null
+  source_id?: string
+  source_ids?: string[]
+  goal_trace?: Record<string, unknown>
+  missing_concepts?: string[]
+  gap_analysis?: GoalExtensionGapAnalysis
+  review_notes?: string[]
+  draft_metadata?: GoalExtensionDraftMetadata
+  extraction_payload?: unknown
+  nodes?: Array<Record<string, unknown>>
+  edges?: Array<Record<string, unknown>>
+  resources?: Array<Record<string, unknown>>
+  warnings?: string[]
+  counts?: {
+    nodes: number
+    edges: number
+    resources: number
+  }
+  requires_user_review?: boolean
+  writes_formal_graph?: boolean
+  writes_formal_path?: boolean
+}
+
+export interface GoalExtensionDraftProposalResponse {
+  resolution_session_id: string
+  project_id: string
+  session_status: string
+  expires_at?: string
+  draft_proposal: GoalExtensionDraftProposal
+}
+
 export interface GoalExtensionDraftResponse extends OverlayExtractionSessionResponse {
   goal_trace?: Record<string, unknown>
   missing_concepts?: string[]
   gap_analysis?: GoalExtensionGapAnalysis
   review_notes?: string[]
   draft_metadata?: GoalExtensionDraftMetadata
+  draft_proposal?: GoalExtensionDraftProposal
 }
 
 export interface OverlayStatusResponse {
@@ -411,11 +468,21 @@ export const graphApi = {
     payload: Partial<OverlaySourceRequest>,
   ): Promise<OverlaySource> =>
     request.patch(`/projects/${projectId}/graph/overlay/sources/${sourceId}`, payload),
+  previewOverlayExtractionPayload: (
+    projectId: string,
+    payload: PreviewOverlayExtractionPayloadRequest,
+  ): Promise<OverlayExtractionPayloadPreviewResponse> =>
+    request.post(`/projects/${projectId}/graph/overlay/extraction-payload/preview`, payload),
   createOverlayExtractionSession: (
     projectId: string,
     payload: CreateOverlayExtractionSessionRequest,
   ): Promise<OverlayExtractionSessionResponse> =>
     request.post(`/projects/${projectId}/graph/overlay/extraction-sessions`, payload),
+  getGoalExtensionDraftProposal: (
+    projectId: string,
+    resolutionSessionId: string,
+  ): Promise<GoalExtensionDraftProposalResponse> =>
+    request.get(`/projects/${projectId}/goal-resolution/extension-drafts/${resolutionSessionId}/proposal`),
   createGoalExtensionDraft: (projectId: string, resolutionSessionId: string): Promise<GoalExtensionDraftResponse> =>
     request.post(`/projects/${projectId}/goal-resolution/extension-drafts`, {
       resolution_session_id: resolutionSessionId,

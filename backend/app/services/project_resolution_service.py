@@ -226,6 +226,11 @@ async def _create_extension_review_project(
     audit_trace = coverage_response.get("audit_trace")
     if isinstance(audit_trace, dict):
         audit_trace["project_graph_hash"] = project_graph_hash
+    draft_proposal = coverage_response.get("draft_proposal")
+    if isinstance(draft_proposal, dict):
+        draft_trace = draft_proposal.get("goal_trace")
+        if isinstance(draft_trace, dict):
+            draft_trace["project_graph_hash"] = project_graph_hash
     session.coverage_response_json = json.dumps(coverage_response, ensure_ascii=False, sort_keys=True)
     await db.commit()
     await db.refresh(project)
