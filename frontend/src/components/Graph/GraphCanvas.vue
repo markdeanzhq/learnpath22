@@ -18,7 +18,6 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import cytoscape from 'cytoscape'
 import ReviewContextMenu from './ReviewContextMenu.vue'
 import { CATEGORY_COLORS } from './graphMeta'
 
@@ -51,6 +50,9 @@ const emit = defineEmits<{
 const containerRef = ref<HTMLDivElement>()
 const cyContainerRef = ref<HTMLDivElement>()
 let cy: any = null
+let isMounted = false
+let initRequestId = 0
+let cytoscapeFactoryPromise: Promise<any> | null = null
 
 type MenuTargetType = 'node' | 'edge'
 type MenuTarget = {
@@ -467,6 +469,13 @@ function normalizeElementLifecycleData(elements: any[]) {
   })
 }
 
+function loadCytoscape() {
+  if (!cytoscapeFactoryPromise) {
+    cytoscapeFactoryPromise = import('cytoscape').then((module) => module.default)
+  }
+  return cytoscapeFactoryPromise
+}
+
 function applyElementDataUpdates(nextElements: any[]) {
   if (!cy) return false
 
@@ -489,8 +498,21 @@ function applyElementDataUpdates(nextElements: any[]) {
   return true
 }
 
-function initCytoscape() {
+async function initCytoscape() {
+  const requestId = ++initRequestId
   if (!containerRef.value || !cyContainerRef.value || !props.elements.length) return
+
+  const cytoscape = await loadCytoscape()
+  if (
+    requestId !== initRequestId
+    || !isMounted
+    || !containerRef.value
+    || !cyContainerRef.value
+    || !props.elements.length
+  ) {
+    return
+  }
+
   if (cy) {
     cy.destroy()
     cy = null
@@ -617,10 +639,13 @@ function handleViewNodeDetail() {
 }
 
 onMounted(() => {
-  nextTick(() => initCytoscape())
+  isMounted = true
+  nextTick(() => void initCytoscape())
 })
 
 onUnmounted(() => {
+  isMounted = false
+  initRequestId += 1
   closeContextMenu()
   if (cy) {
     cy.destroy()
@@ -634,7 +659,7 @@ watch(() => props.elements, async () => {
     return
   }
   await nextTick()
-  initCytoscape()
+  await initCytoscape()
 }, { deep: true })
 
 watch(() => props.layout, (newLayout) => {
