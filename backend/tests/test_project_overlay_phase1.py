@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.db.init_db import create_project_overlay_indexes, upgrade_project_overlay_schema
+from app.db.init_db import create_project_overlay_indexes, create_query_indexes, upgrade_project_overlay_schema
 from app.models.sqlite_models import (
     Base,
     LearningProject,
@@ -77,6 +77,18 @@ EXPECTED_INDEXES = {
     "idx_persisted_search_results_source_id",
 }
 
+EXPECTED_QUERY_INDEXES = {
+    "idx_graph_review_project_type_status",
+    "idx_graph_review_project_type_element",
+    "idx_learning_paths_project_latest",
+    "idx_learner_profiles_project_created",
+    "idx_overlay_sessions_project_status",
+    "idx_overlay_nodes_project_promotion_created",
+    "idx_overlay_edges_project_promotion_created",
+    "idx_overlay_nodes_planner_visible",
+    "idx_overlay_edges_planner_visible",
+}
+
 
 @pytest.fixture(autouse=True)
 async def _fresh_schema():
@@ -115,6 +127,19 @@ async def test_overlay_tables_and_indexes_are_created_idempotently():
 
     assert OVERLAY_TABLES <= tables
     assert EXPECTED_INDEXES <= {row[0] for row in indexes}
+
+
+async def test_query_indexes_are_created_idempotently():
+    async with _engine.begin() as conn:
+        await create_query_indexes(conn)
+        await create_query_indexes(conn)
+
+    async with _engine.connect() as conn:
+        indexes = await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type = 'index'")
+        )
+
+    assert EXPECTED_QUERY_INDEXES <= {row[0] for row in indexes}
 
 
 async def test_overlay_upgrade_adds_persisted_search_result_source_id_to_legacy_table():

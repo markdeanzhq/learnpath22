@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 
@@ -15,7 +15,11 @@ from app.repositories.project_overlay_repository import (
 )
 from app.services.domain_pack_service import get_domain_pack_service
 from app.services.graph_service import build_path_graph_elements_from_snapshot
-from app.services.project_graph_snapshot_service import build_project_graph_snapshot
+from app.services import project_graph_snapshot_service as snapshot_module
+from app.services.project_graph_snapshot_service import (
+    build_project_graph_snapshot,
+    clear_project_graph_snapshot_cache,
+)
 from app.services.project_overlay_extraction_service import create_extraction_session_from_sources
 
 
@@ -125,6 +129,45 @@ def _planned_node_ids(plan_payload: dict) -> list[str]:
         for stage in plan_payload["stages"]
         for task in stage["tasks"]
     ]
+
+
+async def test_project_graph_snapshot_cache_reuses_unchanged_revision(
+    project,
+    db_session,
+    monkeypatch,
+):
+    clear_project_graph_snapshot_cache()
+    first = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    list_nodes = AsyncMock(side_effect=AssertionError("snapshot cache should avoid node reload"))
+    list_edges = AsyncMock(side_effect=AssertionError("snapshot cache should avoid edge reload"))
+    monkeypatch.setattr(snapshot_module, "list_planner_visible_nodes", list_nodes)
+    monkeypatch.setattr(snapshot_module, "list_planner_visible_edges", list_edges)
+
+    second = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+
+    assert second is first
+    list_nodes.assert_not_awaited()
+    list_edges.assert_not_awaited()
+
+
+async def test_project_graph_snapshot_cache_refreshes_after_review_revision_changes(
+    client,
+    project,
+    db_session,
+):
+    clear_project_graph_snapshot_cache()
+    before = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    assert "ml_c01" in before.nodes_by_id
+
+    resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/nodes/ml_c01",
+        json={"status": "removed"},
+    )
+    assert resp.status_code == 200
+
+    after = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    assert after is not before
+    assert "ml_c01" not in after.nodes_by_id
 
 
 async def test_create_and_get_overlay_extraction_session_endpoints(client, project):

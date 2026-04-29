@@ -476,24 +476,42 @@ function loadCytoscape() {
   return cytoscapeFactoryPromise
 }
 
+function hasSameElementStructure(target: any, element: any) {
+  if (element.group === 'nodes') {
+    return typeof target.isNode === 'function' && target.isNode()
+  }
+
+  if (element.group !== 'edges' || typeof target.isEdge !== 'function' || !target.isEdge()) {
+    return false
+  }
+
+  const currentData = target.data()
+  return currentData.source === element.data.source && currentData.target === element.data.target
+}
+
 function applyElementDataUpdates(nextElements: any[]) {
   if (!cy) return false
 
-  const nextIds = new Set(nextElements.map((element) => element.data?.id).filter(Boolean))
-  const currentIds = new Set(cy.elements().map((element: any) => element.id()))
-  if (nextIds.size !== currentIds.size) return false
-  for (const id of nextIds) {
-    if (!currentIds.has(id)) return false
+  const currentElements = cy.elements()
+  if (currentElements.length !== nextElements.length) return false
+
+  for (const element of nextElements) {
+    const elementId = element.data?.id
+    if (!elementId) return false
+    const target = cy.getElementById(elementId)
+    if (!target.length || !hasSameElementStructure(target, element)) {
+      return false
+    }
   }
 
-  nextElements.forEach((element) => {
-    const target = cy.getElementById(element.data.id)
-    if (target.length) {
+  cy.batch(() => {
+    nextElements.forEach((element) => {
+      const target = cy.getElementById(element.data.id)
       target.data(element.data)
       if (typeof target.toggleClass === 'function') {
         target.toggleClass(PLANNING_DISABLED_CLASS, isPlanningDisabled(element.data))
       }
-    }
+    })
   })
   return true
 }
@@ -660,7 +678,7 @@ watch(() => props.elements, async () => {
   }
   await nextTick()
   await initCytoscape()
-}, { deep: true })
+})
 
 watch(() => props.layout, (newLayout) => {
   closeContextMenu()

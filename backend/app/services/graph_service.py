@@ -1,6 +1,8 @@
 """图谱查询服务：返回 Cytoscape.js 兼容格式"""
 from __future__ import annotations
 
+from collections import OrderedDict
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from app.core.exceptions import AppError
@@ -14,6 +16,43 @@ GRAPH_SCOPE_DOMAIN = "domain"
 GRAPH_SCOPE_PROJECT = "project"
 GRAPH_SCOPE_PATH = "path"
 VALID_GRAPH_SCOPES = {GRAPH_SCOPE_DOMAIN, GRAPH_SCOPE_PROJECT, GRAPH_SCOPE_PATH}
+
+_PACK_GRAPH_ELEMENTS_CACHE_MAX_SIZE = 16
+_PackGraphElementsCacheKey = tuple[str, str, str]
+_pack_graph_elements_cache: OrderedDict[_PackGraphElementsCacheKey, dict[str, Any]] = OrderedDict()
+
+
+def clear_pack_graph_elements_cache(domain: str | None = None) -> None:
+    if domain is None:
+        _pack_graph_elements_cache.clear()
+        return
+    for cache_key in list(_pack_graph_elements_cache):
+        if cache_key[0] == domain:
+            del _pack_graph_elements_cache[cache_key]
+
+
+def _pack_graph_cache_key(pack: DomainPackService, scope: str) -> _PackGraphElementsCacheKey:
+    return (pack.domain, pack.pack_hash, scope)
+
+
+def _can_cache_pack_graph_elements(
+    *,
+    overlay_nodes: list[Any] | None,
+    overlay_edges: list[Any] | None,
+    removed_node_ids: set[str] | None,
+    removed_edge_ids: set[str] | None,
+) -> bool:
+    return not overlay_nodes and not overlay_edges and not removed_node_ids and not removed_edge_ids
+
+
+def _remember_pack_graph_elements(
+    cache_key: _PackGraphElementsCacheKey,
+    graph_data: dict[str, Any],
+) -> None:
+    _pack_graph_elements_cache[cache_key] = deepcopy(graph_data)
+    _pack_graph_elements_cache.move_to_end(cache_key)
+    while len(_pack_graph_elements_cache) > _PACK_GRAPH_ELEMENTS_CACHE_MAX_SIZE:
+        _pack_graph_elements_cache.popitem(last=False)
 
 
 def build_edge_review_id(source: str, target: str, rel_type: str) -> str:
@@ -215,6 +254,19 @@ def build_project_graph_elements(
     removed_edge_ids: set[str] | None = None,
     scope: str = GRAPH_SCOPE_PROJECT,
 ) -> dict[str, Any]:
+    cache_key = None
+    if _can_cache_pack_graph_elements(
+        overlay_nodes=overlay_nodes,
+        overlay_edges=overlay_edges,
+        removed_node_ids=removed_node_ids,
+        removed_edge_ids=removed_edge_ids,
+    ):
+        cache_key = _pack_graph_cache_key(pack, scope)
+        cached_graph = _pack_graph_elements_cache.get(cache_key)
+        if cached_graph is not None:
+            _pack_graph_elements_cache.move_to_end(cache_key)
+            return deepcopy(cached_graph)
+
     removed_nodes = removed_node_ids or set()
     removed_edges = removed_edge_ids or set()
     nodes_by_id = {
@@ -247,7 +299,29 @@ def build_project_graph_elements(
     )
     elements.extend(_overlay_edge_to_element(edge, scope=scope) for edge in overlay_edges or [])
 
-    return {"scope": scope, "elements": elements, "is_empty": len(elements) == 0}
+    graph_data = {"scope": scope, "elements": elements, "is_empty": len(elements) == 0}
+    if cache_key is not None:
+        _remember_pack_graph_elements(cache_key, graph_data)
+    return graph_data
+
+
+def _empty_induced_graph_response(
+    *,
+    path_id: str | None,
+    requested_node_ids: list[str],
+    missing_node_ids: list[str],
+) -> dict[str, Any]:
+    graph_data: dict[str, Any] = {
+        "scope": GRAPH_SCOPE_PATH,
+        "path_id": path_id,
+        "elements": [],
+        "node_ids": requested_node_ids,
+        "missing_node_ids": missing_node_ids,
+        "is_empty": True,
+    }
+    if missing_node_ids and requested_node_ids:
+        graph_data["empty_reason"] = "path_nodes_missing"
+    return graph_data
 
 
 def build_path_graph_elements_from_snapshot(
@@ -311,17 +385,70 @@ def build_path_graph_elements_from_snapshot(
                 )
             )
 
-    graph_data: dict[str, Any] = {
+    if not elements:
+        return _empty_induced_graph_response(
+            path_id=path_id,
+            requested_node_ids=requested_node_ids,
+            missing_node_ids=missing_node_ids,
+        )
+    return {
         "scope": GRAPH_SCOPE_PATH,
         "path_id": path_id,
         "elements": elements,
         "node_ids": requested_node_ids,
         "missing_node_ids": missing_node_ids,
-        "is_empty": len(elements) == 0,
+        "is_empty": False,
     }
-    if graph_data["is_empty"] and missing_node_ids and requested_node_ids:
-        graph_data["empty_reason"] = "path_nodes_missing"
-    return graph_data
+
+
+def build_pack_subgraph_elements(
+    pack: DomainPackService,
+    *,
+    node_ids: list[str],
+) -> dict[str, Any]:
+    requested_node_ids = sorted(set(node_ids))
+    visible_node_ids = [
+        node_id for node_id in requested_node_ids if node_id in pack.nodes_by_id
+    ]
+    visible_node_id_set = set(visible_node_ids)
+    missing_node_ids = sorted(set(requested_node_ids) - visible_node_id_set)
+
+    elements: list[dict[str, Any]] = [
+        _build_node_element(pack.nodes_by_id[node_id], scope=GRAPH_SCOPE_PATH)
+        for node_id in visible_node_ids
+    ]
+
+    baseline_edges: list[dict[str, Any]] = []
+    for relation_type, edges in (
+        ("REQUIRES", pack.requires_edges),
+        ("RELATED_TO", pack.related_edges),
+    ):
+        for edge in edges:
+            if edge["source"] in visible_node_id_set and edge["target"] in visible_node_id_set:
+                baseline_edges.append({**edge, "rel_type": relation_type})
+
+    elements.extend(
+        _build_edge_element(edge, scope=GRAPH_SCOPE_PATH)
+        for edge in sorted(
+            baseline_edges,
+            key=lambda item: (item["source"], item["target"], item["rel_type"]),
+        )
+    )
+
+    if not elements:
+        return _empty_induced_graph_response(
+            path_id=None,
+            requested_node_ids=requested_node_ids,
+            missing_node_ids=missing_node_ids,
+        )
+    return {
+        "scope": GRAPH_SCOPE_PATH,
+        "path_id": None,
+        "elements": elements,
+        "node_ids": requested_node_ids,
+        "missing_node_ids": missing_node_ids,
+        "is_empty": False,
+    }
 
 
 async def _get_full_graph_elements(
@@ -389,6 +516,113 @@ async def get_path_subgraph(
     driver: Neo4jDriver, node_ids: list[str]
 ) -> dict[str, Any]:
     return await get_graph_elements(driver, scope=GRAPH_SCOPE_PATH, node_ids=node_ids)
+
+
+def build_graph_entity_metadata_from_pack(
+    pack: DomainPackService,
+    *,
+    include_empty: bool = True,
+) -> dict[str, Any]:
+    ordered_stages = sorted(
+        pack.stages,
+        key=lambda stage: (stage["order"], stage["id"]),
+    )
+    stages = [
+        {
+            "id": stage["id"],
+            "name": stage["name"],
+            "order": stage["order"],
+            "description": stage.get("description", ""),
+            "category_keys": list(stage.get("category_keys", [])),
+            "node_ids": sorted(set(stage.get("node_ids", []))),
+            "resource_ids": [],
+        }
+        for stage in ordered_stages
+    ]
+    stages_by_id = {stage["id"]: stage for stage in stages}
+
+    resources = [
+        {
+            "id": resource["id"],
+            "title": resource["title"],
+            "resource_type": resource["resource_type"],
+            "description": resource.get("description", ""),
+            "stage_ids": sorted(set(resource.get("stage_ids", []))),
+            "node_ids": sorted(set(resource.get("node_ids", []))),
+        }
+        for resource in sorted(pack.resources, key=lambda resource: resource["id"])
+    ]
+
+    stage_sequences = sorted(
+        [
+            {
+                "source": previous["id"],
+                "target": current["id"],
+                "type": "PRECEDES",
+            }
+            for previous, current in zip(ordered_stages, ordered_stages[1:])
+        ],
+        key=lambda edge: (edge["source"], edge["target"]),
+    )
+    stage_nodes = sorted(
+        [
+            {
+                "stage_id": stage["id"],
+                "node_id": node_id,
+                "type": "CONTAINS",
+            }
+            for stage in ordered_stages
+            for node_id in sorted(set(stage.get("node_ids", [])))
+        ],
+        key=lambda edge: (edge["stage_id"], edge["node_id"]),
+    )
+    stage_resources = sorted(
+        [
+            {
+                "stage_id": stage_id,
+                "resource_id": resource["id"],
+                "type": "HAS_RESOURCE",
+            }
+            for resource in resources
+            for stage_id in resource["stage_ids"]
+        ],
+        key=lambda edge: (edge["stage_id"], edge["resource_id"]),
+    )
+    resource_nodes = sorted(
+        [
+            {
+                "resource_id": resource["id"],
+                "node_id": node_id,
+                "type": "COVERS",
+            }
+            for resource in resources
+            for node_id in resource["node_ids"]
+        ],
+        key=lambda edge: (edge["resource_id"], edge["node_id"]),
+    )
+
+    for edge in stage_resources:
+        stage = stages_by_id.get(edge["stage_id"])
+        if stage is not None:
+            stage["resource_ids"].append(edge["resource_id"])
+
+    for stage in stages:
+        stage["resource_ids"].sort()
+
+    metadata = {
+        "domain": pack.domain,
+        "stages": stages,
+        "resources": resources,
+        "relationships": {
+            "stage_sequences": stage_sequences,
+            "stage_nodes": stage_nodes,
+            "stage_resources": stage_resources,
+            "resource_nodes": resource_nodes,
+        },
+    }
+    if include_empty:
+        metadata["is_empty"] = len(stages) == 0 and len(resources) == 0
+    return metadata
 
 
 async def get_graph_entity_metadata(

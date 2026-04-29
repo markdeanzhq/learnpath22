@@ -15,16 +15,22 @@ const toggleClassMock = vi.hoisted(() => vi.fn())
 vi.mock('cytoscape', () => ({
   default: cytoscapeMock.mockImplementation((options: any) => {
     const elements = options.elements.map((element: any) => ({
-      id: () => element.data.id,
-      data: vi.fn(),
-    }))
-    cyElementsMock.mockReturnValue(elements)
-    cyGetElementByIdMock.mockImplementation((id: string) => ({
       length: 1,
-      data: vi.fn(),
-      id: () => id,
+      id: () => element.data.id,
+      data: vi.fn((key?: string) => key ? element.data[key] : element.data),
+      isNode: () => element.group === 'nodes',
+      isEdge: () => element.group === 'edges',
       toggleClass: toggleClassMock,
     }))
+    cyElementsMock.mockReturnValue(elements)
+    cyGetElementByIdMock.mockImplementation((id: string) => elements.find((element: any) => element.id() === id) || {
+      length: 0,
+      data: vi.fn(),
+      id: () => id,
+      isNode: () => false,
+      isEdge: () => false,
+      toggleClass: toggleClassMock,
+    })
     return {
       destroy: cyDestroyMock,
       on: vi.fn(),
@@ -32,6 +38,7 @@ vi.mock('cytoscape', () => ({
       elements: cyElementsMock,
       getElementById: cyGetElementByIdMock,
       layout: vi.fn(() => ({ run: vi.fn() })),
+      batch: vi.fn((callback: () => void) => callback()),
     }
   }),
 }))
@@ -119,6 +126,44 @@ describe('GraphCanvas lifecycle rendering', () => {
     expect(cyDestroyMock).not.toHaveBeenCalled()
     expect(cyGetElementByIdMock).toHaveBeenCalledWith('po:project-001:n:test')
     expect(toggleClassMock).toHaveBeenCalledWith('planning-disabled', true)
+  })
+
+  it('rebuilds graph when an edge keeps its id but changes topology', async () => {
+    const wrapper = shallowMount(GraphCanvas, {
+      props: {
+        elements: [
+          {
+            group: 'edges',
+            data: {
+              id: 'edge-1',
+              source: 'a',
+              target: 'b',
+              origin: 'baseline',
+            },
+          },
+        ],
+      },
+      attachTo: document.body,
+    })
+    await vi.dynamicImportSettled()
+
+    await wrapper.setProps({
+      elements: [
+        {
+          group: 'edges',
+          data: {
+            id: 'edge-1',
+            source: 'a',
+            target: 'c',
+            origin: 'baseline',
+          },
+        },
+      ],
+    })
+    await vi.dynamicImportSettled()
+
+    expect(cyDestroyMock).toHaveBeenCalled()
+    expect(cytoscapeMock).toHaveBeenCalledTimes(2)
   })
 
   it('does not emit review events for unknown lifecycle menu targets', async () => {

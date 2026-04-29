@@ -683,6 +683,7 @@ V1 仅支持以下受控意图：`compress_time`、`increase_practice`、`increa
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | /projects/{id}/graph | 获取项目关联的图谱数据 |
+| GET | /projects/{id}/graph/workspace | 聚合 Knowledge 首屏图谱、projection、preflight、可选搜索结果/会话/草稿读模型 |
 | GET | /projects/{id}/graph/subgraph?node_ids=a,b | 获取指定节点的子图 |
 | GET | /projects/{id}/graph/entities | 获取 Stage / Resource 等扩展实体的只读摘要 |
 | POST | /graph/seed | 同步 Domain Pack 到 Neo4j（全局操作） |
@@ -695,6 +696,8 @@ V1 仅支持以下受控意图：`compress_time`、`increase_practice`、`increa
 path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnapshot` 构造 induced subgraph，不再查询 baseline-only Neo4j 子图，也不在 path 缺失时回退 project/domain graph。响应会携带 `path_id`、`node_ids`、`missing_node_ids`、`is_empty`，无 latest plan 时返回空图并设置 `empty_reason=project_latest_plan_missing`。
 
 非法 scope 返回 `422 INVALID_GRAPH_SCOPE`。所有图元素都会返回 `origin` 与 `scope`；overlay 元素额外返回 `validation_status`、`review_status`、`planning_enabled`、`promotion_status`、source/provenance/validation metadata。
+
+`GET /projects/{id}/graph/workspace` 接收同样的 `scope/path_id`，并可附加 `include_persisted_search_results=true`、`session_id`、`goal_draft_resolution_session_id`。响应中的 `graph` 等同单独图谱接口，`projection_status`、`overlay_preflight`、`persisted_search_results`、`overlay_session`、`goal_draft_proposal` 用于 Knowledge 首屏减少多次 RTT；可选子读失败时返回对应 `*_error` 字段，不影响图谱主体加载。
 
 说明：
 - 无 latest plan 但已有 overlay draft 时，`scope=project` 仍返回项目图，不再把项目视为 `project_latest_plan_missing` 空态

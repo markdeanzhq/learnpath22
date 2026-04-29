@@ -7,7 +7,10 @@
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "perf:knowledge": "vitest run src/views/Knowledge/index.spec.ts",
+    "perf:bundle": "npm run build && node scripts/check-bundle-budget.mjs",
+    "perf": "npm run perf:knowledge && npm run perf:bundle"
   },
   "dependencies": {
     "axios": "^1.7.0",

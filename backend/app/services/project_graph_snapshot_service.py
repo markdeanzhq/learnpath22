@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.sqlite_models import (
+    GraphReviewStatus,
+    ProjectOverlayEdge,
+    ProjectOverlayExtractionSession,
+    ProjectOverlayNode,
+)
 from app.repositories.graph_review_repository import get_removed_edge_ids, get_removed_node_ids
 from app.repositories.project_overlay_repository import (
     list_planner_visible_edges,
@@ -39,6 +46,67 @@ class ProjectGraphSnapshot:
     removed_edge_ids: set[str]
     overlay_lineage: dict[str, Any]
     project_graph_hash: str
+
+
+_PROJECT_GRAPH_SNAPSHOT_CACHE_MAX_SIZE = 64
+_ProjectGraphSnapshotCacheKey = tuple[str, str, str, bool, str]
+_project_graph_snapshot_cache: OrderedDict[
+    _ProjectGraphSnapshotCacheKey,
+    ProjectGraphSnapshot,
+] = OrderedDict()
+
+
+def clear_project_graph_snapshot_cache(project_id: str | None = None) -> None:
+    if project_id is None:
+        _project_graph_snapshot_cache.clear()
+        return
+    for cache_key in list(_project_graph_snapshot_cache):
+        if cache_key[0] == project_id:
+            del _project_graph_snapshot_cache[cache_key]
+
+
+def _remember_project_graph_snapshot(
+    cache_key: _ProjectGraphSnapshotCacheKey,
+    snapshot: ProjectGraphSnapshot,
+) -> None:
+    _project_graph_snapshot_cache[cache_key] = snapshot
+    _project_graph_snapshot_cache.move_to_end(cache_key)
+    while len(_project_graph_snapshot_cache) > _PROJECT_GRAPH_SNAPSHOT_CACHE_MAX_SIZE:
+        _project_graph_snapshot_cache.popitem(last=False)
+
+
+def _revision_value(value: Any) -> str:
+    if value is None:
+        return "none"
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+async def _table_revision(db: AsyncSession, model: Any, project_id: str) -> str:
+    result = await db.execute(
+        select(func.count(), func.max(model.updated_at)).where(model.project_id == project_id)
+    )
+    row_count, max_updated_at = result.one()
+    return f"{row_count}:{_revision_value(max_updated_at)}"
+
+
+async def _snapshot_cache_revision(
+    db: AsyncSession,
+    project_id: str,
+    *,
+    include_overlay: bool,
+) -> str:
+    revision_parts = [
+        "review=" + await _table_revision(db, GraphReviewStatus, project_id),
+    ]
+    if include_overlay:
+        revision_parts.extend([
+            "session=" + await _table_revision(db, ProjectOverlayExtractionSession, project_id),
+            "node=" + await _table_revision(db, ProjectOverlayNode, project_id),
+            "edge=" + await _table_revision(db, ProjectOverlayEdge, project_id),
+        ])
+    return "|".join(revision_parts)
 
 
 def _load_json(value: str | None, fallback: Any) -> Any:
@@ -260,6 +328,23 @@ async def build_project_graph_snapshot(
             domain = project.domain if project is not None else None
         baseline_pack = get_domain_pack_service(domain)
 
+    cache_revision = await _snapshot_cache_revision(
+        db,
+        project_id,
+        include_overlay=include_overlay,
+    )
+    cache_key = (
+        project_id,
+        baseline_pack.domain,
+        baseline_pack.pack_hash,
+        include_overlay,
+        cache_revision,
+    )
+    cached_snapshot = _project_graph_snapshot_cache.get(cache_key)
+    if cached_snapshot is not None:
+        _project_graph_snapshot_cache.move_to_end(cache_key)
+        return cached_snapshot
+
     removed_node_ids = await get_removed_node_ids(db, project_id)
     removed_edge_ids = await get_removed_edge_ids(db, project_id)
     overlay_nodes = await list_planner_visible_nodes(db, project_id) if include_overlay else []
@@ -351,7 +436,7 @@ async def build_project_graph_snapshot(
         overlay_edges=active_overlay_edges,
     )
 
-    return ProjectGraphSnapshot(
+    snapshot = ProjectGraphSnapshot(
         domain=baseline_pack.domain,
         manifest=baseline_pack.manifest,
         nodes=sorted(nodes_by_id.values(), key=lambda item: item["id"]),
@@ -373,6 +458,8 @@ async def build_project_graph_snapshot(
         overlay_lineage=overlay_lineage,
         project_graph_hash=project_graph_hash,
     )
+    _remember_project_graph_snapshot(cache_key, snapshot)
+    return snapshot
 
 
 async def build_project_graph_hash(

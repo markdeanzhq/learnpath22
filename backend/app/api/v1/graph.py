@@ -25,6 +25,7 @@ from app.repositories.project_overlay_repository import (
     get_source,
     list_active_project_overlay_edges,
     list_active_project_overlay_nodes,
+    list_persisted_search_results,
     list_resource_bindings,
     list_session_edges,
     list_session_nodes,
@@ -40,11 +41,10 @@ from app.services.graph_service import (
     GRAPH_SCOPE_PATH,
     GRAPH_SCOPE_PROJECT,
     build_edge_review_id,
+    build_graph_entity_metadata_from_pack,
+    build_pack_subgraph_elements,
     build_path_graph_elements_from_snapshot,
     build_project_graph_elements,
-    get_graph_elements,
-    get_graph_entity_metadata,
-    get_path_subgraph,
 )
 from app.services.project_goal_extension_draft_service import (
     create_goal_extension_draft_from_resolution,
@@ -177,34 +177,6 @@ async def _force_sync_graph(neo4j: Neo4jDriver, domain: str) -> dict:
         return await get_graph_sync_service(neo4j).force_sync_domain_pack(domain)
     except (RuntimeError, ValueError) as exc:
         _raise_graph_operation_error("图谱同步失败", exc)
-
-
-async def _query_graph_elements(
-    neo4j: Neo4jDriver,
-    *,
-    scope: Literal["domain", "project"],
-    node_ids: list[str] | None = None,
-) -> dict:
-    try:
-        if node_ids is None:
-            return await get_graph_elements(neo4j, scope=scope)
-        return await get_graph_elements(neo4j, scope=scope, node_ids=node_ids)
-    except (RuntimeError, ValueError) as exc:
-        _raise_graph_operation_error("图谱查询失败", exc)
-
-
-async def _query_path_subgraph(neo4j: Neo4jDriver, node_ids: list[str]) -> dict:
-    try:
-        return await get_path_subgraph(neo4j, node_ids)
-    except (RuntimeError, ValueError) as exc:
-        _raise_graph_operation_error("图谱查询失败", exc)
-
-
-async def _query_graph_entity_metadata(neo4j: Neo4jDriver, domain: str) -> dict:
-    try:
-        return await get_graph_entity_metadata(neo4j, domain)
-    except (RuntimeError, ValueError) as exc:
-        _raise_graph_operation_error("扩展实体查询失败", exc)
 
 
 def _empty_path_graph_response(
@@ -423,6 +395,128 @@ def _overlay_session_response(
     }
 
 
+async def _overlay_session_payload(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    session_id: str,
+) -> dict[str, Any] | None:
+    session = await get_extraction_session(db, project_id, session_id)
+    if session is None:
+        return None
+
+    source_ids = _parse_json_field(session.source_ids_json, [])
+    sources = []
+    for source_id in source_ids:
+        source = await get_source(db, project_id, source_id)
+        if source is not None:
+            sources.append(source)
+
+    resources = await list_session_resources(db, project_id=project_id, session_id=session_id)
+    resource_ids = {resource.resource_id for resource in resources}
+    bindings = [
+        binding
+        for binding in await list_resource_bindings(db, project_id)
+        if binding.resource_id in resource_ids
+    ]
+    return _overlay_session_response(
+        session=session,
+        sources=sources,
+        nodes=await list_session_nodes(db, project_id=project_id, session_id=session_id),
+        edges=await list_session_edges(db, project_id=project_id, session_id=session_id),
+        resources=resources,
+        bindings=bindings,
+    )
+
+
+def _persisted_search_result_response(result, binding_counts: dict[str, int]) -> dict[str, Any]:
+    return {
+        "result_id": result.result_id,
+        "source_id": result.source_id,
+        "query": result.query,
+        "provider": result.provider,
+        "url": result.url,
+        "title": result.title,
+        "snippet": result.snippet,
+        "result_rank": result.result_rank,
+        "retrieved_at": result.retrieved_at,
+        "summary": result.summary,
+        "quality_status": result.quality_status,
+        "is_selected": result.is_selected,
+        "binding_count": binding_counts.get(result.result_id, 0),
+        "created_at": result.created_at,
+    }
+
+
+async def _persisted_search_results_payload(
+    db: AsyncSession,
+    project_id: str,
+) -> list[dict[str, Any]]:
+    results = await list_persisted_search_results(db, project_id)
+    bindings = await list_resource_bindings(db, project_id)
+    binding_counts: dict[str, int] = {}
+    for binding in bindings:
+        if binding.source_result_id:
+            binding_counts[binding.source_result_id] = binding_counts.get(binding.source_result_id, 0) + 1
+    return [_persisted_search_result_response(result, binding_counts) for result in results]
+
+
+async def _build_graph_response(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    domain: str,
+    scope: str,
+    path_id: str | None,
+) -> dict[str, Any]:
+    if scope == GRAPH_SCOPE_PROJECT:
+        pack = get_domain_pack_service(domain)
+        graph_data = build_project_graph_elements(
+            pack,
+            overlay_nodes=await list_active_project_overlay_nodes(db, project_id),
+            overlay_edges=await list_active_project_overlay_edges(db, project_id),
+            removed_node_ids=await get_removed_node_ids(db, project_id),
+            removed_edge_ids=await get_removed_edge_ids(db, project_id),
+        )
+    elif scope == GRAPH_SCOPE_PATH:
+        if path_id not in {None, "latest"}:
+            raise AppError(code=422, message="INVALID_GRAPH_PATH_ID")
+        latest_path = await get_latest_plan(db, project_id)
+        if latest_path is None:
+            graph_data = _empty_path_graph_response(
+                path_id=None,
+                empty_reason="project_latest_plan_missing",
+            )
+        else:
+            latest_node_ids = extract_plan_node_ids(latest_path.plan_json)
+            if not latest_node_ids:
+                graph_data = _empty_path_graph_response(
+                    path_id=latest_path.id,
+                    node_ids=latest_node_ids,
+                )
+            else:
+                snapshot = await build_project_graph_snapshot(
+                    db,
+                    project_id,
+                    domain=domain,
+                )
+                graph_data = build_path_graph_elements_from_snapshot(
+                    snapshot,
+                    node_ids=latest_node_ids,
+                    path_id=latest_path.id,
+                )
+    elif scope == GRAPH_SCOPE_DOMAIN:
+        pack = get_domain_pack_service(domain)
+        graph_data = build_project_graph_elements(
+            pack,
+            scope=GRAPH_SCOPE_DOMAIN,
+        )
+    else:
+        raise AppError(code=422, message="INVALID_GRAPH_SCOPE")
+
+    return await _apply_review_statuses(db, project_id, graph_data)
+
+
 async def _apply_review_statuses(
     db: AsyncSession,
     project_id: str,
@@ -489,12 +583,77 @@ async def get_overlay_projection_status_endpoint(
     return await get_project_overlay_projection_status(db, project_id)
 
 
+@router.get("/projects/{project_id}/graph/workspace")
+async def get_graph_workspace(
+    project_id: str,
+    scope: str = Query(default=GRAPH_SCOPE_DOMAIN),
+    path_id: str | None = Query(default=None),
+    include_persisted_search_results: bool = Query(default=False),
+    session_id: str | None = Query(default=None),
+    goal_draft_resolution_session_id: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """聚合 Knowledge 首屏图谱读模型，减少多接口 RTT。"""
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+
+    workspace: dict[str, Any] = {
+        "project_id": project_id,
+        "graph": await _build_graph_response(
+            db,
+            project_id=project_id,
+            domain=project.domain,
+            scope=scope,
+            path_id=path_id,
+        ),
+        "projection_status": await get_project_overlay_projection_status(db, project_id),
+        "overlay_preflight": None,
+        "overlay_preflight_error": None,
+        "persisted_search_results": None,
+        "overlay_session": None,
+        "overlay_session_error": None,
+        "goal_draft_proposal": None,
+        "goal_draft_error": None,
+    }
+
+    try:
+        workspace["overlay_preflight"] = await build_project_overlay_preflight(
+            db,
+            project_id=project_id,
+            domain=project.domain,
+        )
+    except Exception as exc:
+        workspace["overlay_preflight_error"] = str(exc)
+
+    if include_persisted_search_results:
+        workspace["persisted_search_results"] = await _persisted_search_results_payload(db, project_id)
+
+    if session_id:
+        session_payload = await _overlay_session_payload(db, project_id=project_id, session_id=session_id)
+        if session_payload is None:
+            workspace["overlay_session_error"] = "overlay extraction session 不存在"
+        else:
+            workspace["overlay_session"] = session_payload
+
+    if goal_draft_resolution_session_id:
+        try:
+            workspace["goal_draft_proposal"] = await preview_goal_extension_draft_proposal(
+                db,
+                project_id=project_id,
+                resolution_session_id=goal_draft_resolution_session_id,
+            )
+        except (AppError, ValueError) as exc:
+            workspace["goal_draft_error"] = str(exc)
+
+    return workspace
+
+
 @router.get("/projects/{project_id}/graph")
 async def get_graph(
     project_id: str,
     scope: str = Query(default=GRAPH_SCOPE_DOMAIN),
     path_id: str | None = Query(default=None),
-    neo4j: Neo4jDriver = Depends(get_neo4j),
     db: AsyncSession = Depends(get_db),
 ):
     """获取项目关联的知识图谱，包含审核状态。"""
@@ -502,55 +661,19 @@ async def get_graph(
     if not project:
         raise NotFoundError("项目不存在")
 
-    if scope == GRAPH_SCOPE_PROJECT:
-        pack = get_domain_pack_service(project.domain)
-        graph_data = build_project_graph_elements(
-            pack,
-            overlay_nodes=await list_active_project_overlay_nodes(db, project_id),
-            overlay_edges=await list_active_project_overlay_edges(db, project_id),
-            removed_node_ids=await get_removed_node_ids(db, project_id),
-            removed_edge_ids=await get_removed_edge_ids(db, project_id),
-        )
-    elif scope == GRAPH_SCOPE_PATH:
-        if path_id not in {None, "latest"}:
-            raise AppError(code=422, message="INVALID_GRAPH_PATH_ID")
-        latest_path = await get_latest_plan(db, project_id)
-        if latest_path is None:
-            graph_data = _empty_path_graph_response(
-                path_id=None,
-                empty_reason="project_latest_plan_missing",
-            )
-        else:
-            latest_node_ids = extract_plan_node_ids(latest_path.plan_json)
-            if not latest_node_ids:
-                graph_data = _empty_path_graph_response(
-                    path_id=latest_path.id,
-                    node_ids=latest_node_ids,
-                )
-            else:
-                snapshot = await build_project_graph_snapshot(
-                    db,
-                    project_id,
-                    domain=project.domain,
-                )
-                graph_data = build_path_graph_elements_from_snapshot(
-                    snapshot,
-                    node_ids=latest_node_ids,
-                    path_id=latest_path.id,
-                )
-    elif scope == GRAPH_SCOPE_DOMAIN:
-        graph_data = await _query_graph_elements(neo4j, scope=GRAPH_SCOPE_DOMAIN)
-    else:
-        raise AppError(code=422, message="INVALID_GRAPH_SCOPE")
-
-    return await _apply_review_statuses(db, project_id, graph_data)
+    return await _build_graph_response(
+        db,
+        project_id=project_id,
+        domain=project.domain,
+        scope=scope,
+        path_id=path_id,
+    )
 
 
 @router.get("/projects/{project_id}/graph/subgraph")
 async def get_subgraph(
     project_id: str,
     node_ids: str,
-    neo4j: Neo4jDriver = Depends(get_neo4j),
     db: AsyncSession = Depends(get_db),
 ):
     """获取指定节点的子图。node_ids 用逗号分隔。"""
@@ -559,14 +682,14 @@ async def get_subgraph(
         raise NotFoundError("项目不存在")
 
     ids = [nid.strip() for nid in node_ids.split(",") if nid.strip()]
-    graph_data = await _query_path_subgraph(neo4j, ids)
+    pack = get_domain_pack_service(project.domain)
+    graph_data = build_pack_subgraph_elements(pack, node_ids=ids)
     return await _apply_review_statuses(db, project_id, graph_data)
 
 
 @router.get("/projects/{project_id}/graph/entities")
 async def get_graph_entities(
     project_id: str,
-    neo4j: Neo4jDriver = Depends(get_neo4j),
     db: AsyncSession = Depends(get_db),
 ):
     """获取 Stage / Resource 扩展实体的只读视图。"""
@@ -574,7 +697,8 @@ async def get_graph_entities(
     if not project:
         raise NotFoundError("项目不存在")
 
-    return await _query_graph_entity_metadata(neo4j, project.domain)
+    pack = get_domain_pack_service(project.domain)
+    return build_graph_entity_metadata_from_pack(pack)
 
 
 @router.post("/projects/{project_id}/graph/overlay/sources")
@@ -773,33 +897,10 @@ async def get_overlay_extraction_session(
     if not project:
         raise NotFoundError("项目不存在")
 
-    session = await get_extraction_session(db, project_id, session_id)
-    if session is None:
+    session_payload = await _overlay_session_payload(db, project_id=project_id, session_id=session_id)
+    if session_payload is None:
         raise NotFoundError("overlay extraction session 不存在")
-
-    source_ids = _parse_json_field(session.source_ids_json, [])
-    sources = []
-    for source_id in source_ids:
-        source = await get_source(db, project_id, source_id)
-        if source is not None:
-            sources.append(source)
-
-    resources = await list_session_resources(db, project_id=project_id, session_id=session_id)
-    resource_ids = {resource.resource_id for resource in resources}
-    bindings = [
-        binding
-        for binding in await list_resource_bindings(db, project_id)
-        if binding.resource_id in resource_ids
-    ]
-
-    return _overlay_session_response(
-        session=session,
-        sources=sources,
-        nodes=await list_session_nodes(db, project_id=project_id, session_id=session_id),
-        edges=await list_session_edges(db, project_id=project_id, session_id=session_id),
-        resources=resources,
-        bindings=bindings,
-    )
+    return session_payload
 
 
 @router.post("/projects/{project_id}/graph/overlay/promotion/preview")

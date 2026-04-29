@@ -14,7 +14,11 @@ from app.models.sqlite_models import (
     ProjectOverlayNode,
 )
 from app.repositories.graph_review_repository import get_all_review_statuses
-from app.services.graph_service import build_path_graph_elements_from_snapshot
+from app.services.domain_pack_service import get_domain_pack_service
+from app.services.graph_service import (
+    build_graph_entity_metadata_from_pack,
+    build_path_graph_elements_from_snapshot,
+)
 from app.services.project_graph_snapshot_service import ProjectGraphSnapshot
 
 
@@ -53,57 +57,13 @@ def _snapshot_for_path_properties() -> ProjectGraphSnapshot:
     )
 
 
-ENTITY_METADATA = {
-    "domain": "machine_learning",
-    "stages": [
-        {
-            "id": "stage_foundation",
-            "name": "基础准备",
-            "order": 1,
-            "description": "foundation",
-            "category_keys": ["foundation"],
-            "node_ids": ["ml_a01", "ml_a02"],
-            "resource_ids": ["resource_foundation_map"],
-        }
-    ],
-    "resources": [
-        {
-            "id": "resource_foundation_map",
-            "title": "机器学习预备知识导图",
-            "resource_type": "concept_guide",
-            "description": "guide",
-            "stage_ids": ["stage_foundation"],
-            "node_ids": ["ml_a01", "ml_a02"],
-        }
-    ],
-    "relationships": {
-        "stage_sequences": [],
-        "stage_nodes": [
-            {"stage_id": "stage_foundation", "node_id": "ml_a01", "type": "CONTAINS"},
-            {"stage_id": "stage_foundation", "node_id": "ml_a02", "type": "CONTAINS"},
-        ],
-        "stage_resources": [
-            {
-                "stage_id": "stage_foundation",
-                "resource_id": "resource_foundation_map",
-                "type": "HAS_RESOURCE",
-            }
-        ],
-        "resource_nodes": [
-            {
-                "resource_id": "resource_foundation_map",
-                "node_id": "ml_a01",
-                "type": "COVERS",
-            },
-            {
-                "resource_id": "resource_foundation_map",
-                "node_id": "ml_a02",
-                "type": "COVERS",
-            },
-        ],
-    },
-    "is_empty": False,
-}
+def _element_by_id(elements, element_id):
+    return next(
+        element
+        for element in elements
+        if element["data"].get("id") == element_id
+    )
+
 
 
 def _sync_service(*, force_result=None, project_result=None, force_error=None, project_error=None):
@@ -279,34 +239,28 @@ async def test_get_graph_scope_domain_injects_review_statuses_without_sync(clien
         json={"status": "removed"},
     )
 
-    graph_query = AsyncMock(
-        return_value={
-            "scope": "domain",
-            "elements": [
-                {"group": "nodes", "data": {"id": "ml_c01", "label": "监督学习"}},
-                {
-                    "group": "edges",
-                    "data": {"source": "ml_a04", "target": "ml_c05", "type": "REQUIRES"},
-                },
-            ],
-            "is_empty": False,
-        }
-    )
+    graph_query = AsyncMock(side_effect=AssertionError("scope=domain must not query Neo4j graph"))
     monkeypatch.setattr(
         "app.api.v1.graph.get_graph_sync_service",
         lambda neo4j: (_ for _ in ()).throw(AssertionError("GET /graph should not sync graph")),
     )
-    monkeypatch.setattr("app.api.v1.graph.get_graph_elements", graph_query)
+    monkeypatch.setattr("app.services.graph_service.get_graph_elements", graph_query)
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph?scope=domain")
 
     assert resp.status_code == 200
     data = resp.json()
     assert data["scope"] == "domain"
-    assert data["elements"][0]["data"]["review_status"] == "confirmed"
-    assert data["elements"][1]["data"]["id"] == "ml_a04->ml_c05::REQUIRES"
-    assert data["elements"][1]["data"]["review_status"] == "removed"
-    graph_query.assert_awaited_once_with(None, scope="domain")
+    assert data["is_empty"] is False
+    node = _element_by_id(data["elements"], "ml_c01")
+    edge = _element_by_id(data["elements"], "ml_a04->ml_c05::REQUIRES")
+    assert node["data"]["origin"] == "baseline"
+    assert node["data"]["scope"] == "domain"
+    assert node["data"]["review_status"] == "confirmed"
+    assert edge["data"]["origin"] == "baseline"
+    assert edge["data"]["scope"] == "domain"
+    assert edge["data"]["review_status"] == "removed"
+    graph_query.assert_not_awaited()
 
 
 async def test_get_graph_scope_project_returns_full_project_graph_without_latest_plan(client, project, monkeypatch):
@@ -316,7 +270,7 @@ async def test_get_graph_scope_project_returns_full_project_graph_without_latest
         "app.api.v1.graph.get_graph_sync_service",
         lambda neo4j: (_ for _ in ()).throw(AssertionError("GET /graph should not sync graph")),
     )
-    monkeypatch.setattr("app.api.v1.graph.get_graph_elements", graph_query)
+    monkeypatch.setattr("app.services.graph_service.get_graph_elements", graph_query)
     monkeypatch.setattr("app.api.v1.graph.get_latest_plan", latest_plan_query)
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph?scope=project")
@@ -458,10 +412,6 @@ async def test_get_graph_scope_path_uses_latest_plan_snapshot_authority(client, 
     )
     monkeypatch.setattr("app.api.v1.graph.build_project_graph_snapshot", snapshot_query)
     monkeypatch.setattr("app.api.v1.graph.build_path_graph_elements_from_snapshot", path_graph_builder)
-    monkeypatch.setattr(
-        "app.api.v1.graph.get_path_subgraph",
-        AsyncMock(side_effect=AssertionError("scope=path must not query Neo4j subgraph")),
-    )
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph?scope=path&path_id=latest")
 
@@ -480,11 +430,7 @@ async def test_get_graph_scope_path_uses_latest_plan_snapshot_authority(client, 
     }
 
 
-async def test_get_graph_scope_path_returns_latest_plan_induced_snapshot_graph(client, project, db_session, monkeypatch):
-    monkeypatch.setattr(
-        "app.api.v1.graph.get_path_subgraph",
-        AsyncMock(side_effect=AssertionError("scope=path must not query Neo4j subgraph")),
-    )
+async def test_get_graph_scope_path_returns_latest_plan_induced_snapshot_graph(client, project, db_session):
     session = ProjectOverlayExtractionSession(project_id=project["id"], session_status="validated")
     db_session.add(session)
     await db_session.flush()
@@ -606,10 +552,6 @@ async def test_get_graph_scope_path_returns_empty_when_latest_plan_has_no_nodes(
     await db_session.commit()
 
     monkeypatch.setattr("app.api.v1.graph.build_project_graph_snapshot", snapshot_query)
-    monkeypatch.setattr(
-        "app.api.v1.graph.get_path_subgraph",
-        AsyncMock(side_effect=AssertionError("scope=path must not query Neo4j subgraph")),
-    )
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph?scope=path&path_id=latest")
 
@@ -631,10 +573,6 @@ async def test_get_graph_scope_path_returns_empty_when_latest_plan_missing(clien
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr("app.api.v1.graph.build_project_graph_snapshot", snapshot_query)
-    monkeypatch.setattr(
-        "app.api.v1.graph.get_path_subgraph",
-        AsyncMock(side_effect=AssertionError("scope=path must not query Neo4j subgraph")),
-    )
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph?scope=path")
 
@@ -670,34 +608,28 @@ async def test_get_graph_requires_existing_project(client):
     assert resp.json() == {"error": "项目不存在", "code": 404}
 
 
-async def test_get_graph_maps_neo4j_runtime_error(client, project, monkeypatch):
-    monkeypatch.setattr(
-        "app.api.v1.graph.get_graph_elements",
-        AsyncMock(side_effect=Neo4jDriverError("Neo4j 查询执行失败: boom")),
-    )
+async def test_get_graph_scope_domain_does_not_use_neo4j_query(client, project, monkeypatch):
+    graph_query = AsyncMock(side_effect=Neo4jDriverError("Neo4j 查询执行失败: boom"))
+    monkeypatch.setattr("app.services.graph_service.get_graph_elements", graph_query)
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph?scope=domain")
 
-    assert resp.status_code == 500
-    assert resp.json() == {
-        "error": "图谱查询失败: Neo4j 查询执行失败: boom",
-        "code": 500,
-    }
+    assert resp.status_code == 200
+    assert resp.json()["scope"] == "domain"
+    graph_query.assert_not_awaited()
 
 
 async def test_get_graph_entities_returns_read_only_stage_resource_view(client, project, monkeypatch):
-    entity_query = AsyncMock(return_value=ENTITY_METADATA)
-    monkeypatch.setattr("app.api.v1.graph.get_graph_entity_metadata", entity_query)
     monkeypatch.setattr(
         "app.api.v1.graph.get_graph_sync_service",
         lambda neo4j: (_ for _ in ()).throw(AssertionError("GET /graph/entities should not sync graph")),
     )
+    expected = build_graph_entity_metadata_from_pack(get_domain_pack_service(project["domain"]))
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph/entities")
 
     assert resp.status_code == 200
-    assert resp.json() == ENTITY_METADATA
-    entity_query.assert_awaited_once_with(None, "machine_learning")
+    assert resp.json() == expected
 
 
 async def test_get_graph_entities_requires_existing_project(client):
@@ -706,19 +638,16 @@ async def test_get_graph_entities_requires_existing_project(client):
     assert resp.json() == {"error": "项目不存在", "code": 404}
 
 
-async def test_get_graph_entities_maps_neo4j_runtime_error(client, project, monkeypatch):
+async def test_get_graph_entities_is_independent_from_neo4j_query_failures(client, project, monkeypatch):
     monkeypatch.setattr(
-        "app.api.v1.graph.get_graph_entity_metadata",
+        "app.services.graph_service.get_graph_entity_metadata",
         AsyncMock(side_effect=Neo4jDriverError("Neo4j 查询执行失败: entities boom")),
     )
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph/entities")
 
-    assert resp.status_code == 500
-    assert resp.json() == {
-        "error": "扩展实体查询失败: Neo4j 查询执行失败: entities boom",
-        "code": 500,
-    }
+    assert resp.status_code == 200
+    assert resp.json()["domain"] == project["domain"]
 
 
 async def test_get_subgraph_injects_review_statuses_without_sync(client, project, monkeypatch):
@@ -730,36 +659,57 @@ async def test_get_subgraph_injects_review_statuses_without_sync(client, project
         f"/api/v1/projects/{project['id']}/graph/edges/ml_a04->ml_c05::REQUIRES",
         json={"status": "confirmed"},
     )
-
-    subgraph_query = AsyncMock(
-        return_value={
-            "scope": "project",
-            "elements": [
-                {"group": "nodes", "data": {"id": "ml_c01"}},
-                {
-                    "group": "edges",
-                    "data": {"source": "ml_a04", "target": "ml_c05", "type": "REQUIRES"},
-                },
-            ],
-            "is_empty": False,
-        }
-    )
     monkeypatch.setattr(
         "app.api.v1.graph.get_graph_sync_service",
         lambda neo4j: (_ for _ in ()).throw(AssertionError("GET /graph/subgraph should not sync graph")),
     )
-    monkeypatch.setattr("app.api.v1.graph.get_path_subgraph", subgraph_query)
 
     resp = await client.get(
-        f"/api/v1/projects/{project['id']}/graph/subgraph?node_ids=ml_c01,ml_c05"
+        f"/api/v1/projects/{project['id']}/graph/subgraph?node_ids=ml_c01,ml_a04,ml_c05"
     )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["elements"][0]["data"]["review_status"] == "removed"
-    assert data["elements"][1]["data"]["id"] == "ml_a04->ml_c05::REQUIRES"
-    assert data["elements"][1]["data"]["review_status"] == "confirmed"
-    subgraph_query.assert_awaited_once_with(None, ["ml_c01", "ml_c05"])
+    node = _element_by_id(data["elements"], "ml_c01")
+    edge = _element_by_id(data["elements"], "ml_a04->ml_c05::REQUIRES")
+    assert data["scope"] == "path"
+    assert data["node_ids"] == ["ml_a04", "ml_c01", "ml_c05"]
+    assert node["data"]["review_status"] == "removed"
+    assert edge["data"]["review_status"] == "confirmed"
+
+
+async def test_get_graph_workspace_aggregates_knowledge_screen_reads(client, project, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.v1.graph.get_graph_sync_service",
+        lambda neo4j: (_ for _ in ()).throw(AssertionError("GET /graph/workspace should not sync graph")),
+    )
+    persisted_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/search-results",
+        json={
+            "query": "逻辑回归",
+            "provider": "tavily",
+            "url": "https://example.com/logistic",
+            "title": "逻辑回归资料",
+            "snippet": "classification",
+        },
+    )
+    assert persisted_resp.status_code == 200
+
+    resp = await client.get(
+        f"/api/v1/projects/{project['id']}/graph/workspace"
+        "?scope=path&path_id=latest&include_persisted_search_results=true&session_id=missing-session"
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project_id"] == project["id"]
+    assert data["graph"]["scope"] == "path"
+    assert data["graph"]["empty_reason"] == "project_latest_plan_missing"
+    assert data["projection_status"]["project_id"] == project["id"]
+    assert data["overlay_preflight"]["project_id"] == project["id"]
+    assert data["persisted_search_results"][0]["title"] == "逻辑回归资料"
+    assert data["overlay_session"] is None
+    assert data["overlay_session_error"] == "overlay extraction session 不存在"
 
 
 async def test_overlay_review_and_planning_endpoints_update_independent_fields(client, project, db_session):
@@ -1006,47 +956,22 @@ async def test_get_graph_scope_domain_applies_review_status_per_typed_edge_id(cl
         json={"status": "removed"},
     )
 
-    graph_query = AsyncMock(
-        return_value={
-            "scope": "domain",
-            "elements": [
-                {
-                    "group": "edges",
-                    "data": {
-                        "id": "ml_c05->ml_c06::RELATED_TO",
-                        "source": "ml_b04",
-                        "target": "ml_b05",
-                        "type": "RELATED_TO",
-                    },
-                },
-                {
-                    "group": "edges",
-                    "data": {
-                        "id": "ml_c05->ml_c06::REQUIRES",
-                        "source": "ml_b04",
-                        "target": "ml_b05",
-                        "type": "REQUIRES",
-                    },
-                },
-            ],
-            "is_empty": False,
-        }
-    )
+    graph_query = AsyncMock(side_effect=AssertionError("scope=domain must not query Neo4j graph"))
     monkeypatch.setattr(
         "app.api.v1.graph.get_graph_sync_service",
         lambda neo4j: (_ for _ in ()).throw(AssertionError("GET /graph should not sync graph")),
     )
-    monkeypatch.setattr("app.api.v1.graph.get_graph_elements", graph_query)
+    monkeypatch.setattr("app.services.graph_service.get_graph_elements", graph_query)
 
     resp = await client.get(f"/api/v1/projects/{project['id']}/graph?scope=domain")
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["elements"][0]["data"]["id"] == "ml_c05->ml_c06::RELATED_TO"
-    assert data["elements"][0]["data"]["review_status"] == "confirmed"
-    assert data["elements"][1]["data"]["id"] == "ml_c05->ml_c06::REQUIRES"
-    assert data["elements"][1]["data"]["review_status"] == "removed"
-    graph_query.assert_awaited_once_with(None, scope="domain")
+    related_edge = _element_by_id(data["elements"], "ml_c05->ml_c06::RELATED_TO")
+    requires_edge = _element_by_id(data["elements"], "ml_c05->ml_c06::REQUIRES")
+    assert related_edge["data"]["review_status"] == "confirmed"
+    assert requires_edge["data"]["review_status"] == "removed"
+    graph_query.assert_not_awaited()
 
 
 async def test_review_edge_validates_against_project_domain(client, project, monkeypatch):

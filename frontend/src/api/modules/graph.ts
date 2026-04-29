@@ -1,4 +1,5 @@
 import request from '../request'
+import type { PersistedSearchResult } from './search'
 
 export type GraphScope = 'domain' | 'project' | 'path'
 export const DEFAULT_GRAPH_SCOPE: GraphScope = 'path'
@@ -70,6 +71,14 @@ export interface GraphData {
   empty_reason?: GraphEmptyReason
   message?: string
   node_ids?: string[]
+  missing_node_ids?: string[]
+  path_id?: string | null
+}
+
+export interface GraphWorkspaceParams extends GetGraphParams {
+  include_persisted_search_results?: boolean
+  session_id?: string | null
+  goal_draft_resolution_session_id?: string | null
 }
 
 export type OverlayProjectionStatus = 'missing' | 'empty' | 'ok' | 'drifted' | 'error'
@@ -356,6 +365,19 @@ export interface GoalExtensionDraftProposalResponse {
   draft_proposal: GoalExtensionDraftProposal
 }
 
+export interface GraphWorkspaceData {
+  project_id: string
+  graph: GraphData
+  projection_status: OverlayProjectionStatusResponse
+  overlay_preflight?: OverlayPreflightResponse | null
+  overlay_preflight_error?: string | null
+  persisted_search_results?: PersistedSearchResult[] | null
+  overlay_session?: OverlayExtractionSessionResponse | null
+  overlay_session_error?: string | null
+  goal_draft_proposal?: GoalExtensionDraftProposalResponse | null
+  goal_draft_error?: string | null
+}
+
 export interface GoalExtensionDraftResponse extends OverlayExtractionSessionResponse {
   goal_trace?: Record<string, unknown>
   missing_concepts?: string[]
@@ -501,6 +523,15 @@ export const graphApi = {
   getGraph: (projectId: string, params?: GetGraphParams): Promise<GraphData> =>
     request.get(`/projects/${projectId}/graph`, {
       params: buildGraphQuery(params),
+    }),
+  getGraphWorkspace: (projectId: string, params?: GraphWorkspaceParams): Promise<GraphWorkspaceData> =>
+    request.get(`/projects/${projectId}/graph/workspace`, {
+      params: {
+        ...buildGraphQuery(params),
+        include_persisted_search_results: params?.include_persisted_search_results || undefined,
+        session_id: params?.session_id || undefined,
+        goal_draft_resolution_session_id: params?.goal_draft_resolution_session_id || undefined,
+      },
     }),
   seedGraph: (): Promise<GraphSyncResponse> =>
     request.post('/graph/seed'),

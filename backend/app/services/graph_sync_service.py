@@ -11,7 +11,10 @@ from app.services.domain_pack_service import (
     get_domain_pack_registry,
     get_domain_pack_service,
 )
-from app.services.graph_service import get_graph_entity_metadata
+from app.services.graph_service import (
+    build_graph_entity_metadata_from_pack,
+    get_graph_entity_metadata,
+)
 
 
 class GraphSyncService:
@@ -46,103 +49,7 @@ class GraphSyncService:
         }
 
     def _build_graph_entity_metadata(self, pack: DomainPackService) -> dict[str, Any]:
-        ordered_stages = sorted(
-            pack.stages,
-            key=lambda stage: (stage["order"], stage["id"]),
-        )
-        stages = [
-            {
-                "id": stage["id"],
-                "name": stage["name"],
-                "order": stage["order"],
-                "description": stage.get("description", ""),
-                "category_keys": list(stage.get("category_keys", [])),
-                "node_ids": sorted(set(stage.get("node_ids", []))),
-                "resource_ids": [],
-            }
-            for stage in ordered_stages
-        ]
-        stages_by_id = {stage["id"]: stage for stage in stages}
-
-        resources = [
-            {
-                "id": resource["id"],
-                "title": resource["title"],
-                "resource_type": resource["resource_type"],
-                "description": resource.get("description", ""),
-                "stage_ids": sorted(set(resource.get("stage_ids", []))),
-                "node_ids": sorted(set(resource.get("node_ids", []))),
-            }
-            for resource in sorted(pack.resources, key=lambda resource: resource["id"])
-        ]
-
-        stage_sequences = sorted(
-            [
-                {
-                    "source": previous["id"],
-                    "target": current["id"],
-                    "type": "PRECEDES",
-                }
-                for previous, current in zip(ordered_stages, ordered_stages[1:])
-            ],
-            key=lambda edge: (edge["source"], edge["target"]),
-        )
-        stage_nodes = sorted(
-            [
-                {
-                    "stage_id": stage["id"],
-                    "node_id": node_id,
-                    "type": "CONTAINS",
-                }
-                for stage in ordered_stages
-                for node_id in sorted(set(stage.get("node_ids", [])))
-            ],
-            key=lambda edge: (edge["stage_id"], edge["node_id"]),
-        )
-        stage_resources = sorted(
-            [
-                {
-                    "stage_id": stage_id,
-                    "resource_id": resource["id"],
-                    "type": "HAS_RESOURCE",
-                }
-                for resource in resources
-                for stage_id in resource["stage_ids"]
-            ],
-            key=lambda edge: (edge["stage_id"], edge["resource_id"]),
-        )
-        resource_nodes = sorted(
-            [
-                {
-                    "resource_id": resource["id"],
-                    "node_id": node_id,
-                    "type": "COVERS",
-                }
-                for resource in resources
-                for node_id in resource["node_ids"]
-            ],
-            key=lambda edge: (edge["resource_id"], edge["node_id"]),
-        )
-
-        for edge in stage_resources:
-            stage = stages_by_id.get(edge["stage_id"])
-            if stage is not None:
-                stage["resource_ids"].append(edge["resource_id"])
-
-        for stage in stages:
-            stage["resource_ids"].sort()
-
-        return {
-            "domain": pack.domain,
-            "stages": stages,
-            "resources": resources,
-            "relationships": {
-                "stage_sequences": stage_sequences,
-                "stage_nodes": stage_nodes,
-                "stage_resources": stage_resources,
-                "resource_nodes": resource_nodes,
-            },
-        }
+        return build_graph_entity_metadata_from_pack(pack, include_empty=False)
 
     def _build_main_graph_metadata(self, pack: DomainPackService) -> dict[str, Any]:
         node_records = {

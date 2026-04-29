@@ -6,9 +6,163 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.graph_service import (
+    GRAPH_SCOPE_DOMAIN,
+    build_graph_entity_metadata_from_pack,
+    build_pack_subgraph_elements,
     build_path_graph_elements_from_snapshot,
+    build_project_graph_elements,
+    clear_pack_graph_elements_cache,
     get_graph_entity_metadata,
 )
+
+
+def test_build_graph_entity_metadata_from_pack_matches_synced_shape():
+    pack = SimpleNamespace(
+        domain="machine_learning",
+        stages=[
+            {
+                "id": "stage_core",
+                "name": "核心掌握",
+                "order": 2,
+                "description": "core",
+                "category_keys": ["algorithm"],
+                "node_ids": [],
+            },
+            {
+                "id": "stage_foundation",
+                "name": "基础准备",
+                "order": 1,
+                "description": "foundation",
+                "category_keys": ["foundation"],
+                "node_ids": ["ml_a02", "ml_a01", "ml_a01"],
+            },
+        ],
+        resources=[
+            {
+                "id": "resource_foundation_map",
+                "title": "机器学习预备知识导图",
+                "resource_type": "concept_guide",
+                "description": "guide",
+                "stage_ids": ["stage_foundation", "stage_foundation"],
+                "node_ids": ["ml_a02", "ml_a01"],
+            }
+        ],
+    )
+
+    result = build_graph_entity_metadata_from_pack(pack)
+
+    assert result == {
+        "domain": "machine_learning",
+        "stages": [
+            {
+                "id": "stage_foundation",
+                "name": "基础准备",
+                "order": 1,
+                "description": "foundation",
+                "category_keys": ["foundation"],
+                "node_ids": ["ml_a01", "ml_a02"],
+                "resource_ids": ["resource_foundation_map"],
+            },
+            {
+                "id": "stage_core",
+                "name": "核心掌握",
+                "order": 2,
+                "description": "core",
+                "category_keys": ["algorithm"],
+                "node_ids": [],
+                "resource_ids": [],
+            },
+        ],
+        "resources": [
+            {
+                "id": "resource_foundation_map",
+                "title": "机器学习预备知识导图",
+                "resource_type": "concept_guide",
+                "description": "guide",
+                "stage_ids": ["stage_foundation"],
+                "node_ids": ["ml_a01", "ml_a02"],
+            }
+        ],
+        "relationships": {
+            "stage_sequences": [
+                {"source": "stage_foundation", "target": "stage_core", "type": "PRECEDES"}
+            ],
+            "stage_nodes": [
+                {"stage_id": "stage_foundation", "node_id": "ml_a01", "type": "CONTAINS"},
+                {"stage_id": "stage_foundation", "node_id": "ml_a02", "type": "CONTAINS"},
+            ],
+            "stage_resources": [
+                {
+                    "stage_id": "stage_foundation",
+                    "resource_id": "resource_foundation_map",
+                    "type": "HAS_RESOURCE",
+                }
+            ],
+            "resource_nodes": [
+                {
+                    "resource_id": "resource_foundation_map",
+                    "node_id": "ml_a01",
+                    "type": "COVERS",
+                },
+                {
+                    "resource_id": "resource_foundation_map",
+                    "node_id": "ml_a02",
+                    "type": "COVERS",
+                },
+            ],
+        },
+        "is_empty": False,
+    }
+
+
+def test_build_pack_subgraph_elements_returns_local_induced_graph():
+    pack = SimpleNamespace(
+        nodes_by_id={
+            "ml_a01": {"id": "ml_a01", "name": "线性代数基础", "group": "concept", "category": "foundation"},
+            "ml_a02": {"id": "ml_a02", "name": "Python 基础", "group": "concept", "category": "foundation"},
+            "ml_a03": {"id": "ml_a03", "name": "概率基础", "group": "concept", "category": "foundation"},
+        },
+        requires_edges=[
+            {"source": "ml_a01", "target": "ml_a02"},
+            {"source": "ml_a03", "target": "ml_a02"},
+        ],
+        related_edges=[{"source": "ml_a02", "target": "ml_a01"}],
+    )
+
+    result = build_pack_subgraph_elements(
+        pack,
+        node_ids=["missing", "ml_a02", "ml_a01", "ml_a02"],
+    )
+
+    assert result["scope"] == "path"
+    assert result["node_ids"] == ["missing", "ml_a01", "ml_a02"]
+    assert result["missing_node_ids"] == ["missing"]
+    element_ids = [element["data"]["id"] for element in result["elements"]]
+    assert element_ids == ["ml_a01", "ml_a02", "ml_a01->ml_a02::REQUIRES", "ml_a02->ml_a01::RELATED_TO"]
+
+
+def test_build_project_graph_elements_caches_pack_only_graph_defensively():
+    clear_pack_graph_elements_cache()
+    pack = SimpleNamespace(
+        domain="machine_learning",
+        pack_hash="pack-hash-cache-test",
+        nodes_by_id={
+            "ml_a01": {
+                "id": "ml_a01",
+                "name": "线性代数基础",
+                "group": "concept",
+                "category": "foundation",
+            }
+        },
+        requires_edges=[],
+        related_edges=[],
+    )
+
+    first = build_project_graph_elements(pack, scope=GRAPH_SCOPE_DOMAIN)
+    first["elements"][0]["data"]["label"] = "mutated label"
+    second = build_project_graph_elements(pack, scope=GRAPH_SCOPE_DOMAIN)
+
+    assert second["elements"][0]["data"]["label"] == "线性代数基础"
 
 
 @pytest.mark.asyncio

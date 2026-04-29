@@ -123,6 +123,26 @@ _EXPLANATION_CACHE_INDEXES = [
     ("idx_plan_explanation_cache_path_id", "plan_explanation_cache", "path_id"),
 ]
 
+_QUERY_INDEXES = [
+    ("idx_graph_review_project_type_status", "graph_review_status", "project_id, element_type, status"),
+    ("idx_graph_review_project_type_element", "graph_review_status", "project_id, element_type, element_id"),
+    ("idx_learning_paths_project_latest", "learning_paths", "project_id, version DESC, created_at DESC, id DESC"),
+    ("idx_learner_profiles_project_created", "learner_profiles", "project_id, created_at DESC"),
+    ("idx_overlay_sessions_project_status", "project_overlay_extraction_sessions", "project_id, session_status"),
+    ("idx_overlay_nodes_project_promotion_created", "project_overlay_nodes", "project_id, promotion_status, created_at"),
+    ("idx_overlay_edges_project_promotion_created", "project_overlay_edges", "project_id, promotion_status, created_at"),
+    (
+        "idx_overlay_nodes_planner_visible",
+        "project_overlay_nodes",
+        "project_id, validation_status, review_status, planning_enabled, promotion_status",
+    ),
+    (
+        "idx_overlay_edges_planner_visible",
+        "project_overlay_edges",
+        "project_id, validation_status, review_status, planning_enabled, promotion_status",
+    ),
+]
+
 
 async def upgrade_learning_projects_schema(conn: AsyncConnection) -> None:
     for col_name, col_type in _RESOLUTION_COLUMNS:
@@ -204,6 +224,16 @@ async def create_explanation_cache_indexes(conn: AsyncConnection) -> None:
             text(
                 f"CREATE INDEX IF NOT EXISTS {index_name} "
                 f"ON {table_name} ({column_name})"
+            )
+        )
+
+
+async def create_query_indexes(conn: AsyncConnection) -> None:
+    for index_name, table_name, column_names in _QUERY_INDEXES:
+        await conn.execute(
+            text(
+                f"CREATE INDEX IF NOT EXISTS {index_name} "
+                f"ON {table_name} ({column_names})"
             )
         )
 
@@ -321,6 +351,7 @@ async def init_sqlite():
         await upgrade_project_overlay_schema(conn)
         await create_project_overlay_indexes(conn)
         await create_explanation_cache_indexes(conn)
+        await create_query_indexes(conn)
 
     async with async_session() as db:
         await cleanup_expired_sessions(db)
