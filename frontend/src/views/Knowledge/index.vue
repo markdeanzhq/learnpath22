@@ -68,13 +68,29 @@
             <strong>{{ graphScopeLabel }}</strong>
             <p>{{ graphStatusHint }}</p>
           </div>
-          <div class="graph-status-tags">
-            <el-tag size="small" type="info" effect="plain">节点 {{ graphNodeCount }}</el-tag>
-            <el-tag size="small" type="info" effect="plain">关系 {{ graphEdgeCount }}</el-tag>
-            <el-tag size="small" type="success" effect="plain">本地读模型</el-tag>
-            <el-tag v-if="overlayPreflight" size="small" :type="overlayPreflightTagType" effect="plain">
-              增强候选 {{ overlayPreflight.counts.visible_overlay_nodes }} / {{ overlayPreflight.counts.visible_overlay_edges }}
-            </el-tag>
+          <div class="graph-status-meta">
+            <div class="graph-status-tags">
+              <el-tag size="small" type="info" effect="plain">节点 {{ graphNodeCount }}</el-tag>
+              <el-tag size="small" type="info" effect="plain">关系 {{ graphEdgeCount }}</el-tag>
+              <el-tag size="small" type="success" effect="plain">本地读模型</el-tag>
+              <el-tag v-if="overlayPreflight" size="small" :type="overlayPreflightTagType" effect="plain">
+                增强候选 {{ overlayPreflight.counts.visible_overlay_nodes }} / {{ overlayPreflight.counts.visible_overlay_edges }}
+              </el-tag>
+            </div>
+            <div v-if="showGraphCacheDiagnostics" class="graph-cache-diagnostics" data-testid="graph-cache-diagnostics">
+              <span class="graph-cache-title">缓存诊断</span>
+              <el-tag
+                v-for="item in graphCacheDiagnosticItems"
+                :key="item.key"
+                size="small"
+                type="info"
+                effect="plain"
+              >
+                {{ item.label }} {{ item.hitRateLabel }} · {{ item.sizeLabel }}
+              </el-tag>
+              <el-tag v-if="graphCacheStatsLoading" size="small" type="warning" effect="plain">刷新中</el-tag>
+              <el-tag v-if="graphCacheStatsError" size="small" type="danger" effect="plain">{{ graphCacheStatsError }}</el-tag>
+            </div>
           </div>
         </section>
         <el-alert
@@ -578,6 +594,7 @@ import { useRoute, useRouter } from 'vue-router'
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
+import { useGraphCacheDiagnostics } from './composables/useGraphCacheDiagnostics'
 import {
   buildGraphQuery,
   graphApi,
@@ -717,6 +734,13 @@ const emptyReason = ref<string | undefined>()
 const selectedNodeId = ref<string | null>(null)
 const graphRef = ref<GraphCanvasHandle>()
 const pageRef = ref<HTMLDivElement>()
+const {
+  graphCacheStatsLoading,
+  graphCacheStatsError,
+  graphCacheDiagnosticItems,
+  showGraphCacheDiagnostics,
+  refreshGraphCacheStats,
+} = useGraphCacheDiagnostics(() => graphApi.getGraphCacheStats())
 const reviewMode = ref(false)
 const entityDrawerVisible = ref(false)
 const entityLoading = ref(false)
@@ -1203,6 +1227,7 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
         workspace.goal_draft_error_detail?.code,
       ].filter(Boolean),
     })
+    void refreshGraphCacheStats()
   } catch (e: any) {
     const durationMs = Math.round(performanceNow() - loadStartedAt)
     if (isCanceledRequest(e)) {
@@ -2083,11 +2108,28 @@ function toggleFullscreen() {
   line-height: 1.6;
 }
 
-.graph-status-tags {
+.graph-status-meta,
+.graph-status-tags,
+.graph-cache-diagnostics {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.graph-status-meta {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.graph-cache-diagnostics {
+  align-items: center;
+  color: #909399;
+  font-size: 12px;
+}
+
+.graph-cache-title {
+  font-weight: 600;
 }
 
 .graph-alert {

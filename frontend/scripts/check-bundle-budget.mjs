@@ -7,9 +7,9 @@ const frontendRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const assetsRoot = join(frontendRoot, 'dist', 'assets')
 
 const budgets = {
-  totalGzipKb: Number(process.env.BUNDLE_TOTAL_GZIP_KB ?? 900),
-  assetGzipKb: Number(process.env.BUNDLE_ASSET_GZIP_KB ?? 350),
-  graphVendorGzipKb: Number(process.env.BUNDLE_GRAPH_VENDOR_GZIP_KB ?? 250),
+  totalGzipKb: Number(process.env.BUNDLE_TOTAL_GZIP_KB ?? 650),
+  assetGzipKb: Number(process.env.BUNDLE_ASSET_GZIP_KB ?? 250),
+  graphVendorGzipKb: Number(process.env.BUNDLE_GRAPH_VENDOR_GZIP_KB ?? 180),
 }
 
 function walkFiles(dir) {

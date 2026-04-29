@@ -6,6 +6,7 @@ import KnowledgeIndex from './index.vue'
 const {
   graphGetGraphMock,
   graphGetGraphWorkspaceMock,
+  graphGetGraphCacheStatsMock,
   graphCreateOverlaySourceMock,
   graphCreateOverlayExtractionSessionMock,
   graphPreviewOverlayExtractionPayloadMock,
@@ -30,6 +31,7 @@ const {
 } = vi.hoisted(() => ({
   graphGetGraphMock: vi.fn(),
   graphGetGraphWorkspaceMock: vi.fn(),
+  graphGetGraphCacheStatsMock: vi.fn(),
   graphCreateOverlaySourceMock: vi.fn(),
   graphCreateOverlayExtractionSessionMock: vi.fn(),
   graphPreviewOverlayExtractionPayloadMock: vi.fn(),
@@ -118,6 +120,7 @@ vi.mock('@/api/modules/graph', () => {
     graphApi: {
     getGraph: graphGetGraphMock,
     getGraphWorkspace: graphGetGraphWorkspaceMock,
+    getGraphCacheStats: graphGetGraphCacheStatsMock,
     syncGraph: vi.fn(),
     getGraphEntities: vi.fn(),
     reviewNode: vi.fn(),
@@ -235,6 +238,10 @@ describe('Knowledge overlay entry', () => {
       scope: 'path',
       elements: [],
       is_empty: true,
+    })
+    graphGetGraphCacheStatsMock.mockResolvedValue({
+      pack_graph_elements: { hits: 3, misses: 1, stores: 2, clears: 0, size: 2, max_size: 16, hit_rate: 0.75 },
+      project_graph_snapshot: { hits: 4, misses: 0, stores: 1, clears: 0, size: 1, max_size: 64, hit_rate: 1 },
     })
     graphCreateOverlaySourceMock.mockResolvedValue({ source_id: 'src-001' })
     graphPreviewOverlayExtractionPayloadMock.mockImplementation((_projectId: string, payload: any) => Promise.resolve({
@@ -511,12 +518,16 @@ describe('Knowledge overlay entry', () => {
     await flushPromises()
   })
 
-  it('shows a readable graph loading and status summary', async () => {
+  it('shows a readable graph loading, status summary, and dev cache diagnostics', async () => {
     const wrapper = mountKnowledge()
     await flushPromises()
 
     expect(wrapper.text()).toContain('学习路径子图')
     expect(wrapper.text()).toContain('本地读模型')
+    expect(wrapper.text()).toContain('缓存诊断')
+    expect(wrapper.text()).toContain('领域图缓存 命中 75% · 2/16')
+    expect(wrapper.text()).toContain('项目快照缓存 命中 100% · 1/64')
+    expect(graphGetGraphCacheStatsMock).toHaveBeenCalled()
   })
 
   it('logs workspace load timing in dev mode', async () => {
