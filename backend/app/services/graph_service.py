@@ -1,6 +1,7 @@
 """图谱查询服务：返回 Cytoscape.js 兼容格式"""
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
@@ -17,12 +18,29 @@ GRAPH_SCOPE_PROJECT = "project"
 GRAPH_SCOPE_PATH = "path"
 VALID_GRAPH_SCOPES = {GRAPH_SCOPE_DOMAIN, GRAPH_SCOPE_PROJECT, GRAPH_SCOPE_PATH}
 
+logger = logging.getLogger(__name__)
+
 _PACK_GRAPH_ELEMENTS_CACHE_MAX_SIZE = 16
 _PackGraphElementsCacheKey = tuple[str, str, str]
 _pack_graph_elements_cache: OrderedDict[_PackGraphElementsCacheKey, dict[str, Any]] = OrderedDict()
+_pack_graph_elements_cache_stats = {
+    "hits": 0,
+    "misses": 0,
+    "stores": 0,
+    "clears": 0,
+}
+
+
+def get_pack_graph_elements_cache_stats() -> dict[str, int]:
+    return dict(_pack_graph_elements_cache_stats)
+
+
+def _record_pack_graph_cache_event(event: str) -> None:
+    _pack_graph_elements_cache_stats[event] = _pack_graph_elements_cache_stats.get(event, 0) + 1
 
 
 def clear_pack_graph_elements_cache(domain: str | None = None) -> None:
+    _record_pack_graph_cache_event("clears")
     if domain is None:
         _pack_graph_elements_cache.clear()
         return
@@ -49,6 +67,7 @@ def _remember_pack_graph_elements(
     cache_key: _PackGraphElementsCacheKey,
     graph_data: dict[str, Any],
 ) -> None:
+    _record_pack_graph_cache_event("stores")
     _pack_graph_elements_cache[cache_key] = deepcopy(graph_data)
     _pack_graph_elements_cache.move_to_end(cache_key)
     while len(_pack_graph_elements_cache) > _PACK_GRAPH_ELEMENTS_CACHE_MAX_SIZE:
@@ -264,8 +283,20 @@ def build_project_graph_elements(
         cache_key = _pack_graph_cache_key(pack, scope)
         cached_graph = _pack_graph_elements_cache.get(cache_key)
         if cached_graph is not None:
+            _record_pack_graph_cache_event("hits")
+            logger.debug(
+                "pack_graph_elements_cache_hit domain=%s scope=%s",
+                pack.domain,
+                scope,
+            )
             _pack_graph_elements_cache.move_to_end(cache_key)
             return deepcopy(cached_graph)
+        _record_pack_graph_cache_event("misses")
+        logger.debug(
+            "pack_graph_elements_cache_miss domain=%s scope=%s",
+            pack.domain,
+            scope,
+        )
 
     removed_nodes = removed_node_ids or set()
     removed_edges = removed_edge_ids or set()

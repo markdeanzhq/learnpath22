@@ -12,7 +12,7 @@ const request = axios.create({
   timeout: 30000,
 })
 
-function isCanceledRequest(error: unknown) {
+export function isCanceledRequest(error: unknown) {
   if (!error || typeof error !== 'object') {
     return false
   }

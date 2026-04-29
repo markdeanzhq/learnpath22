@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import Any
@@ -48,15 +49,32 @@ class ProjectGraphSnapshot:
     project_graph_hash: str
 
 
+logger = logging.getLogger(__name__)
+
 _PROJECT_GRAPH_SNAPSHOT_CACHE_MAX_SIZE = 64
 _ProjectGraphSnapshotCacheKey = tuple[str, str, str, bool, str]
 _project_graph_snapshot_cache: OrderedDict[
     _ProjectGraphSnapshotCacheKey,
     ProjectGraphSnapshot,
 ] = OrderedDict()
+_project_graph_snapshot_cache_stats = {
+    "hits": 0,
+    "misses": 0,
+    "stores": 0,
+    "clears": 0,
+}
+
+
+def get_project_graph_snapshot_cache_stats() -> dict[str, int]:
+    return dict(_project_graph_snapshot_cache_stats)
+
+
+def _record_project_graph_snapshot_cache_event(event: str) -> None:
+    _project_graph_snapshot_cache_stats[event] = _project_graph_snapshot_cache_stats.get(event, 0) + 1
 
 
 def clear_project_graph_snapshot_cache(project_id: str | None = None) -> None:
+    _record_project_graph_snapshot_cache_event("clears")
     if project_id is None:
         _project_graph_snapshot_cache.clear()
         return
@@ -69,6 +87,7 @@ def _remember_project_graph_snapshot(
     cache_key: _ProjectGraphSnapshotCacheKey,
     snapshot: ProjectGraphSnapshot,
 ) -> None:
+    _record_project_graph_snapshot_cache_event("stores")
     _project_graph_snapshot_cache[cache_key] = snapshot
     _project_graph_snapshot_cache.move_to_end(cache_key)
     while len(_project_graph_snapshot_cache) > _PROJECT_GRAPH_SNAPSHOT_CACHE_MAX_SIZE:
@@ -342,8 +361,22 @@ async def build_project_graph_snapshot(
     )
     cached_snapshot = _project_graph_snapshot_cache.get(cache_key)
     if cached_snapshot is not None:
+        _record_project_graph_snapshot_cache_event("hits")
+        logger.debug(
+            "project_graph_snapshot_cache_hit project_id=%s domain=%s include_overlay=%s",
+            project_id,
+            baseline_pack.domain,
+            include_overlay,
+        )
         _project_graph_snapshot_cache.move_to_end(cache_key)
         return cached_snapshot
+    _record_project_graph_snapshot_cache_event("misses")
+    logger.debug(
+        "project_graph_snapshot_cache_miss project_id=%s domain=%s include_overlay=%s",
+        project_id,
+        baseline_pack.domain,
+        include_overlay,
+    )
 
     removed_node_ids = await get_removed_node_ids(db, project_id)
     removed_edge_ids = await get_removed_edge_ids(db, project_id)

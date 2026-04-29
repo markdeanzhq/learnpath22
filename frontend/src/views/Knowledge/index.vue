@@ -63,6 +63,20 @@
             </div>
           </div>
         </div>
+        <section class="graph-status-panel">
+          <div>
+            <strong>{{ graphScopeLabel }}</strong>
+            <p>{{ graphStatusHint }}</p>
+          </div>
+          <div class="graph-status-tags">
+            <el-tag size="small" type="info" effect="plain">节点 {{ graphNodeCount }}</el-tag>
+            <el-tag size="small" type="info" effect="plain">关系 {{ graphEdgeCount }}</el-tag>
+            <el-tag size="small" type="success" effect="plain">本地读模型</el-tag>
+            <el-tag v-if="overlayPreflight" size="small" :type="overlayPreflightTagType" effect="plain">
+              增强候选 {{ overlayPreflight.counts.visible_overlay_nodes }} / {{ overlayPreflight.counts.visible_overlay_edges }}
+            </el-tag>
+          </div>
+        </section>
         <el-alert
           v-if="projectionStatus && projectionStatus.status !== 'empty'"
           class="graph-alert"
@@ -108,7 +122,15 @@
           @review-edge="onReviewEdge"
         />
 
-        <div v-else-if="graphState === 'loading'" class="graph-state-wrap" />
+        <div v-else-if="graphState === 'loading'" class="graph-state-wrap graph-loading-state" data-testid="graph-loading-skeleton">
+          <div class="graph-skeleton-panel">
+            <div class="graph-skeleton-header"></div>
+            <div class="graph-skeleton-body">
+              <span v-for="index in 8" :key="index" class="graph-skeleton-node"></span>
+            </div>
+            <p>正在整理知识节点、审核状态与扩展候选，请稍候。</p>
+          </div>
+        </div>
 
         <el-empty
           v-else-if="graphState === 'empty'"
@@ -584,6 +606,7 @@ import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph
 import { searchApi, type PersistedSearchResult } from '@/api/modules/search'
 import { projectApi, type GoalResolutionPreviewResponse, type ReviewExtensionDraftCoverageResponse } from '@/api/modules/project'
 import { resourceApi } from '@/api/modules/resource'
+import { isCanceledRequest } from '@/api/request'
 import {
   formatServiceReason,
   promotionPreviewStatusMeta,
@@ -722,6 +745,7 @@ const promotionSecret = ref('')
 const promotionLoading = ref(false)
 const resourceBinding = ref({ resourceId: '', targetType: 'project_node', targetId: '' })
 let graphLoadRequestId = 0
+let graphLoadController: AbortController | null = null
 const categoryLegend = GRAPH_CATEGORY_LEGEND
 const relationLegend = GRAPH_RELATION_LEGEND
 const requestedScope = computed<GraphScope>(() => normalizeGraphScope(route.query.scope))
@@ -823,6 +847,21 @@ function normalizePreviewPayload(payload: unknown): PreviewPayload {
 
 const nodes = computed(() => elements.value.filter(isNodeElement).map((element) => element.data))
 const edges = computed(() => elements.value.filter(isEdgeElement).map((element) => element.data))
+const graphNodeCount = computed(() => nodes.value.length)
+const graphEdgeCount = computed(() => edges.value.length)
+const graphScopeLabel = computed(() => {
+  if (scope.value === 'domain') return '领域基线图'
+  if (scope.value === 'project') return '项目增强图'
+  return '学习路径子图'
+})
+const graphStatusHint = computed(() => {
+  if (graphState.value === 'loading') return '正在读取本地图谱视图与审核状态。'
+  if (graphState.value === 'empty') return emptyDescription.value
+  if (graphState.value === 'error') return errorMessage.value || '图谱读取失败，请稍后重试。'
+  if (scope.value === 'path') return '仅展示最新学习路径命中的知识点和依赖关系。'
+  if (scope.value === 'project') return '展示领域基线叠加已审核且允许规划的项目扩展候选。'
+  return '展示领域知识包的稳定基线，不依赖 Neo4j 读取链路。'
+})
 const nodeLabelMap = computed(() => new Map(nodes.value.map((node) => [node.id, node.label])))
 const selectedNode = computed<SelectedNodeContext | null>(() => {
   const nodeId = selectedNodeId.value
@@ -897,6 +936,27 @@ function resetOverlayState() {
   promotionResult.value = null
   promotionSecret.value = ''
   resourceBinding.value = { resourceId: '', targetType: 'project_node', targetId: '' }
+}
+
+function createGraphLoadController() {
+  graphLoadController?.abort()
+  graphLoadController = new AbortController()
+  return graphLoadController
+}
+
+function clearGraphLoadController(controller: AbortController) {
+  if (graphLoadController === controller) {
+    graphLoadController = null
+  }
+}
+
+function abortGraphLoad() {
+  graphLoadController?.abort()
+  graphLoadController = null
+}
+
+function workspaceErrorMessage(detail?: { message?: string } | null, fallback?: string | null) {
+  return detail?.message || fallback || ''
 }
 
 function graphRouteQuery(nextScope: GraphScope, nodeId?: string | null, sessionId?: string | null) {
@@ -1071,11 +1131,13 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
   const requestId = ++graphLoadRequestId
 
   if (!currentProjectId) {
+    abortGraphLoad()
     resetGraphState()
     loading.value = false
     return
   }
 
+  const controller = createGraphLoadController()
   const hasExistingGraph = elements.value.length > 0
   if (!hasExistingGraph) {
     graphState.value = 'loading'
@@ -1099,6 +1161,9 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
       include_persisted_search_results: options.includePersistedSearchResults,
       session_id: currentSessionId,
       goal_draft_resolution_session_id: currentGoalDraftResolutionSessionId,
+    }, {
+      signal: controller.signal,
+      silent: true,
     })
     if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
       return
@@ -1113,9 +1178,13 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
     }
 
     if (currentSessionId) {
-      if (workspace.overlay_session_error) {
+      const overlaySessionError = workspaceErrorMessage(
+        workspace.overlay_session_error_detail,
+        workspace.overlay_session_error,
+      )
+      if (overlaySessionError) {
         resetOverlayState()
-        overlayError.value = workspace.overlay_session_error
+        overlayError.value = overlaySessionError
       } else if (workspace.overlay_session) {
         lastOverlaySession.value = workspace.overlay_session
         overlayDrawerVisible.value = true
@@ -1124,12 +1193,16 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
 
     if (currentGoalDraftResolutionSessionId) {
       goalDraftProposal.value = workspace.goal_draft_proposal ?? null
-      if (workspace.goal_draft_error) {
-        overlayError.value = workspace.goal_draft_error
+      const goalDraftError = workspaceErrorMessage(
+        workspace.goal_draft_error_detail,
+        workspace.goal_draft_error,
+      )
+      if (goalDraftError) {
+        overlayError.value = goalDraftError
       }
     }
   } catch (e: any) {
-    if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
+    if (isCanceledRequest(e) || requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
       return
     }
     const message = e?.response?.data?.error || e?.message || '知识图谱加载失败，请稍后重试'
@@ -1146,6 +1219,7 @@ async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
       graphState.value = 'error'
     }
   } finally {
+    clearGraphLoadController(controller)
     if (requestId === graphLoadRequestId && projectId.value === currentProjectId) {
       loading.value = false
       if (currentGoalDraftResolutionSessionId) {
@@ -1291,11 +1365,13 @@ async function loadGraph() {
   const requestId = ++graphLoadRequestId
 
   if (!currentProjectId) {
+    abortGraphLoad()
     resetGraphState()
     loading.value = false
     return
   }
 
+  const controller = createGraphLoadController()
   const hasExistingGraph = elements.value.length > 0
 
   if (!hasExistingGraph) {
@@ -1306,13 +1382,16 @@ async function loadGraph() {
   errorMessage.value = ''
 
   try {
-    const data = await graphApi.getGraph(currentProjectId, currentGraphQuery)
+    const data = await graphApi.getGraph(currentProjectId, currentGraphQuery, {
+      signal: controller.signal,
+      silent: true,
+    })
     if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
       return
     }
     applyGraphData(data)
   } catch (e: any) {
-    if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
+    if (isCanceledRequest(e) || requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
       return
     }
     const message = e?.response?.data?.error || e?.message || '知识图谱加载失败，请稍后重试'
@@ -1330,6 +1409,7 @@ async function loadGraph() {
       graphState.value = 'error'
     }
   } finally {
+    clearGraphLoadController(controller)
     if (requestId === graphLoadRequestId && projectId.value === currentProjectId) {
       loading.value = false
     }
@@ -1340,6 +1420,7 @@ watch(
   projectId,
   async (nextProjectId, previousProjectId) => {
     if (!nextProjectId) {
+      abortGraphLoad()
       manualGoalDraftResolutionSessionId.value = null
       resetGraphState()
       resetOverlayState()
@@ -2014,6 +2095,39 @@ function toggleFullscreen() {
   border-left: 7px solid #909399;
 }
 
+.graph-status-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 12px 0;
+  padding: 12px;
+  border: 1px solid #e1f3d8;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f0f9eb 0%, #f5f7fa 100%);
+}
+
+.graph-status-panel strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #303133;
+  font-size: 14px;
+}
+
+.graph-status-panel p {
+  margin: 0;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.graph-status-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .graph-alert {
   margin: 12px 12px 0;
 }
@@ -2235,15 +2349,64 @@ function toggleFullscreen() {
   min-height: 360px;
 }
 
+.graph-loading-state {
+  padding: 24px;
+}
+
+.graph-skeleton-panel {
+  width: min(520px, 80%);
+  padding: 24px;
+  border: 1px solid #ebeef5;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgb(31 45 61 / 8%);
+}
+
+.graph-skeleton-header {
+  width: 42%;
+  height: 14px;
+  margin: 0 auto 24px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ebeef5 25%, #f5f7fa 50%, #ebeef5 75%);
+}
+
+.graph-skeleton-body {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  padding: 12px 32px;
+}
+
+.graph-skeleton-node {
+  width: 42px;
+  height: 42px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #d9ecff, #ecf5ff);
+}
+
+.graph-skeleton-panel p {
+  margin: 22px 0 0;
+  color: #909399;
+  font-size: 13px;
+  text-align: center;
+}
+
 @media (max-width: 768px) {
   .page-container {
     padding: 12px;
     height: auto;
   }
 
-  .graph-legend-wrap {
+  .graph-legend-wrap,
+  .graph-status-panel {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .graph-status-tags {
+    justify-content: flex-start;
   }
 }
 </style>

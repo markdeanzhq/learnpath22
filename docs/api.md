@@ -697,10 +697,11 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 
 非法 scope 返回 `422 INVALID_GRAPH_SCOPE`。所有图元素都会返回 `origin` 与 `scope`；overlay 元素额外返回 `validation_status`、`review_status`、`planning_enabled`、`promotion_status`、source/provenance/validation metadata。
 
-`GET /projects/{id}/graph/workspace` 接收同样的 `scope/path_id`，并可附加 `include_persisted_search_results=true`、`session_id`、`goal_draft_resolution_session_id`。响应中的 `graph` 等同单独图谱接口，`projection_status`、`overlay_preflight`、`persisted_search_results`、`overlay_session`、`goal_draft_proposal` 用于 Knowledge 首屏减少多次 RTT；可选子读失败时返回对应 `*_error` 字段，不影响图谱主体加载。
+`GET /projects/{id}/graph/workspace` 接收同样的 `scope/path_id`，并可附加 `include_persisted_search_results=true`、`session_id`、`goal_draft_resolution_session_id`。响应中的 `graph` 等同单独图谱接口，`projection_status`、`overlay_preflight`、`persisted_search_results`、`overlay_session`、`goal_draft_proposal` 用于 Knowledge 首屏减少多次 RTT；可选子读失败时返回对应 `*_error` 字符串和 `*_error_detail` 结构化对象，不影响图谱主体加载。`*_error_detail` 包含 `code`、`message`、`source`、`recoverable` 与 `detail`，前端优先展示结构化 `message`，旧字符串字段保留用于兼容。
 
 说明：
 - 无 latest plan 但已有 overlay draft 时，`scope=project` 仍返回项目图，不再把项目视为 `project_latest_plan_missing` 空态
+- 后端会记录 graph/workspace 读耗时、可选子读失败来源、Domain Pack graph cache 与 ProjectGraphSnapshot cache 统计，便于定位后续性能回退
 - `graph/entities` 只返回扩展实体展示数据，不会触发图谱重同步
 - 前端 Knowledge 页使用该接口展示 `Stage` / `Resource` 只读信息
 - Path / Dashboard 的“在图谱中定位”会跳转到 Knowledge，并由图谱画布聚焦对应 `nodeId`

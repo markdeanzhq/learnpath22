@@ -1,4 +1,5 @@
 import request from '../request'
+import type { RequestConfig } from '../request'
 import type { PersistedSearchResult } from './search'
 
 export type GraphScope = 'domain' | 'project' | 'path'
@@ -365,17 +366,30 @@ export interface GoalExtensionDraftProposalResponse {
   draft_proposal: GoalExtensionDraftProposal
 }
 
+export interface GraphWorkspaceErrorDetail {
+  code: string
+  message: string
+  source: string
+  recoverable: boolean
+  detail?: Record<string, unknown>
+}
+
 export interface GraphWorkspaceData {
   project_id: string
   graph: GraphData
   projection_status: OverlayProjectionStatusResponse
   overlay_preflight?: OverlayPreflightResponse | null
   overlay_preflight_error?: string | null
+  overlay_preflight_error_detail?: GraphWorkspaceErrorDetail | null
   persisted_search_results?: PersistedSearchResult[] | null
+  persisted_search_results_error?: string | null
+  persisted_search_results_error_detail?: GraphWorkspaceErrorDetail | null
   overlay_session?: OverlayExtractionSessionResponse | null
   overlay_session_error?: string | null
+  overlay_session_error_detail?: GraphWorkspaceErrorDetail | null
   goal_draft_proposal?: GoalExtensionDraftProposalResponse | null
   goal_draft_error?: string | null
+  goal_draft_error_detail?: GraphWorkspaceErrorDetail | null
 }
 
 export interface GoalExtensionDraftResponse extends OverlayExtractionSessionResponse {
@@ -520,12 +534,14 @@ export function normalizeGraphPathId(scope: GraphScope, value: unknown): string 
 }
 
 export const graphApi = {
-  getGraph: (projectId: string, params?: GetGraphParams): Promise<GraphData> =>
+  getGraph: (projectId: string, params?: GetGraphParams, config?: RequestConfig): Promise<GraphData> =>
     request.get(`/projects/${projectId}/graph`, {
+      ...config,
       params: buildGraphQuery(params),
     }),
-  getGraphWorkspace: (projectId: string, params?: GraphWorkspaceParams): Promise<GraphWorkspaceData> =>
+  getGraphWorkspace: (projectId: string, params?: GraphWorkspaceParams, config?: RequestConfig): Promise<GraphWorkspaceData> =>
     request.get(`/projects/${projectId}/graph/workspace`, {
+      ...config,
       params: {
         ...buildGraphQuery(params),
         include_persisted_search_results: params?.include_persisted_search_results || undefined,

@@ -210,6 +210,22 @@ function createDeferred<T>() {
   return { promise, resolve, reject }
 }
 
+function expectWorkspaceCalledWith(params: Record<string, unknown>) {
+  expect(graphGetGraphWorkspaceMock).toHaveBeenCalledWith(
+    'project-001',
+    expect.objectContaining(params),
+    expect.objectContaining({ signal: expect.any(Object), silent: true }),
+  )
+}
+
+function expectLastWorkspaceCalledWith(params: Record<string, unknown>) {
+  expect(graphGetGraphWorkspaceMock).toHaveBeenLastCalledWith(
+    'project-001',
+    expect.objectContaining(params),
+    expect.objectContaining({ signal: expect.any(Object), silent: true }),
+  )
+}
+
 describe('Knowledge overlay entry', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -454,11 +470,11 @@ describe('Knowledge overlay entry', () => {
     mountKnowledge()
     await flushPromises()
 
-    expect(graphGetGraphWorkspaceMock).toHaveBeenCalledWith('project-001', expect.objectContaining({
+    expectWorkspaceCalledWith({
       scope: 'path',
       path_id: 'latest',
       include_persisted_search_results: true,
-    }))
+    })
   })
 
   it('loads first-screen graph companions through the workspace endpoint', async () => {
@@ -493,6 +509,82 @@ describe('Knowledge overlay entry', () => {
       overlay_preflight: null,
     })
     await flushPromises()
+  })
+
+  it('shows a readable graph loading and status summary', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('学习路径子图')
+    expect(wrapper.text()).toContain('本地读模型')
+  })
+
+  it('aborts stale workspace requests when a newer graph load starts', async () => {
+    const firstLoad = createDeferred<any>()
+    const secondLoad = createDeferred<any>()
+    graphGetGraphWorkspaceMock
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(secondLoad.promise)
+
+    const wrapper = mountKnowledge()
+    await Promise.resolve()
+    const firstSignal = graphGetGraphWorkspaceMock.mock.calls[0][2].signal
+
+    const reload = (wrapper.vm as any).loadGraphWorkspace()
+    await Promise.resolve()
+    const secondSignal = graphGetGraphWorkspaceMock.mock.calls[1][2].signal
+
+    expect(firstSignal.aborted).toBe(true)
+    expect(secondSignal.aborted).toBe(false)
+
+    secondLoad.resolve({
+      project_id: 'project-001',
+      graph: {
+        scope: 'path',
+        elements: [],
+        is_empty: true,
+      },
+      projection_status: {
+        project_id: 'project-001',
+        status: 'empty',
+        ready: true,
+        in_sync: true,
+      },
+      overlay_preflight: null,
+    })
+    await reload
+  })
+
+  it('uses structured workspace errors when restoring overlay sessions', async () => {
+    routeState.query = { sessionId: 'missing-session' }
+    graphGetGraphWorkspaceMock.mockResolvedValueOnce({
+      project_id: 'project-001',
+      graph: {
+        scope: 'path',
+        elements: [],
+        is_empty: true,
+      },
+      projection_status: {
+        project_id: 'project-001',
+        status: 'empty',
+        ready: true,
+        in_sync: true,
+      },
+      overlay_preflight: null,
+      overlay_session: null,
+      overlay_session_error: 'legacy missing session',
+      overlay_session_error_detail: {
+        code: 'OVERLAY_SESSION_NOT_FOUND',
+        message: '结构化会话不可用',
+        source: 'overlay_session',
+        recoverable: true,
+      },
+    })
+
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    expect((wrapper.vm as any).overlayError).toBe('结构化会话不可用')
   })
 
   it('keeps the newest graph response when overlapping loads finish out of order', async () => {
@@ -533,10 +625,10 @@ describe('Knowledge overlay entry', () => {
     mountKnowledge()
     await flushPromises()
 
-    expect(graphGetGraphWorkspaceMock).toHaveBeenCalledWith('project-001', expect.objectContaining({
+    expectWorkspaceCalledWith({
       scope: 'path',
       path_id: 'latest',
-    }))
+    })
   })
 
   it('loads path deep link with latest path id and selected node', async () => {
@@ -545,11 +637,11 @@ describe('Knowledge overlay entry', () => {
     mountKnowledge()
     await flushPromises()
 
-    expect(graphGetGraphWorkspaceMock).toHaveBeenCalledWith('project-001', expect.objectContaining({
+    expectWorkspaceCalledWith({
       scope: 'path',
       path_id: 'latest',
       nodeId: 'ml_c01',
-    }))
+    })
   })
 
   it('normalizes path scope without path id to latest', async () => {
@@ -558,10 +650,10 @@ describe('Knowledge overlay entry', () => {
     mountKnowledge()
     await flushPromises()
 
-    expect(graphGetGraphWorkspaceMock).toHaveBeenCalledWith('project-001', expect.objectContaining({
+    expectWorkspaceCalledWith({
       scope: 'path',
       path_id: 'latest',
-    }))
+    })
   })
 
   it('writes toolbar path scope selection back to the route', async () => {
@@ -615,7 +707,7 @@ describe('Knowledge overlay entry', () => {
         sessionId: 'sess-001',
       },
     })
-    expect(graphGetGraphWorkspaceMock).toHaveBeenLastCalledWith('project-001', expect.objectContaining({ scope: 'project' }))
+    expectLastWorkspaceCalledWith({ scope: 'project' })
   })
 
   it('resets stale overlay state when graph scope changes', async () => {
@@ -656,7 +748,7 @@ describe('Knowledge overlay entry', () => {
     await flushPromises()
 
     expect(graphGetOverlayExtractionSessionMock).not.toHaveBeenCalled()
-    expect(graphGetGraphWorkspaceMock).toHaveBeenCalledWith('project-001', expect.objectContaining({ session_id: 'sess-001' }))
+    expectWorkspaceCalledWith({ session_id: 'sess-001' })
     expect(graphCreateOverlaySourceMock).not.toHaveBeenCalled()
     expect(graphCreateOverlayExtractionSessionMock).not.toHaveBeenCalled()
     expect((wrapper.vm as any).overlayDrawerVisible).toBe(true)
@@ -706,7 +798,7 @@ describe('Knowledge overlay entry', () => {
 
     expect((wrapper.vm as any).overlayDrawerVisible).toBe(true)
     expect(graphGetGoalExtensionDraftProposalMock).not.toHaveBeenCalled()
-    expect(graphGetGraphWorkspaceMock).toHaveBeenCalledWith('project-001', expect.objectContaining({ goal_draft_resolution_session_id: 'resolution-001' }))
+    expectWorkspaceCalledWith({ goal_draft_resolution_session_id: 'resolution-001' })
     expect(graphCreateGoalExtensionDraftMock).not.toHaveBeenCalled()
     expect(graphCreateOverlayExtractionSessionMock).not.toHaveBeenCalled()
 
@@ -840,7 +932,7 @@ describe('Knowledge overlay entry', () => {
       requested_by: 'frontend',
     })
     expect((wrapper.vm as any).promotionSecret).toBe('')
-    expect(graphGetGraphWorkspaceMock).toHaveBeenLastCalledWith('project-001', expect.objectContaining({ scope: 'project' }))
+    expectLastWorkspaceCalledWith({ scope: 'project' })
   })
 
   it('updates overlay planning independently from review status', async () => {

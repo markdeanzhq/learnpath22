@@ -19,6 +19,7 @@ from app.services import project_graph_snapshot_service as snapshot_module
 from app.services.project_graph_snapshot_service import (
     build_project_graph_snapshot,
     clear_project_graph_snapshot_cache,
+    get_project_graph_snapshot_cache_stats,
 )
 from app.services.project_overlay_extraction_service import create_extraction_session_from_sources
 
@@ -137,6 +138,7 @@ async def test_project_graph_snapshot_cache_reuses_unchanged_revision(
     monkeypatch,
 ):
     clear_project_graph_snapshot_cache()
+    before_stats = get_project_graph_snapshot_cache_stats()
     first = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
     list_nodes = AsyncMock(side_effect=AssertionError("snapshot cache should avoid node reload"))
     list_edges = AsyncMock(side_effect=AssertionError("snapshot cache should avoid edge reload"))
@@ -144,8 +146,12 @@ async def test_project_graph_snapshot_cache_reuses_unchanged_revision(
     monkeypatch.setattr(snapshot_module, "list_planner_visible_edges", list_edges)
 
     second = await build_project_graph_snapshot(db_session, project["id"], domain=project["domain"])
+    after_stats = get_project_graph_snapshot_cache_stats()
 
     assert second is first
+    assert after_stats["misses"] == before_stats["misses"] + 1
+    assert after_stats["hits"] == before_stats["hits"] + 1
+    assert after_stats["stores"] == before_stats["stores"] + 1
     list_nodes.assert_not_awaited()
     list_edges.assert_not_awaited()
 

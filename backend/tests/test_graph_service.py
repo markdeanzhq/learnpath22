@@ -13,6 +13,7 @@ from app.services.graph_service import (
     build_project_graph_elements,
     clear_pack_graph_elements_cache,
     get_graph_entity_metadata,
+    get_pack_graph_elements_cache_stats,
 )
 
 
@@ -158,11 +159,16 @@ def test_build_project_graph_elements_caches_pack_only_graph_defensively():
         related_edges=[],
     )
 
+    before_stats = get_pack_graph_elements_cache_stats()
     first = build_project_graph_elements(pack, scope=GRAPH_SCOPE_DOMAIN)
     first["elements"][0]["data"]["label"] = "mutated label"
     second = build_project_graph_elements(pack, scope=GRAPH_SCOPE_DOMAIN)
+    after_stats = get_pack_graph_elements_cache_stats()
 
     assert second["elements"][0]["data"]["label"] == "线性代数基础"
+    assert after_stats["misses"] == before_stats["misses"] + 1
+    assert after_stats["hits"] == before_stats["hits"] + 1
+    assert after_stats["stores"] == before_stats["stores"] + 1
 
 
 @pytest.mark.asyncio

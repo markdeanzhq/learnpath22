@@ -710,6 +710,34 @@ async def test_get_graph_workspace_aggregates_knowledge_screen_reads(client, pro
     assert data["persisted_search_results"][0]["title"] == "逻辑回归资料"
     assert data["overlay_session"] is None
     assert data["overlay_session_error"] == "overlay extraction session 不存在"
+    assert data["overlay_session_error_detail"] == {
+        "code": "OVERLAY_SESSION_NOT_FOUND",
+        "message": "overlay extraction session 不存在",
+        "source": "overlay_session",
+        "recoverable": True,
+        "detail": {},
+    }
+
+
+async def test_get_graph_workspace_returns_structured_optional_read_errors(client, project, monkeypatch):
+    async def _raise_preflight(*args, **kwargs):
+        raise RuntimeError("preflight boom")
+
+    monkeypatch.setattr("app.api.v1.graph.build_project_overlay_preflight", _raise_preflight)
+
+    resp = await client.get(f"/api/v1/projects/{project['id']}/graph/workspace")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["overlay_preflight"] is None
+    assert data["overlay_preflight_error"] == "preflight boom"
+    assert data["overlay_preflight_error_detail"] == {
+        "code": "OVERLAY_PREFLIGHT_UNAVAILABLE",
+        "message": "preflight boom",
+        "source": "overlay_preflight",
+        "recoverable": True,
+        "detail": {"exception": "RuntimeError"},
+    }
 
 
 async def test_overlay_review_and_planning_endpoints_update_independent_fields(client, project, db_session):

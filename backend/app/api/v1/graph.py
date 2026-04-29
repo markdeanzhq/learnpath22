@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 from datetime import datetime
+from time import perf_counter
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -45,12 +47,16 @@ from app.services.graph_service import (
     build_pack_subgraph_elements,
     build_path_graph_elements_from_snapshot,
     build_project_graph_elements,
+    get_pack_graph_elements_cache_stats,
 )
 from app.services.project_goal_extension_draft_service import (
     create_goal_extension_draft_from_resolution,
     preview_goal_extension_draft_proposal,
 )
-from app.services.project_graph_snapshot_service import build_project_graph_snapshot
+from app.services.project_graph_snapshot_service import (
+    build_project_graph_snapshot,
+    get_project_graph_snapshot_cache_stats,
+)
 from app.services.project_overlay_extraction_service import MAX_TEXT_CHARS, create_extraction_session_from_sources
 from app.services.project_overlay_llm_extraction_service import preview_overlay_extraction_payload_from_sources
 from app.services.project_overlay_preflight_service import build_project_overlay_preflight
@@ -65,6 +71,52 @@ from app.services.project_overlay_promotion_service import (
 from app.services.graph_sync_service import get_graph_sync_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _elapsed_ms(start: float) -> float:
+    return round((perf_counter() - start) * 1000, 2)
+
+
+def _workspace_error(
+    *,
+    code: str,
+    message: str,
+    source: str,
+    recoverable: bool = True,
+    detail: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "code": code,
+        "message": message,
+        "source": source,
+        "recoverable": recoverable,
+        "detail": detail or {},
+    }
+
+
+def _workspace_exception_error(
+    exc: Exception,
+    *,
+    code: str,
+    source: str,
+) -> dict[str, Any]:
+    message = getattr(exc, "message", None) or str(exc) or code
+    return _workspace_error(
+        code=code,
+        message=message,
+        source=source,
+        detail={"exception": exc.__class__.__name__},
+    )
+
+
+def _set_workspace_optional_error(
+    workspace: dict[str, Any],
+    field_name: str,
+    error: dict[str, Any],
+) -> None:
+    workspace[field_name] = error["message"]
+    workspace[f"{field_name}_detail"] = error
 
 
 def _get_default_domain() -> str:
@@ -469,6 +521,7 @@ async def _build_graph_response(
     scope: str,
     path_id: str | None,
 ) -> dict[str, Any]:
+    start = perf_counter()
     if scope == GRAPH_SCOPE_PROJECT:
         pack = get_domain_pack_service(domain)
         graph_data = build_project_graph_elements(
@@ -514,7 +567,16 @@ async def _build_graph_response(
     else:
         raise AppError(code=422, message="INVALID_GRAPH_SCOPE")
 
-    return await _apply_review_statuses(db, project_id, graph_data)
+    graph_response = await _apply_review_statuses(db, project_id, graph_data)
+    logger.info(
+        "graph_read project_id=%s scope=%s path_id=%s elements=%s duration_ms=%.2f",
+        project_id,
+        scope,
+        path_id,
+        len(graph_response.get("elements", [])),
+        _elapsed_ms(start),
+    )
+    return graph_response
 
 
 async def _apply_review_statuses(
@@ -598,23 +660,32 @@ async def get_graph_workspace(
     if not project:
         raise NotFoundError("项目不存在")
 
+    workspace_start = perf_counter()
+    graph_start = perf_counter()
+    graph_response = await _build_graph_response(
+        db,
+        project_id=project_id,
+        domain=project.domain,
+        scope=scope,
+        path_id=path_id,
+    )
+    graph_duration_ms = _elapsed_ms(graph_start)
     workspace: dict[str, Any] = {
         "project_id": project_id,
-        "graph": await _build_graph_response(
-            db,
-            project_id=project_id,
-            domain=project.domain,
-            scope=scope,
-            path_id=path_id,
-        ),
+        "graph": graph_response,
         "projection_status": await get_project_overlay_projection_status(db, project_id),
         "overlay_preflight": None,
         "overlay_preflight_error": None,
+        "overlay_preflight_error_detail": None,
         "persisted_search_results": None,
+        "persisted_search_results_error": None,
+        "persisted_search_results_error_detail": None,
         "overlay_session": None,
         "overlay_session_error": None,
+        "overlay_session_error_detail": None,
         "goal_draft_proposal": None,
         "goal_draft_error": None,
+        "goal_draft_error_detail": None,
     }
 
     try:
@@ -624,15 +695,52 @@ async def get_graph_workspace(
             domain=project.domain,
         )
     except Exception as exc:
-        workspace["overlay_preflight_error"] = str(exc)
+        logger.warning(
+            "graph_workspace_optional_read_failed project_id=%s source=overlay_preflight error=%s",
+            project_id,
+            exc,
+        )
+        _set_workspace_optional_error(
+            workspace,
+            "overlay_preflight_error",
+            _workspace_exception_error(
+                exc,
+                code="OVERLAY_PREFLIGHT_UNAVAILABLE",
+                source="overlay_preflight",
+            ),
+        )
 
     if include_persisted_search_results:
-        workspace["persisted_search_results"] = await _persisted_search_results_payload(db, project_id)
+        try:
+            workspace["persisted_search_results"] = await _persisted_search_results_payload(db, project_id)
+        except Exception as exc:
+            logger.warning(
+                "graph_workspace_optional_read_failed project_id=%s source=persisted_search_results error=%s",
+                project_id,
+                exc,
+            )
+            _set_workspace_optional_error(
+                workspace,
+                "persisted_search_results_error",
+                _workspace_exception_error(
+                    exc,
+                    code="PERSISTED_SEARCH_RESULTS_UNAVAILABLE",
+                    source="persisted_search_results",
+                ),
+            )
 
     if session_id:
         session_payload = await _overlay_session_payload(db, project_id=project_id, session_id=session_id)
         if session_payload is None:
-            workspace["overlay_session_error"] = "overlay extraction session 不存在"
+            _set_workspace_optional_error(
+                workspace,
+                "overlay_session_error",
+                _workspace_error(
+                    code="OVERLAY_SESSION_NOT_FOUND",
+                    message="overlay extraction session 不存在",
+                    source="overlay_session",
+                ),
+            )
         else:
             workspace["overlay_session"] = session_payload
 
@@ -644,8 +752,42 @@ async def get_graph_workspace(
                 resolution_session_id=goal_draft_resolution_session_id,
             )
         except (AppError, ValueError) as exc:
-            workspace["goal_draft_error"] = str(exc)
+            logger.warning(
+                "graph_workspace_optional_read_failed project_id=%s source=goal_draft_proposal error=%s",
+                project_id,
+                exc,
+            )
+            _set_workspace_optional_error(
+                workspace,
+                "goal_draft_error",
+                _workspace_exception_error(
+                    exc,
+                    code="GOAL_DRAFT_PROPOSAL_UNAVAILABLE",
+                    source="goal_draft_proposal",
+                ),
+            )
 
+    optional_errors = [
+        key
+        for key in (
+            "overlay_preflight_error",
+            "persisted_search_results_error",
+            "overlay_session_error",
+            "goal_draft_error",
+        )
+        if workspace.get(key)
+    ]
+    logger.info(
+        "graph_workspace_read project_id=%s scope=%s path_id=%s duration_ms=%.2f graph_duration_ms=%.2f optional_errors=%s pack_cache=%s snapshot_cache=%s",
+        project_id,
+        scope,
+        path_id,
+        _elapsed_ms(workspace_start),
+        graph_duration_ms,
+        optional_errors,
+        get_pack_graph_elements_cache_stats(),
+        get_project_graph_snapshot_cache_stats(),
+    )
     return workspace
 
 
