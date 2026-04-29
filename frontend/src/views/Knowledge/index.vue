@@ -137,11 +137,13 @@
     </el-card>
 
     <NodeDetail
+      v-if="selectedNode"
       :node="selectedNode"
       @review-edge="onReviewEdge"
       @set-overlay-planning="onSetOverlayPlanning"
     />
     <EntityMetadataDrawer
+      v-if="entityDrawerVisible || entityLoading || entityMetadata"
       v-model="entityDrawerVisible"
       :loading="entityLoading"
       :metadata="entityMetadata"
@@ -547,7 +549,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useRoute, useRouter } from 'vue-router'
@@ -577,10 +579,6 @@ import {
   type OverlaySourceRequest,
   type ReviewStatus,
 } from '@/api/modules/graph'
-import GraphCanvas from '@/components/Graph/GraphCanvas.vue'
-import EntityMetadataDrawer from '@/components/Graph/EntityMetadataDrawer.vue'
-import NodeDetail from '@/components/Graph/NodeDetail.vue'
-import GraphToolbar from '@/components/Graph/GraphToolbar.vue'
 import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph/graphMeta'
 import { searchApi, type PersistedSearchResult } from '@/api/modules/search'
 import { projectApi, type GoalResolutionPreviewResponse, type ReviewExtensionDraftCoverageResponse } from '@/api/modules/project'
@@ -621,6 +619,21 @@ type SelectedNodeContext = GraphNodeData & {
 
 const PROJECT_LATEST_PLAN_MISSING = 'project_latest_plan_missing'
 const SEARCH_NOT_READY = 'SEARCH_NOT_READY'
+
+const GraphToolbar = defineAsyncComponent(() => import('@/components/Graph/GraphToolbar.vue'))
+const GraphCanvas = defineAsyncComponent(() => import('@/components/Graph/GraphCanvas.vue'))
+const NodeDetail = defineAsyncComponent(() => import('@/components/Graph/NodeDetail.vue'))
+const EntityMetadataDrawer = defineAsyncComponent(() => import('@/components/Graph/EntityMetadataDrawer.vue'))
+
+type GraphCanvasHandle = {
+  zoomIn: () => void
+  zoomOut: () => void
+  fitView: () => void
+  focusNode: (nodeId: string) => boolean
+  highlightBySearch: (keyword: string) => void
+  setNodeReviewStatus: (nodeId: string, status: string) => void
+  setEdgeReviewStatus: (edgeId: string, status: string) => void
+}
 
 function createOverlayForm() {
   return {
@@ -678,7 +691,7 @@ const errorMessage = ref('')
 const lastRefreshError = ref('')
 const emptyReason = ref<string | undefined>()
 const selectedNodeId = ref<string | null>(null)
-const graphRef = ref<InstanceType<typeof GraphCanvas>>()
+const graphRef = ref<GraphCanvasHandle>()
 const pageRef = ref<HTMLDivElement>()
 const reviewMode = ref(false)
 const entityDrawerVisible = ref(false)
