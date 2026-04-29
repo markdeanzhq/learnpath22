@@ -51,11 +51,14 @@ vi.mock('vue-router', () => ({
   useRoute: () => routeState,
 }))
 
-vi.mock('element-plus', () => ({
+vi.mock('element-plus/es/components/message/index', () => ({
   ElMessage: {
     success: vi.fn(),
     error: vi.fn(),
   },
+}))
+
+vi.mock('element-plus/es/components/message-box/index', () => ({
   ElMessageBox: {
     confirm: vi.fn(),
   },

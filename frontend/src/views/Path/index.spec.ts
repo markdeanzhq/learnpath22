@@ -85,7 +85,7 @@ vi.mock('pinia', () => ({
   }),
 }))
 
-vi.mock('element-plus', () => ({
+vi.mock('element-plus/es/components/message/index', () => ({
   ElMessage: {
     success: vi.fn(),
     error: elMessageErrorMock,

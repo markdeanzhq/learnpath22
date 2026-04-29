@@ -681,7 +681,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { Guide } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'

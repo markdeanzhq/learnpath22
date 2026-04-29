@@ -548,7 +548,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useRoute, useRouter } from 'vue-router'
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'

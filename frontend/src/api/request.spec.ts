@@ -21,7 +21,7 @@ vi.mock('axios', () => ({
   },
 }))
 
-vi.mock('element-plus', () => ({
+vi.mock('element-plus/es/components/message/index', () => ({
   ElMessage: {
     error: errorMock,
   },

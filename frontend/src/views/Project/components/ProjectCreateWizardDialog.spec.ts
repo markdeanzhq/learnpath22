@@ -7,7 +7,7 @@ const { confirmMock } = vi.hoisted(() => ({
   confirmMock: vi.fn(),
 }))
 
-vi.mock('element-plus', () => ({
+vi.mock('element-plus/es/components/message-box/index', () => ({
   ElMessageBox: {
     confirm: confirmMock,
   },

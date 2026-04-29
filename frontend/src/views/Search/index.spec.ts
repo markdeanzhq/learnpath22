@@ -32,7 +32,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 
-vi.mock('element-plus', () => ({
+vi.mock('element-plus/es/components/message/index', () => ({
   ElMessage: {
     success: successMock,
     error: vi.fn(),

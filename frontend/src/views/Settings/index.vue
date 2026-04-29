@@ -129,7 +129,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { healthApi, type ReadinessResponse, type ReadinessServiceStatus } from '@/api/modules/health'
 import { graphApi } from '@/api/modules/graph'
 import { useSettingsStore } from '@/stores/settings'

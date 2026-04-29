@@ -107,7 +107,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { healthApi } from '@/api/modules/health'
 import { searchApi, type PersistedSearchResult, type SearchResultItem } from '@/api/modules/search'
 import { useProjectStore } from '@/stores/project'

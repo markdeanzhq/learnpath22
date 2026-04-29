@@ -72,11 +72,14 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ replace: replaceMock }),
 }))
 
-vi.mock('element-plus', () => ({
+vi.mock('element-plus/es/components/message/index', () => ({
   ElMessage: {
     success: successMock,
     error: vi.fn(),
   },
+}))
+
+vi.mock('element-plus/es/components/message-box/index', () => ({
   ElMessageBox: {
     confirm: confirmMock,
   },

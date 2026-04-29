@@ -66,7 +66,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useTrackingStore } from '@/stores/tracking'

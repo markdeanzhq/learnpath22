@@ -49,7 +49,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import type { Project } from '@/api/modules/project'
 import ProjectWorkflowPanel from './ProjectWorkflowPanel.vue'
 
