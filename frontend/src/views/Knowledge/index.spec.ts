@@ -2,6 +2,7 @@ import { defineComponent } from 'vue'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import KnowledgeIndex from './index.vue'
+import OverlayPreflightPanel from './OverlayPreflightPanel.vue'
 
 const {
   graphGetGraphMock,
@@ -34,6 +35,7 @@ const {
   currentProjectState,
   routeState,
   replaceMock,
+  pushMock,
   successMock,
 } = vi.hoisted(() => ({
   graphGetGraphMock: vi.fn(),
@@ -82,12 +84,13 @@ const {
     routeState.query = location.query ?? {}
     return Promise.resolve()
   }),
+  pushMock: vi.fn(() => Promise.resolve()),
   successMock: vi.fn(),
 }))
 
 vi.mock('vue-router', () => ({
   useRoute: () => routeState,
-  useRouter: () => ({ replace: replaceMock }),
+  useRouter: () => ({ replace: replaceMock, push: pushMock }),
 }))
 
 vi.mock('element-plus/es/components/message/index', () => ({
@@ -870,6 +873,19 @@ describe('Knowledge overlay entry', () => {
       path_id: 'latest',
       include_persisted_search_results: true,
     })
+  })
+
+  it('routes overlay preflight users to graph option comparison', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    const preflightPanel = wrapper.findComponent(OverlayPreflightPanel)
+    expect(preflightPanel.exists()).toBe(true)
+
+    preflightPanel.vm.$emit('open-path-comparison')
+    await flushPromises()
+
+    expect(pushMock).toHaveBeenCalledWith({ name: 'Path', query: { tool: 'graph_options' } })
   })
 
   it('loads first-screen graph companions through the workspace endpoint', async () => {

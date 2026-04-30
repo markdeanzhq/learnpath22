@@ -20,6 +20,7 @@ const {
   resourceRecommendMock,
   searchMock,
   elMessageErrorMock,
+  routeState,
   currentProjectState,
   currentPlanState,
   lastReplanResultState,
@@ -42,6 +43,9 @@ const {
   resourceRecommendMock: vi.fn(),
   searchMock: vi.fn(),
   elMessageErrorMock: vi.fn(),
+  routeState: {
+    query: {} as Record<string, string>,
+  },
   currentProjectState: {
     value: {
       id: 'project-001',
@@ -75,6 +79,7 @@ const {
 }))
 
 vi.mock('vue-router', () => ({
+  useRoute: () => routeState,
   useRouter: () => ({ push: pushMock }),
 }))
 
@@ -474,6 +479,7 @@ function createDeferred<T>() {
 describe('Path page goal reconfirm flow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    routeState.query = {}
     currentProjectState.value = {
       id: 'project-001',
       title: '机器学习基础学习计划',
@@ -576,6 +582,19 @@ describe('Path page goal reconfirm flow', () => {
     expect(wrapper.text()).toContain('适合：不知道该选哪个参数')
     expect(wrapper.text()).toContain('还没有生成变体预览')
     expect(wrapper.text()).toContain('搜索资料会绑定到当前知识点')
+  })
+
+  it('opens graph option comparison from the route query without auto-previewing', async () => {
+    routeState.query = { tool: 'graph_options' }
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.activeTab).toBe('previews')
+    expect(vm.activeAdjustmentTool).toBe('graph_options')
+    expect(wrapper.text()).toContain('基础 / 增强图谱路径对比')
+    expect(planApiPreviewGraphOptionsMock).not.toHaveBeenCalled()
   })
 
   it('renders guided empty states for no project, no path, and load failure', async () => {

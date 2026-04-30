@@ -680,7 +680,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { Guide } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
@@ -715,6 +715,7 @@ const STALE_PREVIEW_ERRORS = new Set([
   'PARAMETER_DRIFT',
 ])
 
+const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
 const planStore = usePlanStore()
@@ -993,6 +994,21 @@ function openAdjustmentTool(tool: AdjustmentTool) {
   activeTab.value = 'previews'
 }
 
+function syncAdjustmentToolFromRoute() {
+  const requestedTool = normalizeAdjustmentTool(route.query.tool)
+  if (requestedTool) {
+    openAdjustmentTool(requestedTool)
+  }
+}
+
+function normalizeAdjustmentTool(value: unknown): AdjustmentTool | null {
+  const nextValue = Array.isArray(value) ? value[0] : value
+  if (nextValue === 'variants' || nextValue === 'graph_options' || nextValue === 'feedback') {
+    return nextValue
+  }
+  return null
+}
+
 function graphOptionChangeLabels(variant: VariantSummary) {
   const labels: string[] = []
   const pathOverlayNodes = variant.path_overlay_node_ids?.length || 0
@@ -1124,8 +1140,12 @@ async function askExplanationQuestion(payload: ExplanationAskRequest) {
   await explanationState.ask(payload)
 }
 
-onMounted(() => loadPath())
+onMounted(() => {
+  syncAdjustmentToolFromRoute()
+  void loadPath()
+})
 
+watch(() => route.query.tool, () => syncAdjustmentToolFromRoute())
 watch(projectId, () => loadPath())
 watch(currentPlanId, (nextPlanId, previousPlanId) => {
   if (previousPlanId && nextPlanId !== previousPlanId) {

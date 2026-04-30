@@ -17,19 +17,35 @@
     <div v-if="issues.length" class="overlay-preflight-issues">
       <span v-for="(item, index) in issues" :key="`${item.kind}-${index}`">{{ item.message }}</span>
     </div>
+    <div v-if="canOpenPathComparison" class="overlay-preflight-actions">
+      <span>已纳入规划的扩展可在学习路径页比较基础/增强图谱影响。</span>
+      <el-button size="small" type="primary" plain @click="emit('open-path-comparison')">
+        查看路径对比
+      </el-button>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { OverlayPreflightItem, OverlayPreflightResponse } from '@/api/modules/graph'
 
-defineProps<{
+const props = defineProps<{
   preflight: OverlayPreflightResponse
   tagType: string
   statusLabel: string
   guidance: string
   issues: OverlayPreflightItem[]
 }>()
+
+const emit = defineEmits<{
+  'open-path-comparison': []
+}>()
+
+const canOpenPathComparison = computed(() => (
+  props.preflight.status !== 'blocked'
+  && Boolean(props.preflight.counts.visible_overlay_nodes || props.preflight.counts.visible_overlay_edges)
+))
 </script>
 
 <style scoped>
@@ -67,6 +83,21 @@ defineProps<{
 .overlay-preflight-issues {
   margin-top: 8px;
   color: #e6a23c;
+  font-size: 12px;
+}
+
+.overlay-preflight-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #d9ecff;
+  border-radius: 8px;
+  background: #ecf5ff;
+  color: #606266;
   font-size: 12px;
 }
 

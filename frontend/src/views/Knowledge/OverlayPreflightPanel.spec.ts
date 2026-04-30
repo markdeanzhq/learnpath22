@@ -6,6 +6,10 @@ import type { OverlayPreflightResponse } from '@/api/modules/graph'
 
 const elementPlusStubs = {
   ElTag: defineComponent({ template: '<span><slot /></span>' }),
+  ElButton: defineComponent({
+    emits: ['click'],
+    template: '<button type="button" @click="$emit(\'click\')"><slot /></button>',
+  }),
 }
 
 const preflight = {
@@ -48,6 +52,24 @@ describe('OverlayPreflightPanel', () => {
     expect(wrapper.text()).toContain('当前路径命中 1 节点 / 0 关系')
     expect(wrapper.text()).toContain('忽略关系 2')
     expect(wrapper.text()).toContain('存在待审核候选')
+  })
+
+  it('emits a path comparison action when overlay candidates can enter planning', async () => {
+    const wrapper = mount(OverlayPreflightPanel, {
+      props: {
+        preflight,
+        tagType: 'success',
+        statusLabel: '可用',
+        guidance: '增强图谱已可用于项目图谱和路径预检。',
+        issues: [],
+      },
+      global: { stubs: elementPlusStubs },
+    })
+
+    expect(wrapper.text()).toContain('查看路径对比')
+    await wrapper.find('button').trigger('click')
+
+    expect(wrapper.emitted('open-path-comparison')).toHaveLength(1)
   })
 
   it('omits ignored edge and issue sections when there is no extra signal', () => {

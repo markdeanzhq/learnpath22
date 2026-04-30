@@ -66,6 +66,7 @@
           :status-label="overlayPreflightStatusLabel"
           :guidance="overlayPreflightGuidance"
           :issues="overlayPreflightIssues"
+          @open-path-comparison="openPathComparison"
         />
         <el-alert
           v-if="graphState === 'ready' && lastRefreshError"
@@ -145,6 +146,7 @@
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
@@ -190,6 +192,7 @@ type GraphCanvasHandle = GraphCanvasActionHandle & {
   setEdgeReviewStatus: (edgeId: string, status: string) => void
 }
 
+const router = useRouter()
 const projectStore = useProjectStore()
 const { displayMode, showAuditDetails, showTechnicalDetails } = useDisplayMode()
 const projectId = computed(() => projectStore.currentProject?.id)
@@ -466,6 +469,10 @@ const {
 })
 function updateOverlayForm(nextOverlayForm: OverlayFormState) {
   overlayForm.value = nextOverlayForm
+}
+
+async function openPathComparison() {
+  await router.push({ name: 'Path', query: { tool: 'graph_options' } })
 }
 
 function updateResourceBindingField(field: 'resourceId' | 'targetType' | 'targetId', value: string) {
