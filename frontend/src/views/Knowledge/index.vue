@@ -361,6 +361,8 @@ const edges = computed(() => elements.value.filter(isEdgeElement).map((element) 
 const {
   overlaySessionGuide,
   overlaySessionStats,
+  overlayCandidateDiagnostics,
+  overlayCandidateDiagnosticSummary,
   overlayWorkflowSteps,
   overlayWorkflowCurrentStep,
   overlayPreflightTagType,
@@ -519,6 +521,8 @@ const overlayDrawerProps = computed(() => ({
   showAuditDetails: showAuditDetails.value,
   overlaySessionGuide: overlaySessionGuide.value,
   overlaySessionStats: overlaySessionStats.value,
+  overlayCandidateDiagnostics: overlayCandidateDiagnostics.value,
+  overlayCandidateDiagnosticSummary: overlayCandidateDiagnosticSummary.value,
   overlayWorkflowSteps: overlayWorkflowSteps.value,
   overlayWorkflowCurrentStep: overlayWorkflowCurrentStep.value,
   overlayCandidateFilter: overlayCandidateFilter.value,

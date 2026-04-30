@@ -253,6 +253,8 @@
         :show-audit-details="showAuditDetails"
         :overlay-session-guide="overlaySessionGuide"
         :overlay-session-stats="overlaySessionStats"
+        :overlay-candidate-diagnostics="overlayCandidateDiagnostics"
+        :overlay-candidate-diagnostic-summary="overlayCandidateDiagnosticSummary"
         :overlay-workflow-steps="overlayWorkflowSteps"
         :overlay-workflow-current-step="overlayWorkflowCurrentStep"
         :overlay-candidate-filter-options="OVERLAY_CANDIDATE_FILTER_OPTIONS"
@@ -314,6 +316,8 @@ import type { PersistedSearchResult, SearchResultItem } from '@/api/modules/sear
 import OverlayExtractionPreviewPanel from './OverlayExtractionPreviewPanel.vue'
 import OverlaySessionResultPanel from './OverlaySessionResultPanel.vue'
 import type {
+  OverlayCandidateDiagnosticItem,
+  OverlayCandidateDiagnosticSummary,
   OverlayCandidateFilterCounts,
   OverlaySessionStats,
   ResourceTargetOption,
@@ -383,6 +387,8 @@ const props = defineProps<{
   showAuditDetails: boolean
   overlaySessionGuide: string
   overlaySessionStats: OverlaySessionStats
+  overlayCandidateDiagnostics: OverlayCandidateDiagnosticItem[]
+  overlayCandidateDiagnosticSummary: OverlayCandidateDiagnosticSummary
   overlayWorkflowSteps: OverlayWorkflowStep[]
   overlayWorkflowCurrentStep: OverlayWorkflowStep | null
   overlayCandidateFilter: CandidateIssueFilter

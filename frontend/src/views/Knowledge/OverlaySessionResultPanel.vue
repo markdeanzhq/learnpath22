@@ -14,6 +14,8 @@
 
     <OverlayCandidateReviewList
       v-model:filter="candidateFilterModel"
+      :diagnostics="overlayCandidateDiagnostics"
+      :diagnostic-summary="overlayCandidateDiagnosticSummary"
       :filter-options="overlayCandidateFilterOptions"
       :filter-counts="overlayCandidateFilterCounts"
       :filtered-candidate-count="filteredOverlayCandidateCount"
@@ -83,6 +85,8 @@ import type {
 } from './composables/useOverlayCandidateWorkflow'
 import type { ResourceBindingForm } from './composables/useOverlayPostActions'
 import type {
+  OverlayCandidateDiagnosticItem,
+  OverlayCandidateDiagnosticSummary,
   OverlayCandidateFilterCounts,
   OverlayCandidateFilterOption,
   OverlaySessionStats,
@@ -95,6 +99,8 @@ const props = defineProps<{
   showAuditDetails: boolean
   overlaySessionGuide: string
   overlaySessionStats: OverlaySessionStats
+  overlayCandidateDiagnostics: OverlayCandidateDiagnosticItem[]
+  overlayCandidateDiagnosticSummary: OverlayCandidateDiagnosticSummary
   overlayWorkflowSteps: OverlayWorkflowStep[]
   overlayWorkflowCurrentStep: OverlayWorkflowStep | null
   overlayCandidateFilter: CandidateIssueFilter

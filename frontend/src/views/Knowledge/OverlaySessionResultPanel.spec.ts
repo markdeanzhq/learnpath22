@@ -113,6 +113,30 @@ function mountPanel(overrides: Partial<InstanceType<typeof OverlaySessionResultP
       showAuditDetails: true,
       overlaySessionGuide: '下一步：先修复失败候选。',
       overlaySessionStats: { valid: 1, invalid: 1, needsReview: 1, pendingReview: 2 },
+      overlayCandidateDiagnostics: [
+        {
+          key: 'blocking',
+          title: '先修复校验失败候选',
+          description: '这些候选会阻塞增强图谱进入路径。',
+          statusLabel: '需修复',
+          actionLabel: '查看需修复',
+          count: 1,
+          filter: 'blocking',
+          tagType: 'danger',
+          firstTargetTitle: '线性回归',
+          firstError: 'missing_summary',
+        },
+      ],
+      overlayCandidateDiagnosticSummary: {
+        severity: 'blocking',
+        title: '先修复校验失败候选',
+        description: '这些候选会阻塞增强图谱进入路径。 首个处理目标：线性回归。',
+        statusLabel: '需修复',
+        tagType: 'danger',
+        primaryFilter: 'blocking',
+        primaryActionLabel: '打开首个需处理候选',
+        canOpenRepairTarget: true,
+      },
       overlayWorkflowSteps: [
         { key: 'draft', title: '草稿创建', description: '生成候选', state: 'done', statusLabel: '已完成', tagType: 'success' },
         { key: 'review', title: '人工审核', description: '处理候选', state: 'current', statusLabel: '进行中', tagType: 'warning' },
@@ -165,6 +189,8 @@ describe('OverlaySessionResultPanel', () => {
     expect(wrapper.text()).toContain('追溯编号：session-001')
     expect(wrapper.text()).toContain('通过 1，失败 1，待复核 1，待审核 2')
     expect(wrapper.text()).toContain('当前阶段：人工审核')
+    expect(wrapper.text()).toContain('先修复校验失败候选')
+    expect(wrapper.text()).toContain('首个目标：线性回归')
     expect(wrapper.text()).toContain('候选处理队列')
     expect(wrapper.text()).toContain('线性回归')
     expect(wrapper.text()).toContain('机器学习导论 → 线性回归')

@@ -527,6 +527,78 @@ describe('Knowledge overlay entry', () => {
     expect(successMock).toHaveBeenCalledWith('自动扩展草稿已创建，请审核候选节点、关系和资源')
   })
 
+  it('summarizes repair diagnostics for automatic overlay draft candidates', async () => {
+    graphCreateOverlayAutoDraftMock.mockResolvedValueOnce({
+      session: {
+        session_id: 'sess-auto-diagnostics',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-auto-001'],
+        warnings: [],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [
+        {
+          node_id: 'node-auto-001',
+          name: '随机森林扩展',
+          validation_status: 'invalid',
+          validation_errors: ['missing_summary'],
+          review_status: 'pending',
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'edge-auto-001',
+          source_name_or_id: '随机森林扩展',
+          target_node_id: 'ml_c01',
+          relation_type: 'RELATED_TO',
+          validation_status: 'needs_review',
+          validation_errors: ['duplicate_edge'],
+          review_status: 'pending',
+        },
+      ],
+      resources: [
+        {
+          resource_id: 'resource-auto-001',
+          title: '随机森林教程',
+          resource_type: 'article',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'pending',
+          binding_summary: { count: 0 },
+        },
+      ],
+      warnings: [],
+      auto_draft: {
+        query: '随机森林',
+        search_result_count: 1,
+        selected_result_count: 1,
+        selected_result_ids: ['result-auto-001'],
+        source_ids: ['src-auto-001'],
+        reused_source_count: 0,
+        preview_counts: { nodes: 1, edges: 1, resources: 1 },
+        validation_summary: { has_blocking_errors: true, needs_review: true, invalid_count: 1, needs_review_count: 1 },
+      },
+    })
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).overlaySearchQuery = '随机森林'
+    await (wrapper.vm as any).createAutoOverlayDraft()
+
+    expect((wrapper.vm as any).overlayCandidateDiagnosticSummary).toEqual(expect.objectContaining({
+      severity: 'blocking',
+      title: '先修复校验失败候选',
+      canOpenRepairTarget: true,
+    }))
+    expect((wrapper.vm as any).overlayCandidateDiagnosticSummary.description).toContain('随机森林扩展')
+    expect((wrapper.vm as any).overlayCandidateFilterCounts).toEqual({ all: 3, blocking: 1, review: 1, pending: 1, ready: 0 })
+    expect((wrapper.vm as any).overlayDrawerProps.overlayCandidateDiagnosticSummary.title).toBe('先修复校验失败候选')
+  })
+
   it('creates pasted text source before extraction session', async () => {
     const wrapper = mountKnowledge()
     await flushPromises()

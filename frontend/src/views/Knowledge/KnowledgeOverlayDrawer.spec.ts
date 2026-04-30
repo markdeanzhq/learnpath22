@@ -171,6 +171,30 @@ function mountDrawer() {
       showAuditDetails: true,
       overlaySessionGuide: '下一步：先修复失败候选。',
       overlaySessionStats: { valid: 1, invalid: 1, needsReview: 1, pendingReview: 2 },
+      overlayCandidateDiagnostics: [
+        {
+          key: 'blocking',
+          title: '先修复校验失败候选',
+          description: '这些候选会阻塞增强图谱进入路径。',
+          statusLabel: '需修复',
+          actionLabel: '查看需修复',
+          count: 1,
+          filter: 'blocking',
+          tagType: 'danger',
+          firstTargetTitle: '线性回归',
+          firstError: 'missing_summary',
+        },
+      ],
+      overlayCandidateDiagnosticSummary: {
+        severity: 'blocking',
+        title: '先修复校验失败候选',
+        description: '这些候选会阻塞增强图谱进入路径。 首个处理目标：线性回归。',
+        statusLabel: '需修复',
+        tagType: 'danger',
+        primaryFilter: 'blocking',
+        primaryActionLabel: '打开首个需处理候选',
+        canOpenRepairTarget: true,
+      },
       overlayWorkflowSteps: [
         { key: 'draft', title: '草稿创建', description: '生成候选', state: 'done', statusLabel: '已完成', tagType: 'success' },
         { key: 'review', title: '人工审核', description: '处理候选', state: 'current', statusLabel: '进行中', tagType: 'warning' },
@@ -253,6 +277,8 @@ describe('KnowledgeOverlayDrawer', () => {
     expect(wrapper.text()).toContain('推荐流程')
     expect(wrapper.text()).toContain('手动资料补充指南')
     expect(wrapper.text()).toContain('安全抓取')
+    expect(wrapper.text()).toContain('先修复校验失败候选')
+    expect(wrapper.text()).toContain('首个目标：线性回归')
     expect(wrapper.text()).toContain('随机森林入门')
 
     await wrapper.findAll('button').find((button) => button.text() === '一键自动生成草稿')?.trigger('click')

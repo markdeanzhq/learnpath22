@@ -1,4 +1,10 @@
-import type { CandidateIssueFilter } from './composables/useOverlayCandidateWorkflow'
+import type {
+  CandidateIssueFilter,
+  OverlayCandidateDiagnosticItem,
+  OverlayCandidateDiagnosticSummary,
+} from './composables/useOverlayCandidateWorkflow'
+
+export type { OverlayCandidateDiagnosticItem, OverlayCandidateDiagnosticSummary }
 
 export type OverlaySessionStats = {
   invalid: number

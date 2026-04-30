@@ -22,6 +22,32 @@ export type OverlayWorkflowStep = {
   tagType: 'success' | 'warning' | 'info'
 }
 
+export type OverlayCandidateDiagnosticSeverity = CandidateIssueFilter | 'empty'
+
+export type OverlayCandidateDiagnosticItem = {
+  key: CandidateIssueFilter
+  title: string
+  description: string
+  statusLabel: string
+  actionLabel: string
+  count: number
+  filter: CandidateIssueFilter
+  tagType: 'success' | 'warning' | 'info' | 'danger'
+  firstTargetTitle: string
+  firstError: string
+}
+
+export type OverlayCandidateDiagnosticSummary = {
+  severity: OverlayCandidateDiagnosticSeverity
+  title: string
+  description: string
+  statusLabel: string
+  tagType: 'success' | 'warning' | 'info' | 'danger'
+  primaryFilter: CandidateIssueFilter
+  primaryActionLabel: string
+  canOpenRepairTarget: boolean
+}
+
 type OverlaySessionCandidateLike = {
   validation_status?: string | null
   review_status?: string | null
@@ -59,9 +85,18 @@ export function useOverlayCandidateWorkflow({
   nodes: Ref<GraphNodeData[]>
   overlayCandidateFilter: Ref<CandidateIssueFilter>
 }) {
-  const overlaySessionStats = computed(() => {
+  const overlaySessionCandidates = computed<OverlayRepairTarget[]>(() => {
     const session = lastOverlaySession.value
-    const candidates = session ? [...(session.nodes || []), ...(session.edges || []), ...(session.resources || [])] : []
+    if (!session) return []
+    return [
+      ...(session.nodes || []).map((candidate) => ({ kind: 'node' as const, candidate })),
+      ...(session.edges || []).map((candidate) => ({ kind: 'edge' as const, candidate })),
+      ...(session.resources || []).map((candidate) => ({ kind: 'resource' as const, candidate })),
+    ]
+  })
+
+  const overlaySessionStats = computed(() => {
+    const candidates = overlaySessionCandidates.value.map((item) => item.candidate)
     return {
       invalid: candidates.filter((item) => item.validation_status === 'invalid').length,
       needsReview: candidates.filter((item) => item.validation_status === 'needs_review').length,
@@ -70,20 +105,87 @@ export function useOverlayCandidateWorkflow({
     }
   })
 
+  const overlayCandidateDiagnostics = computed<OverlayCandidateDiagnosticItem[]>(() => {
+    const targets = overlaySessionCandidates.value
+    const diagnostics = [
+      buildOverlayCandidateDiagnostic({
+        key: 'blocking',
+        targets: targets.filter((item) => item.candidate.validation_status === 'invalid'),
+        title: '先修复校验失败候选',
+        description: '这些候选会阻塞增强图谱进入路径，优先补齐必填字段、证据来源或修正关系端点。',
+        statusLabel: '需修复',
+        actionLabel: '查看需修复',
+        tagType: 'danger',
+      }),
+      buildOverlayCandidateDiagnostic({
+        key: 'review',
+        targets: targets.filter((item) => item.candidate.validation_status === 'needs_review'),
+        title: '复核重复或证据不足候选',
+        description: '这些候选可能重复、证据不足或需要确认是否保留，复核后再进入人工审核。',
+        statusLabel: '待复核',
+        actionLabel: '查看待复核',
+        tagType: 'warning',
+      }),
+      buildOverlayCandidateDiagnostic({
+        key: 'pending',
+        targets: targets.filter((item) => item.candidate.validation_status === 'valid' && item.candidate.review_status === 'pending'),
+        title: '确认机器校验已通过候选',
+        description: '这些候选已通过机器校验但仍是草稿，人工确认后才会按规划开关进入增强图谱。',
+        statusLabel: '待审核',
+        actionLabel: '查看待审核',
+        tagType: 'info',
+      }),
+      buildOverlayCandidateDiagnostic({
+        key: 'ready',
+        targets: targets.filter((item) => item.candidate.validation_status === 'valid' && item.candidate.review_status === 'confirmed'),
+        title: '已确认候选可参与路径',
+        description: '这些候选已经确认，可继续预检路径；如暂不需要进入路径，可关闭规划开关。',
+        statusLabel: '已确认',
+        actionLabel: '查看已确认',
+        tagType: 'success',
+      }),
+    ]
+    return diagnostics.filter((item): item is OverlayCandidateDiagnosticItem => Boolean(item))
+  })
+
+  const overlayCandidateDiagnosticSummary = computed<OverlayCandidateDiagnosticSummary>(() => {
+    const total = overlaySessionCandidates.value.length
+    const primary = (
+      overlayCandidateDiagnostics.value.find((item) => item.key === 'blocking')
+      || overlayCandidateDiagnostics.value.find((item) => item.key === 'review')
+      || overlayCandidateDiagnostics.value.find((item) => item.key === 'pending')
+      || overlayCandidateDiagnostics.value.find((item) => item.key === 'ready')
+    )
+
+    if (!total || !primary) {
+      return {
+        severity: 'empty',
+        title: '暂无候选诊断',
+        description: '生成自动草稿或创建扩展草稿后，系统会在这里提示阻塞项、复核项和审核入口。',
+        statusLabel: '无候选',
+        tagType: 'info',
+        primaryFilter: 'all',
+        primaryActionLabel: '查看全部候选',
+        canOpenRepairTarget: false,
+      }
+    }
+
+    const targetHint = primary.firstTargetTitle ? ` 首个处理目标：${primary.firstTargetTitle}。` : ''
+    return {
+      severity: primary.key,
+      title: primary.title,
+      description: `${primary.description}${targetHint}`,
+      statusLabel: primary.statusLabel,
+      tagType: primary.tagType,
+      primaryFilter: primary.filter,
+      primaryActionLabel: primary.key === 'blocking' || primary.key === 'review' ? '打开首个需处理候选' : primary.actionLabel,
+      canOpenRepairTarget: primary.key === 'blocking' || primary.key === 'review',
+    }
+  })
+
   const overlaySessionGuide = computed(() => {
-    const session = lastOverlaySession.value
-    if (!session) return ''
-    const candidates = [...(session.nodes || []), ...(session.edges || []), ...(session.resources || [])]
-    if (candidates.some((item) => item.validation_status === 'invalid')) {
-      return '下一步：先点击“编辑修复”处理校验失败项；失败节点修复后，相关关系会自动重新校验。'
-    }
-    if (candidates.some((item) => item.validation_status === 'needs_review')) {
-      return '下一步：存在重复或需要复核的候选，请确认是否保留，再进行人工审核。'
-    }
-    if (candidates.some((item) => item.review_status === 'pending')) {
-      return '下一步：候选已经通过机器校验，但仍是草稿；请在图谱或明细中确认审核。'
-    }
-    return '下一步：已确认候选可参与增强图谱；如果暂不想进入路径，可关闭规划开关。'
+    if (!lastOverlaySession.value) return ''
+    return `下一步：${overlayCandidateDiagnosticSummary.value.description}`
   })
 
   const overlayWorkflowSteps = computed<OverlayWorkflowStep[]>(() => {
@@ -168,16 +270,6 @@ export function useOverlayCandidateWorkflow({
     if (counts.visible_overlay_nodes || counts.visible_overlay_edges) return '增强图谱已可用于项目图谱和路径预检；如需写入 Neo4j 投影，再点击同步图谱。'
     return '当前草稿尚未产生可进入增强图谱的节点或关系。'
   })
-  const overlaySessionCandidates = computed<OverlayRepairTarget[]>(() => {
-    const session = lastOverlaySession.value
-    if (!session) return []
-    return [
-      ...(session.nodes || []).map((candidate) => ({ kind: 'node' as const, candidate })),
-      ...(session.edges || []).map((candidate) => ({ kind: 'edge' as const, candidate })),
-      ...(session.resources || []).map((candidate) => ({ kind: 'resource' as const, candidate })),
-    ]
-  })
-
   const filteredOverlayNodes = computed(() => (lastOverlaySession.value?.nodes || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
   const filteredOverlayEdges = computed(() => (lastOverlaySession.value?.edges || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
   const filteredOverlayResources = computed(() => (lastOverlaySession.value?.resources || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
@@ -222,6 +314,8 @@ export function useOverlayCandidateWorkflow({
   return {
     overlaySessionGuide,
     overlaySessionStats,
+    overlayCandidateDiagnostics,
+    overlayCandidateDiagnosticSummary,
     overlayWorkflowSteps,
     overlayWorkflowCurrentStep,
     overlayPreflightTagType,
@@ -253,6 +347,39 @@ function overlayRepairTargetTitle(target: OverlayRepairTarget) {
   if (target.kind === 'node') return target.candidate.name || target.candidate.node_id
   if (target.kind === 'edge') return `${target.candidate.source_node_id || target.candidate.source_name_or_id || '未知来源'} → ${target.candidate.target_node_id || target.candidate.target_name_or_id || '未知目标'}`
   return target.candidate.title || target.candidate.resource_id
+}
+
+function buildOverlayCandidateDiagnostic({
+  key,
+  targets,
+  title,
+  description,
+  statusLabel,
+  actionLabel,
+  tagType,
+}: {
+  key: CandidateIssueFilter
+  targets: OverlayRepairTarget[]
+  title: string
+  description: string
+  statusLabel: string
+  actionLabel: string
+  tagType: 'success' | 'warning' | 'info' | 'danger'
+}): OverlayCandidateDiagnosticItem | null {
+  if (!targets.length) return null
+  const firstTarget = targets[0]
+  return {
+    key,
+    title,
+    description,
+    statusLabel,
+    actionLabel,
+    count: targets.length,
+    filter: key,
+    tagType,
+    firstTargetTitle: overlayRepairTargetTitle(firstTarget),
+    firstError: firstTarget.candidate.validation_errors?.[0] || '',
+  }
 }
 
 function addEndpointOption(

@@ -1,4 +1,46 @@
 <template>
+  <div v-if="filterCounts.all" class="overlay-diagnostic-summary">
+    <div class="overlay-diagnostic-main">
+      <el-tag size="small" :type="diagnosticSummary.tagType">{{ diagnosticSummary.statusLabel }}</el-tag>
+      <div>
+        <strong>{{ diagnosticSummary.title }}</strong>
+        <p>{{ diagnosticSummary.description }}</p>
+      </div>
+    </div>
+    <el-button
+      v-if="diagnosticSummary.canOpenRepairTarget"
+      size="small"
+      type="primary"
+      @click="emit('open-first-repairable')"
+    >
+      {{ diagnosticSummary.primaryActionLabel }}
+    </el-button>
+    <el-button
+      v-else
+      size="small"
+      plain
+      @click="candidateFilterModel = diagnosticSummary.primaryFilter"
+    >
+      {{ diagnosticSummary.primaryActionLabel }}
+    </el-button>
+  </div>
+
+  <div v-if="diagnostics.length" class="overlay-diagnostic-list">
+    <article v-for="diagnostic in diagnostics" :key="diagnostic.key" class="overlay-diagnostic-item">
+      <div class="overlay-diagnostic-item-header">
+        <el-tag size="small" :type="diagnostic.tagType">{{ diagnostic.statusLabel }} {{ diagnostic.count }}</el-tag>
+        <el-button size="small" text type="primary" @click="candidateFilterModel = diagnostic.filter">
+          {{ diagnostic.actionLabel }}
+        </el-button>
+      </div>
+      <strong>{{ diagnostic.title }}</strong>
+      <p>{{ diagnostic.description }}</p>
+      <p v-if="diagnostic.firstTargetTitle" class="overlay-diagnostic-target">
+        首个目标：{{ diagnostic.firstTargetTitle }}<span v-if="diagnostic.firstError"> · {{ validationErrorMessage(diagnostic.firstError) }}</span>
+      </p>
+    </article>
+  </div>
+
   <div v-if="filterCounts.all" class="overlay-candidate-toolbar">
     <div class="overlay-candidate-toolbar-title">
       <strong>候选处理队列</strong>
@@ -80,6 +122,10 @@ import type {
 } from '@/api/modules/graph'
 import { resourceTypeMeta, validationStatusMeta } from '@/utils/displayLabels'
 import type { CandidateIssueFilter } from './composables/useOverlayCandidateWorkflow'
+import type {
+  OverlayCandidateDiagnosticItem,
+  OverlayCandidateDiagnosticSummary,
+} from './overlaySessionPanelTypes'
 
 type OverlayCandidateFilterOption = {
   value: CandidateIssueFilter
@@ -89,6 +135,8 @@ type OverlayCandidateFilterOption = {
 type OverlayCandidateFilterCounts = Record<CandidateIssueFilter, number>
 
 const props = defineProps<{
+  diagnostics: OverlayCandidateDiagnosticItem[]
+  diagnosticSummary: OverlayCandidateDiagnosticSummary
   filter: CandidateIssueFilter
   filterOptions: OverlayCandidateFilterOption[]
   filterCounts: OverlayCandidateFilterCounts
@@ -116,6 +164,58 @@ const candidateFilterModel = computed({
 </script>
 
 <style scoped>
+.overlay-diagnostic-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #d9ecff;
+  border-radius: 10px;
+  background: #ecf5ff;
+}
+
+.overlay-diagnostic-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.overlay-diagnostic-summary p,
+.overlay-diagnostic-item p {
+  margin: 4px 0 0;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.overlay-diagnostic-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.overlay-diagnostic-item {
+  padding: 10px;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.overlay-diagnostic-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.overlay-diagnostic-target {
+  color: #909399;
+}
+
 .overlay-candidate-toolbar {
   display: flex;
   align-items: center;
