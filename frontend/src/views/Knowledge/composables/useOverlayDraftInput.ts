@@ -24,12 +24,14 @@ type CurrentProjectLike = {
   domain?: string | null
 } | null | undefined
 
-type PreviewPayload = {
+export type PreviewPayload = {
   nodes: Array<Record<string, any>>
   edges: Array<Record<string, any>>
   resources: Array<Record<string, any>>
   warnings: string[]
 }
+
+export type OverlayFormState = ReturnType<typeof createOverlayForm>
 
 type UseOverlayDraftInputOptions = {
   projectId: Readonly<Ref<string | undefined>>

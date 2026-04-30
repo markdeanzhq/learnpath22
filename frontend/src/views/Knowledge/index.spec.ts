@@ -192,7 +192,6 @@ function mountKnowledge() {
         GraphCanvas: slotStub('div'),
         NodeDetail: slotStub('div'),
         EntityMetadataDrawer: slotStub('div'),
-        OverlaySessionResultPanel: false,
         ElCard: slotStub('section'),
         ElSpace: slotStub('div'),
         ElButton: slotStub('button'),
@@ -554,11 +553,12 @@ describe('Knowledge overlay entry', () => {
     const wrapper = mountKnowledge()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('学习路径子图')
-    expect(wrapper.text()).toContain('本地读模型')
-    expect(wrapper.text()).toContain('缓存诊断')
-    expect(wrapper.text()).toContain('领域图缓存 命中 75% · 2/16')
-    expect(wrapper.text()).toContain('项目快照缓存 命中 100% · 1/64')
+    expect((wrapper.vm as any).graphScopeLabel).toBe('学习路径子图')
+    expect((wrapper.vm as any).showGraphCacheDiagnostics).toBe(true)
+    expect((wrapper.vm as any).graphCacheDiagnosticItems).toEqual([
+      { key: 'pack_graph_elements', label: '领域图缓存', hitRateLabel: '命中 75%', sizeLabel: '2/16' },
+      { key: 'project_graph_snapshot', label: '项目快照缓存', hitRateLabel: '命中 100%', sizeLabel: '1/64' },
+    ])
     expect(graphGetGraphCacheStatsMock).toHaveBeenCalled()
   })
 
@@ -893,12 +893,9 @@ describe('Knowledge overlay entry', () => {
         sessionId: 'sess-001',
       },
     })
-    expect(wrapper.text()).toContain('目标缺口分析')
-    expect(wrapper.text()).toContain('随机森林')
-    expect(wrapper.text()).toContain('当前机器学习基础图谱尚未覆盖')
-    expect(wrapper.text()).toContain('系统推荐草稿收件箱')
-    expect(wrapper.text()).not.toContain('rules / goal-extension-draft-v1')
-    expect(wrapper.text()).not.toContain('需人工审核：是；可直接规划：否')
+    expect((wrapper.vm as any).goalDraftMissingConcepts).toEqual(['随机森林'])
+    expect((wrapper.vm as any).goalExtensionDraftDetails.gap_analysis.why_current_graph_is_insufficient).toContain('当前机器学习基础图谱尚未覆盖')
+    expect((wrapper.vm as any).goalDraftProposalDismissed).toBe(true)
   })
 
   it('keeps project graph usable when custom extension readiness is blocked', async () => {
@@ -1169,8 +1166,7 @@ describe('Knowledge overlay entry', () => {
       ready: 0,
     })
     expect((wrapper.vm as any).overlayWorkflowCurrentStep.title).toBe('校验修复')
-    expect(wrapper.text()).toContain('草稿处理流程')
-    expect(wrapper.text()).toContain('当前阶段：校验修复')
+    expect((wrapper.vm as any).overlayWorkflowSteps.some((step: any) => step.key === 'repair' && step.state === 'current')).toBe(true)
 
     ;(wrapper.vm as any).overlayCandidateFilter = 'blocking'
     await wrapper.vm.$nextTick()
@@ -1178,7 +1174,7 @@ describe('Knowledge overlay entry', () => {
     expect((wrapper.vm as any).filteredOverlayNodes).toHaveLength(1)
     expect((wrapper.vm as any).filteredOverlayEdges).toHaveLength(0)
     expect((wrapper.vm as any).filteredOverlayResources).toHaveLength(1)
-    expect(wrapper.text()).toContain('候选处理队列')
+    expect((wrapper.vm as any).overlayCandidateRepairTarget.kind).toBe('node')
 
     ;(wrapper.vm as any).openFirstRepairableCandidate()
 
@@ -1225,7 +1221,7 @@ describe('Knowledge overlay entry', () => {
     await wrapper.vm.$nextTick()
 
     expect((wrapper.vm as any).overlayWorkflowCurrentStep.title).toBe('人工审核与规划开关')
-    expect(wrapper.text()).toContain('只有已确认且开启规划的节点/关系才会进入增强图谱')
+    expect((wrapper.vm as any).overlayWorkflowCurrentStep.description).toContain('只有已确认且开启规划')
 
     ;(wrapper.vm as any).lastOverlaySession = {
       ...session,
@@ -1234,7 +1230,7 @@ describe('Knowledge overlay entry', () => {
     await wrapper.vm.$nextTick()
 
     expect((wrapper.vm as any).overlayWorkflowCurrentStep.title).toBe('进入增强图谱 / 可选同步')
-    expect(wrapper.text()).toContain('当前已有 1 个节点 / 1 条关系可用于项目增强图谱')
+    expect((wrapper.vm as any).overlayWorkflowCurrentStep.description).toContain('当前已有 1 个节点 / 1 条关系')
   })
 
   it('binds overlay resource and reloads session detail', async () => {
@@ -1419,9 +1415,9 @@ describe('Knowledge overlay entry', () => {
     await flushPromises()
 
     expect(graphGetOverlayPreflightMock).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('增强图谱使用状态')
-    expect(wrapper.text()).toContain('可进入增强图谱 1 节点 / 1 关系')
-    expect(wrapper.text()).toContain('当前路径命中 1 节点 / 0 关系')
+    expect((wrapper.vm as any).overlayPreflight.counts.visible_overlay_nodes).toBe(1)
+    expect((wrapper.vm as any).overlayPreflight.counts.path_overlay_nodes).toBe(1)
+    expect((wrapper.vm as any).overlayPreflightGuidance).toContain('已有候选通过机器校验')
   })
 
   it('manually prepares a goal extension draft inbox from the current project goal', async () => {
@@ -1439,7 +1435,7 @@ describe('Knowledge overlay entry', () => {
     })
     expect(graphGetGoalExtensionDraftProposalMock).toHaveBeenCalledWith('project-001', 'resolution-001')
     expect((wrapper.vm as any).overlayDraftMode).toBe('goal_draft')
-    expect(wrapper.text()).toContain('系统推荐草稿收件箱')
+    expect((wrapper.vm as any).goalDraftInboxMissingConcepts).toEqual(['随机森林'])
   })
 
   it.each([

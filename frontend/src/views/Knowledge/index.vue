@@ -39,60 +39,22 @@
         v-loading="loading || syncing"
         :element-loading-text="syncing ? '正在同步知识图谱...' : '正在加载知识图谱...'"
       >
-        <div class="graph-legend-wrap">
-          <div class="legend-section">
-            <span class="legend-title">节点颜色</span>
-            <div class="legend-items">
-              <span v-for="item in categoryLegend" :key="item.key" class="legend-chip">
-                <span class="legend-dot" :style="{ backgroundColor: item.color }"></span>
-                <span>{{ item.label }}</span>
-              </span>
-            </div>
-          </div>
-
-          <div class="legend-section">
-            <span class="legend-title">关系说明</span>
-            <div class="legend-items">
-              <span v-for="item in relationLegend" :key="item.type" class="legend-chip legend-chip-edge">
-                <span class="legend-line" :class="[
-                  item.lineStyle === 'dashed' ? 'legend-line-dashed' : 'legend-line-solid',
-                  item.hasArrow ? 'legend-line-arrow' : '',
-                ]"></span>
-                <span>{{ item.label }}：{{ item.description }}</span>
-              </span>
-            </div>
-          </div>
-        </div>
-        <section class="graph-status-panel">
-          <div>
-            <strong>{{ graphScopeLabel }}</strong>
-            <p>{{ graphStatusHint }}</p>
-          </div>
-          <div class="graph-status-meta">
-            <div class="graph-status-tags">
-              <el-tag size="small" type="info" effect="plain">节点 {{ graphNodeCount }}</el-tag>
-              <el-tag size="small" type="info" effect="plain">关系 {{ graphEdgeCount }}</el-tag>
-              <el-tag size="small" type="success" effect="plain">本地读模型</el-tag>
-              <el-tag v-if="overlayPreflight" size="small" :type="overlayPreflightTagType" effect="plain">
-                增强候选 {{ overlayPreflight.counts.visible_overlay_nodes }} / {{ overlayPreflight.counts.visible_overlay_edges }}
-              </el-tag>
-            </div>
-            <div v-if="showGraphCacheDiagnostics" class="graph-cache-diagnostics" data-testid="graph-cache-diagnostics">
-              <span class="graph-cache-title">缓存诊断</span>
-              <el-tag
-                v-for="item in graphCacheDiagnosticItems"
-                :key="item.key"
-                size="small"
-                type="info"
-                effect="plain"
-              >
-                {{ item.label }} {{ item.hitRateLabel }} · {{ item.sizeLabel }}
-              </el-tag>
-              <el-tag v-if="graphCacheStatsLoading" size="small" type="warning" effect="plain">刷新中</el-tag>
-              <el-tag v-if="graphCacheStatsError" size="small" type="danger" effect="plain">{{ graphCacheStatsError }}</el-tag>
-            </div>
-          </div>
-        </section>
+        <GraphLegendPanel
+          :category-legend="categoryLegend"
+          :relation-legend="relationLegend"
+        />
+        <GraphStatusPanel
+          :scope-label="graphScopeLabel"
+          :status-hint="graphStatusHint"
+          :node-count="graphNodeCount"
+          :edge-count="graphEdgeCount"
+          :overlay-preflight="overlayPreflight"
+          :overlay-preflight-tag-type="overlayPreflightTagType"
+          :show-graph-cache-diagnostics="showGraphCacheDiagnostics"
+          :graph-cache-diagnostic-items="graphCacheDiagnosticItems"
+          :graph-cache-stats-loading="graphCacheStatsLoading"
+          :graph-cache-stats-error="graphCacheStatsError"
+        />
         <el-alert
           v-if="projectionStatus && projectionStatus.status !== 'empty'"
           class="graph-alert"
@@ -101,25 +63,14 @@
           show-icon
           :title="projectionStatusTitle"
         />
-        <section v-if="overlayPreflight" class="overlay-preflight-panel graph-alert">
-          <div class="overlay-preflight-header">
-            <strong>增强图谱使用状态</strong>
-            <el-tag :type="overlayPreflightTagType">{{ overlayPreflightStatusLabel }}</el-tag>
-          </div>
-          <p>{{ overlayPreflight.summary }}</p>
-          <p class="overlay-guidance">{{ overlayPreflightGuidance }}</p>
-          <div class="overlay-preflight-tags">
-            <el-tag type="info" effect="plain">候选 {{ overlayPreflight.counts.active_nodes }} 节点 / {{ overlayPreflight.counts.active_edges }} 关系</el-tag>
-            <el-tag type="success" effect="plain">可进入增强图谱 {{ overlayPreflight.counts.visible_overlay_nodes }} 节点 / {{ overlayPreflight.counts.visible_overlay_edges }} 关系</el-tag>
-            <el-tag type="warning" effect="plain">待审核 {{ overlayPreflight.counts.nodes.pending_review + overlayPreflight.counts.edges.pending_review }}</el-tag>
-            <el-tag type="danger" effect="plain">校验失败 {{ overlayPreflight.counts.nodes.invalid + overlayPreflight.counts.edges.invalid }}</el-tag>
-            <el-tag type="warning" effect="plain">当前路径命中 {{ overlayPreflight.counts.path_overlay_nodes }} 节点 / {{ overlayPreflight.counts.path_overlay_edges }} 关系</el-tag>
-            <el-tag v-if="overlayPreflight.counts.ignored_overlay_edges" type="warning" effect="plain">忽略关系 {{ overlayPreflight.counts.ignored_overlay_edges }}</el-tag>
-          </div>
-          <div v-if="overlayPreflightIssues.length" class="overlay-preflight-issues">
-            <span v-for="(item, index) in overlayPreflightIssues" :key="`${item.kind}-${index}`">{{ item.message }}</span>
-          </div>
-        </section>
+        <OverlayPreflightPanel
+          v-if="overlayPreflight"
+          :preflight="overlayPreflight"
+          :tag-type="overlayPreflightTagType"
+          :status-label="overlayPreflightStatusLabel"
+          :guidance="overlayPreflightGuidance"
+          :issues="overlayPreflightIssues"
+        />
         <el-alert
           v-if="graphState === 'ready' && lastRefreshError"
           class="graph-alert"
@@ -190,227 +141,78 @@
       :metadata="entityMetadata"
     />
 
-    <el-drawer v-model="overlayDrawerVisible" title="创建扩展草稿" :size="520" direction="rtl">
-      <div class="overlay-drawer" v-loading="overlaySubmitting || overlayExtractionPreviewLoading">
-        <DisplayModeSwitch v-model="displayMode" />
-        <el-alert
-          class="overlay-alert"
-          type="info"
-          :closable="false"
-          show-icon
-          title="扩展草稿会先进入项目扩展区，确认审核与规划开关后才会参与路径规划。"
-        />
-        <el-alert
-          v-if="activeGoalDraftResolutionSessionId"
-          class="overlay-alert"
-          type="warning"
-          :closable="false"
-          show-icon
-          title="来自目标理解的领域内未覆盖概念。页面打开只展示草稿收件箱；点击创建后才会生成 overlay 草稿。"
-        />
-        <section v-else class="overlay-subsection goal-draft-entry manual-goal-draft-entry">
-          <h4>智能草稿建议</h4>
-          <p>手动触发当前项目目标的覆盖分析；只有识别为领域内未覆盖概念时，才会生成待审核 overlay 草稿收件箱。</p>
-          <el-button size="small" type="primary" plain :loading="manualGoalDraftLoading" @click="prepareGoalDraftFromCurrentProject">
-            分析当前目标并生成推荐草稿
-          </el-button>
-        </section>
-
-        <section v-if="activeGoalDraftResolutionSessionId" class="overlay-subsection goal-draft-entry" v-loading="goalDraftProposalLoading">
-          <h4>系统推荐草稿收件箱</h4>
-          <p>系统已根据目标理解准备推荐草稿图谱；您也可以忽略推荐，继续使用粘贴文本、搜索 URL 或已保存搜索结果手动补充。</p>
-          <el-radio-group v-model="overlayDraftMode" class="draft-mode-switch">
-            <el-radio-button value="goal_draft">使用系统推荐草稿</el-radio-button>
-            <el-radio-button value="manual">手动补充资料</el-radio-button>
-          </el-radio-group>
-          <div v-if="goalDraftInboxProposal && !goalDraftProposalDismissed" class="draft-inbox-card">
-            <div class="review-focus-list">
-              <el-tag v-for="concept in goalDraftInboxMissingConcepts" :key="concept" type="warning" effect="plain">{{ concept }}</el-tag>
-            </div>
-            <el-descriptions :column="1" border size="small">
-              <el-descriptions-item label="推荐节点">{{ goalDraftInboxCounts.nodes }}</el-descriptions-item>
-              <el-descriptions-item label="推荐关系">{{ goalDraftInboxCounts.edges }}</el-descriptions-item>
-              <el-descriptions-item label="推荐资源">{{ goalDraftInboxCounts.resources }}</el-descriptions-item>
-              <el-descriptions-item label="安全边界">不写正式图谱，不写正式路径，需人工审核</el-descriptions-item>
-            </el-descriptions>
-            <div v-if="goalDraftInboxNodes.length || goalDraftInboxEdges.length || goalDraftInboxResources.length" class="candidate-card-list compact">
-              <article v-for="(node, index) in goalDraftInboxNodes.slice(0, 3)" :key="`draft-node-${index}`" class="preview-candidate-card">
-                <strong>{{ candidateTitle(node, `节点候选 ${index + 1}`) }}</strong>
-                <p>{{ node.summary || node.legality_rationale || '待审核节点候选' }}</p>
-              </article>
-              <article v-for="(edge, index) in goalDraftInboxEdges.slice(0, 3)" :key="`draft-edge-${index}`" class="preview-candidate-card">
-                <strong>{{ edgeCandidateSummary(edge) }}</strong>
-                <p>{{ edge.legality_rationale || '待审核关系候选' }}</p>
-              </article>
-              <article v-for="(resource, index) in goalDraftInboxResources.slice(0, 2)" :key="`draft-resource-${index}`" class="preview-candidate-card">
-                <strong>{{ candidateTitle(resource, `资源候选 ${index + 1}`) }}</strong>
-                <p>{{ resource.summary || '待审核资源候选' }}</p>
-              </article>
-            </div>
-          </div>
-          <el-alert
-            v-else-if="goalDraftProposalDismissed"
-            class="overlay-alert"
-            type="info"
-            :closable="false"
-            show-icon
-            title="已忽略系统推荐草稿，可在下方继续手动补充资料。"
-          />
-          <div class="draft-inbox-actions">
-            <el-button size="small" plain :loading="goalDraftProposalLoading" @click="loadGoalDraftProposal">刷新推荐草稿</el-button>
-            <el-button size="small" plain @click="dismissGoalDraftProposal">忽略推荐，手动补充</el-button>
-          </div>
-        </section>
-
-        <el-form v-if="manualOverlayMode" label-position="top">
-          <el-form-item label="来源类型">
-            <el-radio-group v-model="overlayForm.sourceType">
-              <el-radio-button value="pasted_text">粘贴文本</el-radio-button>
-              <el-radio-button value="search_url">搜索 URL</el-radio-button>
-              <el-radio-button value="saved_search">已保存搜索</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-
-          <template v-if="overlayForm.sourceType === 'pasted_text'">
-            <el-form-item label="资料文本">
-              <el-input
-                v-model="overlayForm.rawText"
-                type="textarea"
-                :rows="8"
-                maxlength="12000"
-                show-word-limit
-                placeholder="粘贴希望抽取为项目图谱扩展的资料内容"
-              />
-            </el-form-item>
-            <el-form-item label="摘要（可选）">
-              <el-input v-model="overlayForm.summary" placeholder="用于回看来源的简短摘要" />
-            </el-form-item>
-          </template>
-
-          <template v-else-if="overlayForm.sourceType === 'search_url'">
-            <el-form-item label="URL">
-              <el-input v-model="overlayForm.url" placeholder="https://example.com/article" />
-            </el-form-item>
-            <el-form-item label="标题">
-              <el-input v-model="overlayForm.title" placeholder="搜索结果标题" />
-            </el-form-item>
-            <el-form-item label="摘要片段">
-              <el-input v-model="overlayForm.snippet" type="textarea" :rows="4" />
-            </el-form-item>
-          </template>
-
-          <template v-else>
-            <el-form-item label="已保存搜索结果">
-              <el-select
-                v-model="overlayForm.selectedResultIds"
-                multiple
-                filterable
-                placeholder="选择已保存搜索结果"
-                style="width: 100%"
-              >
-                <el-option
-                  v-for="item in persistedSearchResults"
-                  :key="item.result_id"
-                  :label="item.title"
-                  :value="item.result_id"
-                />
-              </el-select>
-            </el-form-item>
-            <el-alert
-              v-if="overlayBridgeMessage"
-              class="overlay-alert"
-              type="success"
-              :closable="false"
-              show-icon
-              :title="overlayBridgeMessage"
-            />
-          </template>
-
-          <el-form-item label="抽取模式">
-            <el-radio-group v-model="overlayForm.mode">
-              <el-radio-button value="default">默认抽取</el-radio-button>
-              <el-radio-button value="custom_extension">自定义扩展</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-
-          <el-form-item label="AI 抽取预览">
-            <el-button plain :loading="overlayExtractionPreviewLoading" @click="previewOverlayExtractionPayload">
-              生成候选预览
-            </el-button>
-            <span class="preview-hint">先预览 LLM payload，再勾选候选并复用现有校验创建草稿。</span>
-          </el-form-item>
-        </el-form>
-
-        <OverlayExtractionPreviewPanel
-          v-if="overlayExtractionPreview"
-          :preview="overlayExtractionPreview"
-          :normalized-preview-payload="normalizedPreviewPayload"
-          :selected-preview-counts="selectedPreviewCounts"
-          :validation="overlayCandidateValidation"
-          :is-preview-candidate-selected="isPreviewCandidateSelected"
-          :candidate-title="candidateTitle"
-          :edge-candidate-summary="edgeCandidateSummary"
-          @toggle-candidate="togglePreviewCandidate"
-        />
-
-        <el-alert
-          v-if="overlayError"
-          class="overlay-alert"
-          type="warning"
-          :closable="false"
-          show-icon
-          :title="overlayError"
-        />
-
-        <OverlaySessionResultPanel
-          v-if="lastOverlaySession"
-          v-model:overlay-candidate-filter="overlayCandidateFilter"
-          :session="lastOverlaySession"
-          :show-technical-details="showTechnicalDetails"
-          :show-audit-details="showAuditDetails"
-          :overlay-session-guide="overlaySessionGuide"
-          :overlay-session-stats="overlaySessionStats"
-          :overlay-workflow-steps="overlayWorkflowSteps"
-          :overlay-workflow-current-step="overlayWorkflowCurrentStep"
-          :overlay-candidate-filter-options="OVERLAY_CANDIDATE_FILTER_OPTIONS"
-          :overlay-candidate-filter-counts="overlayCandidateFilterCounts"
-          :filtered-overlay-candidate-count="filteredOverlayCandidateCount"
-          :has-overlay-candidate-repair-target="Boolean(overlayCandidateRepairTarget)"
-          :overlay-candidate-repair-target-label="overlayCandidateRepairTargetLabel"
-          :filtered-overlay-nodes="filteredOverlayNodes"
-          :filtered-overlay-edges="filteredOverlayEdges"
-          :filtered-overlay-resources="filteredOverlayResources"
-          :goal-extension-draft-details="goalExtensionDraftDetails"
-          :goal-draft-missing-concepts="goalDraftMissingConcepts"
-          :goal-draft-review-notes="goalDraftReviewNotes"
-          :goal-draft-review-focus="goalDraftReviewFocus"
-          :validation-error-message="validationErrorMessage"
-          :resource-binding="resourceBinding"
-          :resource-target-options="resourceTargetOptions"
-          :promotion-preview="promotionPreview"
-          :promotion-result="promotionResult"
-          :promotion-secret="promotionSecret"
-          :promotion-loading="promotionLoading"
-          :promotion-status-message="promotionStatusMessage"
-          @open-first-repairable="openFirstRepairableCandidate"
-          @edit-node="openNodeCandidateEditor"
-          @edit-edge="openEdgeCandidateEditor"
-          @edit-resource="openResourceCandidateEditor"
-          @update-resource-binding="updateResourceBindingField"
-          @update:promotion-secret="promotionSecret = $event"
-          @bind-resource="bindOverlayResource"
-          @preview-promotion="previewPromotion"
-          @commit-promotion="commitPromotion"
-        />
-
-        <div class="drawer-actions">
-          <el-button @click="overlayDrawerVisible = false">关闭</el-button>
-          <el-button type="primary" :loading="overlaySubmitting" @click="submitOverlayDraft">
-            {{ activeGoalDraftResolutionSessionId && overlayDraftMode === 'goal_draft' ? '创建推荐草稿' : '创建手动草稿' }}
-          </el-button>
-        </div>
-      </div>
-    </el-drawer>
+    <KnowledgeOverlayDrawer
+      v-model:visible="overlayDrawerVisible"
+      v-model:display-mode="displayMode"
+      v-model:overlay-draft-mode="overlayDraftMode"
+      v-model:overlay-candidate-filter="overlayCandidateFilter"
+      :overlay-submitting="overlaySubmitting"
+      :overlay-extraction-preview-loading="overlayExtractionPreviewLoading"
+      :active-goal-draft-resolution-session-id="activeGoalDraftResolutionSessionId"
+      :manual-goal-draft-loading="manualGoalDraftLoading"
+      :goal-draft-proposal-loading="goalDraftProposalLoading"
+      :goal-draft-inbox-proposal="goalDraftInboxProposal"
+      :goal-draft-proposal-dismissed="goalDraftProposalDismissed"
+      :goal-draft-inbox-missing-concepts="goalDraftInboxMissingConcepts"
+      :goal-draft-inbox-counts="goalDraftInboxCounts"
+      :goal-draft-inbox-nodes="goalDraftInboxNodes"
+      :goal-draft-inbox-edges="goalDraftInboxEdges"
+      :goal-draft-inbox-resources="goalDraftInboxResources"
+      :overlay-form="overlayForm"
+      :manual-overlay-mode="manualOverlayMode"
+      :persisted-search-results="persistedSearchResults"
+      :overlay-bridge-message="overlayBridgeMessage"
+      :overlay-extraction-preview="overlayExtractionPreview"
+      :normalized-preview-payload="normalizedPreviewPayload"
+      :selected-preview-counts="selectedPreviewCounts"
+      :overlay-candidate-validation="overlayCandidateValidation"
+      :is-preview-candidate-selected="isPreviewCandidateSelected"
+      :candidate-title="candidateTitle"
+      :edge-candidate-summary="edgeCandidateSummary"
+      :overlay-error="overlayError"
+      :last-overlay-session="lastOverlaySession"
+      :show-technical-details="showTechnicalDetails"
+      :show-audit-details="showAuditDetails"
+      :overlay-session-guide="overlaySessionGuide"
+      :overlay-session-stats="overlaySessionStats"
+      :overlay-workflow-steps="overlayWorkflowSteps"
+      :overlay-workflow-current-step="overlayWorkflowCurrentStep"
+      :overlay-candidate-filter-counts="overlayCandidateFilterCounts"
+      :filtered-overlay-candidate-count="filteredOverlayCandidateCount"
+      :has-overlay-candidate-repair-target="Boolean(overlayCandidateRepairTarget)"
+      :overlay-candidate-repair-target-label="overlayCandidateRepairTargetLabel"
+      :filtered-overlay-nodes="filteredOverlayNodes"
+      :filtered-overlay-edges="filteredOverlayEdges"
+      :filtered-overlay-resources="filteredOverlayResources"
+      :goal-extension-draft-details="goalExtensionDraftDetails"
+      :goal-draft-missing-concepts="goalDraftMissingConcepts"
+      :goal-draft-review-notes="goalDraftReviewNotes"
+      :goal-draft-review-focus="goalDraftReviewFocus"
+      :validation-error-message="validationErrorMessage"
+      :resource-binding="resourceBinding"
+      :resource-target-options="resourceTargetOptions"
+      :promotion-preview="promotionPreview"
+      :promotion-result="promotionResult"
+      :promotion-secret="promotionSecret"
+      :promotion-loading="promotionLoading"
+      :promotion-status-message="promotionStatusMessage"
+      @update-overlay-form="updateOverlayForm"
+      @prepare-goal-draft="prepareGoalDraftFromCurrentProject"
+      @load-goal-draft-proposal="loadGoalDraftProposal"
+      @dismiss-goal-draft-proposal="dismissGoalDraftProposal"
+      @preview-overlay-extraction-payload="previewOverlayExtractionPayload"
+      @toggle-preview-candidate="togglePreviewCandidate"
+      @open-first-repairable="openFirstRepairableCandidate"
+      @edit-node="openNodeCandidateEditor"
+      @edit-edge="openEdgeCandidateEditor"
+      @edit-resource="openResourceCandidateEditor"
+      @update-resource-binding="updateResourceBindingField"
+      @update:promotion-secret="promotionSecret = $event"
+      @bind-resource="bindOverlayResource"
+      @preview-promotion="previewPromotion"
+      @commit-promotion="commitPromotion"
+      @submit-overlay-draft="submitOverlayDraft"
+    />
 
     <OverlayCandidateEditorDialog
       v-model:visible="candidateEditor.visible"
@@ -429,12 +231,11 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, ref } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
-import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
-import OverlayCandidateEditorDialog from './OverlayCandidateEditorDialog.vue'
-import OverlayExtractionPreviewPanel from './OverlayExtractionPreviewPanel.vue'
-import OverlaySessionResultPanel from './OverlaySessionResultPanel.vue'
+import GraphLegendPanel from './GraphLegendPanel.vue'
+import GraphStatusPanel from './GraphStatusPanel.vue'
+import OverlayPreflightPanel from './OverlayPreflightPanel.vue'
 import { useFullscreenToggle } from './composables/useFullscreenToggle'
 import { useGraphCacheDiagnostics } from './composables/useGraphCacheDiagnostics'
 import { useEntityMetadataDrawer } from './composables/useEntityMetadataDrawer'
@@ -450,12 +251,11 @@ import { getOverlayErrorMessage } from './composables/useOverlayErrorMessage'
 import { useOverlayPostActions } from './composables/useOverlayPostActions'
 import { useOverlayRepairActions } from './composables/useOverlayRepairActions'
 import {
-  OVERLAY_CANDIDATE_FILTER_OPTIONS,
   useOverlayCandidateWorkflow,
   type CandidateIssueFilter,
   type OverlaySessionView,
 } from './composables/useOverlayCandidateWorkflow'
-import { useOverlayDraftInput } from './composables/useOverlayDraftInput'
+import { useOverlayDraftInput, type OverlayFormState } from './composables/useOverlayDraftInput'
 import {
   graphApi,
   type GraphElement,
@@ -466,6 +266,8 @@ const GraphToolbar = defineAsyncComponent(() => import('@/components/Graph/Graph
 const GraphCanvas = defineAsyncComponent(() => import('@/components/Graph/GraphCanvas.vue'))
 const NodeDetail = defineAsyncComponent(() => import('@/components/Graph/NodeDetail.vue'))
 const EntityMetadataDrawer = defineAsyncComponent(() => import('@/components/Graph/EntityMetadataDrawer.vue'))
+const KnowledgeOverlayDrawer = defineAsyncComponent(() => import('./KnowledgeOverlayDrawer.vue'))
+const OverlayCandidateEditorDialog = defineAsyncComponent(() => import('./OverlayCandidateEditorDialog.vue'))
 
 type GraphCanvasHandle = GraphCanvasActionHandle & {
   focusNode: (nodeId: string) => boolean
@@ -709,6 +511,10 @@ const {
   refreshGraphWorkspace: async () => { await loadGraphWorkspace() },
   notifySuccess: (message) => ElMessage.success(message),
 })
+function updateOverlayForm(nextOverlayForm: OverlayFormState) {
+  overlayForm.value = nextOverlayForm
+}
+
 function updateResourceBindingField(field: 'resourceId' | 'targetType' | 'targetId', value: string) {
   const nextResourceBinding = { ...resourceBinding.value }
   if (field === 'targetType') {
@@ -855,273 +661,8 @@ void syncRequestedOverlaySession
   min-height: 0;
 }
 
-.graph-legend-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px;
-  border-bottom: 1px solid #ebeef5;
-  background: #fff;
-}
-
-.legend-section {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.legend-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #606266;
-}
-
-.legend-items {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.legend-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid #ebeef5;
-  border-radius: 999px;
-  background: #fafafa;
-  font-size: 12px;
-  color: #606266;
-}
-
-.legend-chip-edge {
-  max-width: 100%;
-}
-
-.legend-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-}
-
-.legend-line {
-  position: relative;
-  display: inline-block;
-  width: 28px;
-  height: 0;
-  border-top: 2px solid #909399;
-  flex: 0 0 auto;
-}
-
-.legend-line-dashed {
-  border-top-style: dashed;
-}
-
-.legend-line-solid {
-  border-top-style: solid;
-}
-
-.legend-line-arrow::after {
-  content: '';
-  position: absolute;
-  top: -5px;
-  right: -2px;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 7px solid #909399;
-}
-
-.graph-status-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 12px 12px 0;
-  padding: 12px;
-  border: 1px solid #e1f3d8;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #f0f9eb 0%, #f5f7fa 100%);
-}
-
-.graph-status-panel strong {
-  display: block;
-  margin-bottom: 4px;
-  color: #303133;
-  font-size: 14px;
-}
-
-.graph-status-panel p {
-  margin: 0;
-  color: #606266;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.graph-status-meta,
-.graph-status-tags,
-.graph-cache-diagnostics {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.graph-status-meta {
-  flex-direction: column;
-  align-items: flex-end;
-}
-
-.graph-cache-diagnostics {
-  align-items: center;
-  color: #909399;
-  font-size: 12px;
-}
-
-.graph-cache-title {
-  font-weight: 600;
-}
-
 .graph-alert {
   margin: 12px 12px 0;
-}
-
-.overlay-preflight-panel {
-  padding: 12px;
-  border: 1px solid #dcdfe6;
-  border-radius: 10px;
-  background: #fff;
-}
-
-.overlay-preflight-header,
-.overlay-preflight-tags,
-.overlay-preflight-issues {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.overlay-preflight-header {
-  justify-content: space-between;
-}
-
-.overlay-preflight-panel p {
-  margin: 8px 0;
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.overlay-preflight-issues {
-  margin-top: 8px;
-  color: #e6a23c;
-  font-size: 12px;
-}
-
-.overlay-drawer {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.overlay-alert {
-  margin-bottom: 4px;
-}
-
-.goal-draft-entry {
-  padding: 12px;
-  border: 1px solid #f3d19e;
-  border-radius: 10px;
-  background: #fdf6ec;
-}
-
-.goal-draft-entry p {
-  margin: 0;
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.draft-mode-switch,
-.draft-inbox-actions {
-  margin-top: 10px;
-}
-
-.draft-inbox-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.draft-inbox-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.candidate-card-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.candidate-card-list.compact {
-  gap: 8px;
-}
-
-.preview-candidate-card {
-  padding: 10px;
-  border: 1px solid #d9ecff;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.preview-candidate-card p {
-  margin: 6px 0;
-  color: #606266;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.overlay-guidance {
-  margin: 4px 0 0;
-  color: #606266;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.preview-hint {
-  margin-left: 10px;
-  color: #909399;
-  font-size: 12px;
-}
-
-.overlay-subsection {
-  margin-top: 14px;
-}
-
-.overlay-subsection h4 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  color: #303133;
-}
-
-.review-focus-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.drawer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding-top: 8px;
 }
 
 .graph-state-wrap,
@@ -1183,14 +724,5 @@ void syncRequestedOverlaySession
     height: auto;
   }
 
-  .graph-legend-wrap,
-  .graph-status-panel {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .graph-status-tags {
-    justify-content: flex-start;
-  }
 }
 </style>
