@@ -885,7 +885,7 @@ describe('Knowledge overlay entry', () => {
     preflightPanel.vm.$emit('open-path-comparison')
     await flushPromises()
 
-    expect(pushMock).toHaveBeenCalledWith({ name: 'Path', query: { tool: 'graph_options' } })
+    expect(pushMock).toHaveBeenCalledWith({ name: 'Path', query: { tool: 'graph_options', from: 'knowledge_overlay' } })
   })
 
   it('loads first-screen graph companions through the workspace endpoint', async () => {

@@ -472,7 +472,7 @@ function updateOverlayForm(nextOverlayForm: OverlayFormState) {
 }
 
 async function openPathComparison() {
-  await router.push({ name: 'Path', query: { tool: 'graph_options' } })
+  await router.push({ name: 'Path', query: { tool: 'graph_options', from: 'knowledge_overlay' } })
 }
 
 function updateResourceBindingField(field: 'resourceId' | 'targetType' | 'targetId', value: string) {

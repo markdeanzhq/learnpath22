@@ -213,6 +213,15 @@
                 :closable="false"
                 show-icon
               />
+              <el-alert
+                v-if="graphOptionEntryGuideVisible"
+                class="preview-alert"
+                title="已从 Knowledge 增强图谱预检进入"
+                description="下一步点击“生成图谱方案对比”；系统只生成可撤销预览，确认应用前不会保存正式路径版本。"
+                type="info"
+                :closable="false"
+                show-icon
+              />
               <section v-if="overlayPreflight" class="overlay-preflight-panel">
                 <div class="overlay-preflight-header">
                   <strong>增强图谱使用状态</strong>
@@ -897,6 +906,11 @@ const overlayPreflightIssues = computed(() => [
   ...(overlayPreflight.value?.blocking_items || []),
   ...(overlayPreflight.value?.warning_items || []),
 ])
+const graphOptionEntryGuideVisible = computed(() => (
+  activeAdjustmentTool.value === 'graph_options'
+  && normalizeRouteQueryValue(route.query.from) === 'knowledge_overlay'
+  && !graphOptionPreview.value
+))
 const canConfirmVariant = computed(() => Boolean(
   variantPreview.value?.status === 'active' && selectedVariant.value && previewContextMatches.value && !previewUnsafeMessage.value,
 ))
@@ -1002,11 +1016,16 @@ function syncAdjustmentToolFromRoute() {
 }
 
 function normalizeAdjustmentTool(value: unknown): AdjustmentTool | null {
-  const nextValue = Array.isArray(value) ? value[0] : value
+  const nextValue = normalizeRouteQueryValue(value)
   if (nextValue === 'variants' || nextValue === 'graph_options' || nextValue === 'feedback') {
     return nextValue
   }
   return null
+}
+
+function normalizeRouteQueryValue(value: unknown): string | null {
+  const nextValue = Array.isArray(value) ? value[0] : value
+  return typeof nextValue === 'string' && nextValue.trim() ? nextValue.trim() : null
 }
 
 function graphOptionChangeLabels(variant: VariantSummary) {

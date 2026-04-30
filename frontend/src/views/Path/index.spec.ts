@@ -585,7 +585,7 @@ describe('Path page goal reconfirm flow', () => {
   })
 
   it('opens graph option comparison from the route query without auto-previewing', async () => {
-    routeState.query = { tool: 'graph_options' }
+    routeState.query = { tool: 'graph_options', from: 'knowledge_overlay' }
 
     const wrapper = mountPathIndex()
     await flushPromises()
@@ -593,7 +593,10 @@ describe('Path page goal reconfirm flow', () => {
     const vm = wrapper.vm as any
     expect(vm.activeTab).toBe('previews')
     expect(vm.activeAdjustmentTool).toBe('graph_options')
+    expect(vm.graphOptionEntryGuideVisible).toBe(true)
     expect(wrapper.text()).toContain('基础 / 增强图谱路径对比')
+    expect(wrapper.text()).toContain('已从 Knowledge 增强图谱预检进入')
+    expect(wrapper.text()).toContain('下一步点击“生成图谱方案对比”')
     expect(planApiPreviewGraphOptionsMock).not.toHaveBeenCalled()
   })
 
