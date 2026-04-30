@@ -14,7 +14,14 @@ from app.repositories.project_overlay_repository import (
     create_extraction_session,
     create_node,
     create_resource,
+    get_candidate,
+    get_extraction_session,
     get_source,
+    list_session_edges,
+    list_session_nodes,
+    list_session_resources,
+    set_candidate_validation_result,
+    update_candidate_fields,
     update_extraction_session_status,
     update_validation_status,
 )
@@ -45,6 +52,15 @@ PLANNER_NODE_FIELDS = {
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _parse_json_field(value: str | None, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return fallback
 
 
 def _normalized_string(value: Any) -> Any:
@@ -344,16 +360,70 @@ def _ensure_search_ready_for_mode(mode: str) -> None:
         raise AppError(code=503, message="SEARCH_NOT_READY")
 
 
-async def create_extraction_session_from_sources(
+def _edge_candidate_to_fields(
+    candidate: dict[str, Any],
+    *,
+    source_ids: list[str],
+    duplicate_indexes: list[int] | None,
+    valid_node_ids: set[str],
+    has_requires_cycle: bool,
+) -> tuple[dict[str, Any], list[str]]:
+    errors = _edge_validation_errors(candidate, valid_node_ids=valid_node_ids)
+    if has_requires_cycle:
+        errors.append("requires_cycle")
+    source = candidate.get("source_node_id")
+    target = candidate.get("target_node_id")
+    fields = {
+        "source_node_id": source or "",
+        "target_node_id": target or "",
+        "relation_type": candidate.get("relation_type", ""),
+        "source_ids_json": _canonical_json(source_ids),
+        "provenance_json": _canonical_json({
+            "source_ids": source_ids,
+            "source_reference": source,
+            "target_reference": target,
+        }),
+        "duplicate_candidates_json": _canonical_json({"indexes": duplicate_indexes or []}),
+        "legality_rationale": candidate.get("legality_rationale"),
+        "validation_errors_json": _canonical_json(errors) if errors else None,
+        "confidence": candidate.get("confidence"),
+    }
+    return fields, errors
+
+
+def _resource_candidate_to_fields(
+    candidate: dict[str, Any],
+    *,
+    source_ids: list[str],
+    source_id_set: set[str],
+    duplicate_indexes: list[int] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    errors = _resource_validation_errors(candidate, source_id_set)
+    fields = {
+        "title": candidate.get("title"),
+        "url": candidate.get("url"),
+        "resource_type": candidate.get("resource_type"),
+        "summary": candidate.get("summary"),
+        "quality_score": candidate.get("quality_score"),
+        "source_ids_json": _canonical_json(source_ids),
+        "provenance_json": _canonical_json({
+            "source_ids": source_ids,
+            "evidence_source_id": candidate.get("evidence_source_id"),
+        }),
+        "duplicate_candidates_json": _canonical_json({"indexes": duplicate_indexes or []}),
+        "validation_errors_json": _canonical_json(errors) if errors else None,
+        "confidence": candidate.get("confidence"),
+    }
+    return fields, errors
+
+
+async def _load_sources_for_extraction(
     db: AsyncSession,
     *,
     project_id: str,
     source_ids: list[str],
-    mode: str = "default",
-    extraction_payload: Any | None = None,
-    domain: str | None = None,
-    session_provenance: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    mode: str,
+) -> list[Any]:
     mode = _normalize_extraction_mode(mode)
     _ensure_search_ready_for_mode(mode)
     if not source_ids:
@@ -369,80 +439,74 @@ async def create_extraction_session_from_sources(
         sources.append(source)
     if sum(1 for source in sources if source.source_type == "search_url") > MAX_URL_SOURCES:
         raise AppError(code=422, message="SOURCE_LIMIT_EXCEEDED")
+    return sources
 
+
+def _build_extraction_validation_plan(
+    *,
+    project_id: str,
+    source_ids: list[str],
+    extraction_payload: Any | None,
+    domain: str | None = None,
+    node_ids: list[str] | None = None,
+    edge_ids: list[str] | None = None,
+    resource_ids: list[str] | None = None,
+) -> dict[str, Any]:
     payload = parse_extraction_payload(extraction_payload or {"nodes": [], "edges": [], "resources": [], "warnings": []})
     source_id_set = set(source_ids)
-    normalized_nodes = [_normalize_node_candidate(candidate) for candidate in payload["nodes"]]
-    normalized_resources = [_normalize_resource_candidate(candidate) for candidate in payload["resources"]]
-    session = await create_extraction_session(
-        db,
-        project_id=project_id,
-        source_ids_json=_canonical_json(source_ids),
-        mode=mode,
-        warnings_json=_canonical_json(payload["warnings"]),
-        provenance_json=_canonical_json(session_provenance or {}),
-        commit=False,
-    )
     pack = get_domain_pack_service(domain)
     baseline_node_ids = set(pack.nodes_by_id)
     node_lookup = _baseline_node_lookup(pack.nodes_by_id)
+
+    normalized_nodes = [_normalize_node_candidate(candidate) for candidate in payload["nodes"]]
+    normalized_resources = [_normalize_resource_candidate(candidate) for candidate in payload["resources"]]
     node_duplicates = _duplicate_payloads(normalized_nodes, "name")
     resource_duplicates = _duplicate_payloads(normalized_resources, "url")
 
-    created_nodes = []
+    node_items = []
     valid_overlay_node_ids: set[str] = set()
     for index, candidate in enumerate(normalized_nodes):
-        canonical_payload_hash = overlay_payload_hash(candidate)
-        node_id = build_overlay_id(project_id, "n", {"candidate": candidate, "index": index})
+        node_id = node_ids[index] if node_ids is not None else build_overlay_id(project_id, "n", {"candidate": candidate, "index": index})
         duplicate_indexes = node_duplicates.get(_normalized_lookup_key(candidate.get("name")))
         fields, errors = _node_candidate_to_fields(
             candidate,
             source_ids=source_ids,
             duplicate_indexes=duplicate_indexes,
         )
-        node = await create_node(
-            db,
-            project_id=project_id,
-            node_id=node_id,
-            session_id=session.session_id,
-            canonical_payload_hash=canonical_payload_hash,
-            commit=False,
-            **fields,
-        )
         validation_status = _candidate_validation_status(errors=errors, duplicate_indexes=duplicate_indexes)
-        await update_validation_status(
-            db,
-            project_id=project_id,
-            element_type="node",
-            element_id=node.node_id,
-            validation_status=validation_status,
-            validation_errors_json=_canonical_json(errors) if errors else None,
-            commit=False,
-        )
+        canonical_payload_hash = overlay_payload_hash(candidate)
         if validation_status == "valid":
-            valid_overlay_node_ids.add(node.node_id)
-            node_lookup[_normalized_lookup_key(node.node_id)] = node.node_id
+            valid_overlay_node_ids.add(node_id)
+            node_lookup[_normalized_lookup_key(node_id)] = node_id
             if candidate.get("name"):
-                node_lookup[_normalized_lookup_key(candidate["name"])] = node.node_id
-        created_nodes.append(node)
+                node_lookup[_normalized_lookup_key(candidate["name"])] = node_id
+        node_items.append({
+            "index": index,
+            "node_id": node_id,
+            "candidate": candidate,
+            "fields": fields,
+            "errors": errors,
+            "duplicate_indexes": duplicate_indexes or [],
+            "validation_status": validation_status,
+            "canonical_payload_hash": canonical_payload_hash,
+        })
 
     valid_node_ids = baseline_node_ids | valid_overlay_node_ids
     normalized_edges = []
     for candidate in payload["edges"]:
         normalized = _normalize_edge_candidate(candidate)
-        normalized_edges.append(
-            {
-                **normalized,
-                "source_node_id": _resolve_node_reference(
-                    normalized.get("source_node_id") or normalized.get("source_name_or_id"),
-                    node_lookup,
-                ),
-                "target_node_id": _resolve_node_reference(
-                    normalized.get("target_node_id") or normalized.get("target_name_or_id"),
-                    node_lookup,
-                ),
-            }
-        )
+        normalized_edges.append({
+            **normalized,
+            "source_node_id": _resolve_node_reference(
+                normalized.get("source_node_id") or normalized.get("source_name_or_id"),
+                node_lookup,
+            ),
+            "target_node_id": _resolve_node_reference(
+                normalized.get("target_node_id") or normalized.get("target_name_or_id"),
+                node_lookup,
+            ),
+        })
+
     edge_duplicates = _duplicate_payloads(
         normalized_edges,
         lambda candidate: (
@@ -452,18 +516,20 @@ async def create_extraction_session_from_sources(
         ),
     )
     edge_cycle_indexes = _requires_cycle_errors(normalized_edges, valid_node_ids, pack.requires_edges)
-    created_edges = []
+    edge_items = []
     for index, candidate in enumerate(normalized_edges):
         source = candidate.get("source_node_id")
         target = candidate.get("target_node_id")
-        duplicate_indexes = edge_duplicates.get(
-            f"{source or ''}->{target or ''}::{candidate.get('relation_type') or ''}".lower()
+        duplicate_key = f"{source or ''}->{target or ''}::{candidate.get('relation_type') or ''}".lower()
+        duplicate_indexes = edge_duplicates.get(duplicate_key)
+        fields, errors = _edge_candidate_to_fields(
+            candidate,
+            source_ids=source_ids,
+            duplicate_indexes=duplicate_indexes,
+            valid_node_ids=valid_node_ids,
+            has_requires_cycle=index in edge_cycle_indexes,
         )
-        errors = _edge_validation_errors(candidate, valid_node_ids=valid_node_ids)
-        if index in edge_cycle_indexes:
-            errors.append("requires_cycle")
-        canonical_payload_hash = overlay_payload_hash(candidate)
-        edge_id = build_overlay_id(project_id, "e", {
+        edge_id = edge_ids[index] if edge_ids is not None else build_overlay_id(project_id, "e", {
             "candidate": {
                 "source": source,
                 "target": target,
@@ -471,71 +537,224 @@ async def create_extraction_session_from_sources(
             },
             "index": index,
         })
+        edge_items.append({
+            "index": index,
+            "edge_id": edge_id,
+            "candidate": candidate,
+            "fields": fields,
+            "errors": errors,
+            "duplicate_indexes": duplicate_indexes or [],
+            "validation_status": _candidate_validation_status(errors=errors, duplicate_indexes=duplicate_indexes),
+            "canonical_payload_hash": overlay_payload_hash(candidate),
+        })
+
+    resource_items = []
+    for index, candidate in enumerate(normalized_resources):
+        duplicate_indexes = resource_duplicates.get(_normalized_lookup_key(candidate.get("url")))
+        fields, errors = _resource_candidate_to_fields(
+            candidate,
+            source_ids=source_ids,
+            source_id_set=source_id_set,
+            duplicate_indexes=duplicate_indexes,
+        )
+        resource_items.append({
+            "index": index,
+            "resource_id": resource_ids[index] if resource_ids is not None else build_overlay_id(project_id, "r", {"candidate": candidate, "index": index}),
+            "candidate": candidate,
+            "fields": fields,
+            "errors": errors,
+            "duplicate_indexes": duplicate_indexes or [],
+            "validation_status": _candidate_validation_status(errors=errors, duplicate_indexes=duplicate_indexes),
+            "canonical_payload_hash": overlay_payload_hash(candidate),
+        })
+
+    return {
+        "source_ids": source_ids,
+        "warnings": payload["warnings"],
+        "nodes": node_items,
+        "edges": edge_items,
+        "resources": resource_items,
+    }
+
+
+def _validation_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "total": len(items),
+        "valid": sum(1 for item in items if item["validation_status"] == "valid"),
+        "invalid": sum(1 for item in items if item["validation_status"] == "invalid"),
+        "needs_review": sum(1 for item in items if item["validation_status"] == "needs_review"),
+    }
+
+
+def _validation_item_response(item: dict[str, Any], *, id_key: str) -> dict[str, Any]:
+    candidate = item["candidate"]
+    return {
+        "index": item["index"],
+        id_key: item[id_key],
+        "validation_status": item["validation_status"],
+        "validation_errors": item["errors"],
+        "duplicate_candidates": {"indexes": item["duplicate_indexes"]},
+        **candidate,
+    }
+
+
+def _validation_plan_response(plan: dict[str, Any]) -> dict[str, Any]:
+    invalid_count = sum(
+        _validation_counts(plan[key])["invalid"]
+        for key in ("nodes", "edges", "resources")
+    )
+    needs_review_count = sum(
+        _validation_counts(plan[key])["needs_review"]
+        for key in ("nodes", "edges", "resources")
+    )
+    return {
+        "source_ids": plan["source_ids"],
+        "warnings": plan["warnings"],
+        "counts": {
+            "nodes": _validation_counts(plan["nodes"]),
+            "edges": _validation_counts(plan["edges"]),
+            "resources": _validation_counts(plan["resources"]),
+        },
+        "summary": {
+            "has_blocking_errors": invalid_count > 0,
+            "needs_review": needs_review_count > 0,
+            "invalid_count": invalid_count,
+            "needs_review_count": needs_review_count,
+        },
+        "nodes": [_validation_item_response(item, id_key="node_id") for item in plan["nodes"]],
+        "edges": [_validation_item_response(item, id_key="edge_id") for item in plan["edges"]],
+        "resources": [_validation_item_response(item, id_key="resource_id") for item in plan["resources"]],
+    }
+
+
+async def validate_extraction_payload_for_sources(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    source_ids: list[str],
+    mode: str = "default",
+    extraction_payload: Any | None = None,
+    domain: str | None = None,
+) -> dict[str, Any]:
+    mode = _normalize_extraction_mode(mode)
+    await _load_sources_for_extraction(
+        db,
+        project_id=project_id,
+        source_ids=source_ids,
+        mode=mode,
+    )
+    return _validation_plan_response(_build_extraction_validation_plan(
+        project_id=project_id,
+        source_ids=source_ids,
+        extraction_payload=extraction_payload,
+        domain=domain,
+    ))
+
+
+async def create_extraction_session_from_sources(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    source_ids: list[str],
+    mode: str = "default",
+    extraction_payload: Any | None = None,
+    domain: str | None = None,
+    session_provenance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    mode = _normalize_extraction_mode(mode)
+    sources = await _load_sources_for_extraction(
+        db,
+        project_id=project_id,
+        source_ids=source_ids,
+        mode=mode,
+    )
+    plan = _build_extraction_validation_plan(
+        project_id=project_id,
+        source_ids=source_ids,
+        extraction_payload=extraction_payload,
+        domain=domain,
+    )
+    session = await create_extraction_session(
+        db,
+        project_id=project_id,
+        source_ids_json=_canonical_json(source_ids),
+        mode=mode,
+        warnings_json=_canonical_json(plan["warnings"]),
+        provenance_json=_canonical_json(session_provenance or {}),
+        commit=False,
+    )
+
+    created_nodes = []
+    for item in plan["nodes"]:
+        node = await create_node(
+            db,
+            project_id=project_id,
+            node_id=item["node_id"],
+            session_id=session.session_id,
+            canonical_payload_hash=item["canonical_payload_hash"],
+            commit=False,
+            **item["fields"],
+        )
+        await update_validation_status(
+            db,
+            project_id=project_id,
+            element_type="node",
+            element_id=node.node_id,
+            validation_status=item["validation_status"],
+            validation_errors_json=_canonical_json(item["errors"]) if item["errors"] else None,
+            commit=False,
+        )
+        created_nodes.append(node)
+
+    created_edges = []
+    for item in plan["edges"]:
+        fields = item["fields"]
         edge = await create_edge(
             db,
             project_id=project_id,
-            edge_id=edge_id,
+            edge_id=item["edge_id"],
             session_id=session.session_id,
-            source_node_id=source or "",
-            target_node_id=target or "",
-            relation_type=candidate.get("relation_type", ""),
-            canonical_payload_hash=canonical_payload_hash,
-            source_ids_json=_canonical_json(source_ids),
-            provenance_json=_canonical_json({
-                "source_ids": source_ids,
-                "source_reference": source,
-                "target_reference": target,
-            }),
-            legality_rationale=candidate.get("legality_rationale"),
-            duplicate_candidates_json=_canonical_json({"indexes": duplicate_indexes or []}),
-            validation_errors_json=_canonical_json(errors) if errors else None,
-            confidence=candidate.get("confidence"),
+            source_node_id=fields["source_node_id"],
+            target_node_id=fields["target_node_id"],
+            relation_type=fields["relation_type"],
+            canonical_payload_hash=item["canonical_payload_hash"],
+            source_ids_json=fields["source_ids_json"],
+            provenance_json=fields["provenance_json"],
+            legality_rationale=fields["legality_rationale"],
+            duplicate_candidates_json=fields["duplicate_candidates_json"],
+            validation_errors_json=fields["validation_errors_json"],
+            confidence=fields["confidence"],
             commit=False,
         )
-        validation_status = _candidate_validation_status(errors=errors, duplicate_indexes=duplicate_indexes)
         await update_validation_status(
             db,
             project_id=project_id,
             element_type="edge",
             element_id=edge.edge_id,
-            validation_status=validation_status,
-            validation_errors_json=_canonical_json(errors) if errors else None,
+            validation_status=item["validation_status"],
+            validation_errors_json=_canonical_json(item["errors"]) if item["errors"] else None,
             commit=False,
         )
         created_edges.append(edge)
 
     created_resources = []
-    for index, candidate in enumerate(normalized_resources):
-        duplicate_indexes = resource_duplicates.get(_normalized_lookup_key(candidate.get("url")))
-        errors = _resource_validation_errors(candidate, source_id_set)
-        canonical_payload_hash = overlay_payload_hash(candidate)
-        resource_id = build_overlay_id(project_id, "r", {"candidate": candidate, "index": index})
+    for item in plan["resources"]:
         resource = await create_resource(
             db,
             project_id=project_id,
-            resource_id=resource_id,
+            resource_id=item["resource_id"],
             session_id=session.session_id,
-            canonical_payload_hash=canonical_payload_hash,
-            title=candidate.get("title"),
-            url=candidate.get("url"),
-            resource_type=candidate.get("resource_type"),
-            summary=candidate.get("summary"),
-            quality_score=candidate.get("quality_score"),
-            source_ids_json=_canonical_json(source_ids),
-            provenance_json=_canonical_json({"source_ids": source_ids, "evidence_source_id": candidate.get("evidence_source_id")}),
-            duplicate_candidates_json=_canonical_json({"indexes": duplicate_indexes or []}),
-            validation_errors_json=_canonical_json(errors) if errors else None,
-            confidence=candidate.get("confidence"),
+            canonical_payload_hash=item["canonical_payload_hash"],
             commit=False,
+            **item["fields"],
         )
-        validation_status = _candidate_validation_status(errors=errors, duplicate_indexes=duplicate_indexes)
         await update_validation_status(
             db,
             project_id=project_id,
             element_type="resource",
             element_id=resource.resource_id,
-            validation_status=validation_status,
-            validation_errors_json=_canonical_json(errors) if errors else None,
+            validation_status=item["validation_status"],
+            validation_errors_json=_canonical_json(item["errors"]) if item["errors"] else None,
             commit=False,
         )
         created_resources.append(resource)
@@ -555,5 +774,265 @@ async def create_extraction_session_from_sources(
         "nodes": created_nodes,
         "edges": created_edges,
         "resources": created_resources,
-        "warnings": payload["warnings"],
+        "warnings": plan["warnings"],
     }
+
+
+def _node_row_to_candidate(node: Any) -> dict[str, Any]:
+    provenance = _parse_json_field(node.provenance_json, {})
+    return {
+        "name": node.name,
+        "group": node.group,
+        "category": node.category,
+        "difficulty_final": node.difficulty_final,
+        "importance_final": node.importance_final,
+        "estimated_hours": node.estimated_hours,
+        "req_math": node.req_math,
+        "req_coding": node.req_coding,
+        "req_ml": node.req_ml,
+        "theory_weight": node.theory_weight,
+        "practice_weight": node.practice_weight,
+        "confidence": node.confidence,
+        "legality_rationale": node.legality_rationale,
+        "summary": provenance.get("summary"),
+        "evidence_spans": provenance.get("evidence_spans", []),
+        "provenance": provenance,
+    }
+
+
+def _edge_row_to_candidate(edge: Any) -> dict[str, Any]:
+    return {
+        "source_node_id": edge.source_node_id,
+        "target_node_id": edge.target_node_id,
+        "relation_type": edge.relation_type,
+        "confidence": edge.confidence,
+        "legality_rationale": edge.legality_rationale,
+    }
+
+
+def _resource_row_to_candidate(resource: Any) -> dict[str, Any]:
+    provenance = _parse_json_field(resource.provenance_json, {})
+    return {
+        "title": resource.title,
+        "url": resource.url,
+        "resource_type": resource.resource_type,
+        "summary": resource.summary,
+        "quality_score": resource.quality_score,
+        "confidence": resource.confidence,
+        "evidence_source_id": provenance.get("evidence_source_id"),
+    }
+
+
+async def _revalidate_session_candidates(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    session_id: str,
+    domain: str | None = None,
+) -> None:
+    session = await get_extraction_session(db, project_id, session_id)
+    if session is None:
+        raise ValueError("OVERLAY_SESSION_NOT_FOUND")
+    source_ids = _parse_json_field(session.source_ids_json, [])
+    nodes = await list_session_nodes(db, project_id=project_id, session_id=session_id)
+    edges = await list_session_edges(db, project_id=project_id, session_id=session_id)
+    resources = await list_session_resources(db, project_id=project_id, session_id=session_id)
+    plan = _build_extraction_validation_plan(
+        project_id=project_id,
+        source_ids=source_ids,
+        extraction_payload={
+            "nodes": [_node_row_to_candidate(node) for node in nodes],
+            "edges": [_edge_row_to_candidate(edge) for edge in edges],
+            "resources": [_resource_row_to_candidate(resource) for resource in resources],
+            "warnings": _parse_json_field(session.warnings_json, []),
+        },
+        domain=domain,
+        node_ids=[node.node_id for node in nodes],
+        edge_ids=[edge.edge_id for edge in edges],
+        resource_ids=[resource.resource_id for resource in resources],
+    )
+
+    for node, item in zip(nodes, plan["nodes"], strict=True):
+        await set_candidate_validation_result(
+            db,
+            project_id=project_id,
+            element_type="node",
+            element_id=node.node_id,
+            validation_status=item["validation_status"],
+            validation_errors_json=_canonical_json(item["errors"]) if item["errors"] else None,
+            duplicate_candidates_json=item["fields"]["duplicate_candidates_json"],
+            canonical_payload_hash=item["canonical_payload_hash"],
+            commit=False,
+        )
+    for edge, item in zip(edges, plan["edges"], strict=True):
+        await update_candidate_fields(
+            db,
+            project_id=project_id,
+            element_type="edge",
+            element_id=edge.edge_id,
+            reset_review_on_change=False,
+            commit=False,
+            canonical_payload_hash=item["canonical_payload_hash"],
+            **item["fields"],
+        )
+        await set_candidate_validation_result(
+            db,
+            project_id=project_id,
+            element_type="edge",
+            element_id=edge.edge_id,
+            validation_status=item["validation_status"],
+            validation_errors_json=_canonical_json(item["errors"]) if item["errors"] else None,
+            duplicate_candidates_json=item["fields"]["duplicate_candidates_json"],
+            canonical_payload_hash=item["canonical_payload_hash"],
+            commit=False,
+        )
+    for resource, item in zip(resources, plan["resources"], strict=True):
+        await set_candidate_validation_result(
+            db,
+            project_id=project_id,
+            element_type="resource",
+            element_id=resource.resource_id,
+            validation_status=item["validation_status"],
+            validation_errors_json=_canonical_json(item["errors"]) if item["errors"] else None,
+            duplicate_candidates_json=item["fields"]["duplicate_candidates_json"],
+            canonical_payload_hash=item["canonical_payload_hash"],
+            commit=False,
+        )
+
+
+def _require_session_id(candidate: Any) -> str:
+    if not candidate.session_id:
+        raise ValueError("OVERLAY_SESSION_NOT_FOUND")
+    return candidate.session_id
+
+
+async def update_overlay_node_candidate(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    node_id: str,
+    fields: dict[str, Any],
+    domain: str | None = None,
+) -> str:
+    candidate = await get_candidate(db, project_id=project_id, element_type="node", element_id=node_id)
+    if candidate is None:
+        raise ValueError("OVERLAY_CANDIDATE_NOT_FOUND")
+    session_id = _require_session_id(candidate)
+    next_candidate = _node_row_to_candidate(candidate)
+    next_candidate.update(fields)
+    normalized = _normalize_node_candidate(next_candidate)
+    update_fields, _ = _node_candidate_to_fields(
+        normalized,
+        source_ids=_parse_json_field(candidate.source_ids_json, []),
+        duplicate_indexes=None,
+    )
+    update_fields["canonical_payload_hash"] = overlay_payload_hash(normalized)
+    await update_candidate_fields(
+        db,
+        project_id=project_id,
+        element_type="node",
+        element_id=node_id,
+        reset_review_on_change=True,
+        commit=False,
+        **update_fields,
+    )
+    await _revalidate_session_candidates(db, project_id=project_id, session_id=session_id, domain=domain)
+    await db.commit()
+    return session_id
+
+
+async def update_overlay_edge_candidate(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    edge_id: str,
+    fields: dict[str, Any],
+    domain: str | None = None,
+) -> str:
+    candidate = await get_candidate(db, project_id=project_id, element_type="edge", element_id=edge_id)
+    if candidate is None:
+        raise ValueError("OVERLAY_CANDIDATE_NOT_FOUND")
+    session_id = _require_session_id(candidate)
+    next_candidate = _edge_row_to_candidate(candidate)
+    if "source_name_or_id" in fields and "source_node_id" not in fields:
+        next_candidate["source_node_id"] = None
+    if "target_name_or_id" in fields and "target_node_id" not in fields:
+        next_candidate["target_node_id"] = None
+    next_candidate.update(fields)
+    normalized = _normalize_edge_candidate(next_candidate)
+    source_ids = _parse_json_field(candidate.source_ids_json, [])
+    pack = get_domain_pack_service(domain)
+    node_lookup = _baseline_node_lookup(pack.nodes_by_id)
+    for node in await list_session_nodes(db, project_id=project_id, session_id=session_id):
+        if node.validation_status == "valid":
+            node_lookup[_normalized_lookup_key(node.node_id)] = node.node_id
+            if node.name:
+                node_lookup[_normalized_lookup_key(node.name)] = node.node_id
+    resolved = {
+        **normalized,
+        "source_node_id": _resolve_node_reference(
+            normalized.get("source_node_id") or normalized.get("source_name_or_id"),
+            node_lookup,
+        ),
+        "target_node_id": _resolve_node_reference(
+            normalized.get("target_node_id") or normalized.get("target_name_or_id"),
+            node_lookup,
+        ),
+    }
+    update_fields, _ = _edge_candidate_to_fields(
+        resolved,
+        source_ids=source_ids,
+        duplicate_indexes=None,
+        valid_node_ids=set(pack.nodes_by_id),
+        has_requires_cycle=False,
+    )
+    update_fields["canonical_payload_hash"] = overlay_payload_hash(resolved)
+    await update_candidate_fields(
+        db,
+        project_id=project_id,
+        element_type="edge",
+        element_id=edge_id,
+        reset_review_on_change=True,
+        commit=False,
+        **update_fields,
+    )
+    await _revalidate_session_candidates(db, project_id=project_id, session_id=session_id, domain=domain)
+    await db.commit()
+    return session_id
+
+
+async def update_overlay_resource_candidate(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    resource_id: str,
+    fields: dict[str, Any],
+    domain: str | None = None,
+) -> str:
+    candidate = await get_candidate(db, project_id=project_id, element_type="resource", element_id=resource_id)
+    if candidate is None:
+        raise ValueError("OVERLAY_CANDIDATE_NOT_FOUND")
+    session_id = _require_session_id(candidate)
+    next_candidate = _resource_row_to_candidate(candidate)
+    next_candidate.update(fields)
+    normalized = _normalize_resource_candidate(next_candidate)
+    source_ids = _parse_json_field(candidate.source_ids_json, [])
+    update_fields, _ = _resource_candidate_to_fields(
+        normalized,
+        source_ids=source_ids,
+        source_id_set=set(source_ids),
+        duplicate_indexes=None,
+    )
+    update_fields["canonical_payload_hash"] = overlay_payload_hash(normalized)
+    await update_candidate_fields(
+        db,
+        project_id=project_id,
+        element_type="resource",
+        element_id=resource_id,
+        reset_review_on_change=True,
+        commit=False,
+        **update_fields,
+    )
+    await _revalidate_session_candidates(db, project_id=project_id, session_id=session_id, domain=domain)
+    await db.commit()
+    return session_id

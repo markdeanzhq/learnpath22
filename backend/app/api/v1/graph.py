@@ -57,7 +57,14 @@ from app.services.project_graph_snapshot_service import (
     build_project_graph_snapshot,
     get_project_graph_snapshot_cache_stats,
 )
-from app.services.project_overlay_extraction_service import MAX_TEXT_CHARS, create_extraction_session_from_sources
+from app.services.project_overlay_extraction_service import (
+    MAX_TEXT_CHARS,
+    create_extraction_session_from_sources,
+    update_overlay_edge_candidate,
+    update_overlay_node_candidate,
+    update_overlay_resource_candidate,
+    validate_extraction_payload_for_sources,
+)
 from app.services.project_overlay_llm_extraction_service import preview_overlay_extraction_payload_from_sources
 from app.services.project_overlay_preflight_service import build_project_overlay_preflight
 from app.services.project_overlay_projection_service import (
@@ -204,6 +211,59 @@ class OverlayExtractionSessionRequest(BaseModel):
     mode: Literal["default", "custom_extension"] = "default"
     extraction_payload: Any | None = None
     session_provenance: dict[str, Any] | None = None
+
+
+class OverlayExtractionPayloadValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_ids: list[str] = Field(min_length=1)
+    mode: Literal["default", "custom_extension"] = "default"
+    extraction_payload: Any | None = None
+
+
+class OverlayNodeCandidatePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    group: str | None = None
+    category: str | None = None
+    summary: str | None = None
+    difficulty_final: int | None = None
+    importance_final: int | None = None
+    estimated_hours: float | None = None
+    req_math: int | None = None
+    req_coding: int | None = None
+    req_ml: int | None = None
+    theory_weight: float | None = None
+    practice_weight: float | None = None
+    confidence: float | None = None
+    legality_rationale: str | None = None
+    evidence_spans: list[dict[str, Any]] | None = None
+    provenance: dict[str, Any] | None = None
+
+
+class OverlayEdgeCandidatePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_node_id: str | None = None
+    target_node_id: str | None = None
+    source_name_or_id: str | None = None
+    target_name_or_id: str | None = None
+    relation_type: str | None = None
+    confidence: float | None = None
+    legality_rationale: str | None = None
+
+
+class OverlayResourceCandidatePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    url: str | None = None
+    resource_type: str | None = None
+    summary: str | None = None
+    quality_score: float | None = None
+    confidence: float | None = None
+    evidence_source_id: str | None = None
 
 
 class GoalExtensionDraftRequest(BaseModel):
@@ -985,6 +1045,29 @@ async def preview_overlay_extraction_payload(
         raise AppError(code=422, message=str(exc)) from exc
 
 
+@router.post("/projects/{project_id}/graph/overlay/extraction-payload/validate")
+async def validate_overlay_extraction_payload(
+    project_id: str,
+    req: OverlayExtractionPayloadValidationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+
+    try:
+        return await validate_extraction_payload_for_sources(
+            db,
+            project_id=project_id,
+            source_ids=req.source_ids,
+            mode=req.mode,
+            extraction_payload=req.extraction_payload,
+            domain=project.domain,
+        )
+    except ValueError as exc:
+        raise AppError(code=422, message=str(exc)) from exc
+
+
 @router.post("/projects/{project_id}/graph/overlay/extraction-sessions")
 async def create_overlay_extraction_session(
     project_id: str,
@@ -1088,6 +1171,108 @@ async def get_overlay_extraction_session(
     project = await get_project(db, project_id)
     if not project:
         raise NotFoundError("项目不存在")
+
+    session_payload = await _overlay_session_payload(db, project_id=project_id, session_id=session_id)
+    if session_payload is None:
+        raise NotFoundError("overlay extraction session 不存在")
+    return session_payload
+
+
+@router.patch("/projects/{project_id}/graph/overlay/nodes/{node_id}/candidate")
+async def patch_overlay_node_candidate(
+    project_id: str,
+    node_id: str,
+    req: OverlayNodeCandidatePatchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+    fields = req.model_dump(exclude_unset=True)
+    if not fields:
+        raise AppError(code=422, message="OVERLAY_CANDIDATE_PATCH_EMPTY")
+
+    try:
+        session_id = await update_overlay_node_candidate(
+            db,
+            project_id=project_id,
+            node_id=node_id,
+            fields=fields,
+            domain=project.domain,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == "OVERLAY_CANDIDATE_NOT_FOUND":
+            raise NotFoundError("overlay 元素不存在") from exc
+        raise AppError(code=422, message=message) from exc
+
+    session_payload = await _overlay_session_payload(db, project_id=project_id, session_id=session_id)
+    if session_payload is None:
+        raise NotFoundError("overlay extraction session 不存在")
+    return session_payload
+
+
+@router.patch("/projects/{project_id}/graph/overlay/edges/{edge_id}/candidate")
+async def patch_overlay_edge_candidate(
+    project_id: str,
+    edge_id: str,
+    req: OverlayEdgeCandidatePatchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+    fields = req.model_dump(exclude_unset=True)
+    if not fields:
+        raise AppError(code=422, message="OVERLAY_CANDIDATE_PATCH_EMPTY")
+
+    try:
+        session_id = await update_overlay_edge_candidate(
+            db,
+            project_id=project_id,
+            edge_id=edge_id,
+            fields=fields,
+            domain=project.domain,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == "OVERLAY_CANDIDATE_NOT_FOUND":
+            raise NotFoundError("overlay 元素不存在") from exc
+        raise AppError(code=422, message=message) from exc
+
+    session_payload = await _overlay_session_payload(db, project_id=project_id, session_id=session_id)
+    if session_payload is None:
+        raise NotFoundError("overlay extraction session 不存在")
+    return session_payload
+
+
+@router.patch("/projects/{project_id}/graph/overlay/resources/{resource_id}/candidate")
+async def patch_overlay_resource_candidate(
+    project_id: str,
+    resource_id: str,
+    req: OverlayResourceCandidatePatchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+    fields = req.model_dump(exclude_unset=True)
+    if not fields:
+        raise AppError(code=422, message="OVERLAY_CANDIDATE_PATCH_EMPTY")
+
+    try:
+        session_id = await update_overlay_resource_candidate(
+            db,
+            project_id=project_id,
+            resource_id=resource_id,
+            fields=fields,
+            domain=project.domain,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == "OVERLAY_CANDIDATE_NOT_FOUND":
+            raise NotFoundError("overlay 元素不存在") from exc
+        raise AppError(code=422, message=message) from exc
 
     session_payload = await _overlay_session_payload(db, project_id=project_id, session_id=session_id)
     if session_payload is None:

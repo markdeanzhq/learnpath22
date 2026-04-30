@@ -243,6 +243,97 @@ async def test_create_and_get_overlay_extraction_session_endpoints(client, proje
     assert resource["binding_summary"] == {"count": 0, "project_node_ids": [], "path_stage_ids": []}
 
 
+async def test_validate_overlay_extraction_payload_reports_invalid_candidates_without_writes(client, project, db_session):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    invalid_node = _valid_node("预校验非法节点")
+    invalid_node["req_coding"] = 9
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/extraction-payload/validate",
+        json={
+            "source_ids": [source["source_id"]],
+            "extraction_payload": {
+                "nodes": [invalid_node],
+                "edges": [
+                    {
+                        "source_name_or_id": "预校验非法节点",
+                        "target_name_or_id": "ml_c01",
+                        "relation_type": "RELATED_TO",
+                        "confidence": 0.8,
+                        "legality_rationale": "非法节点不会进入可引用节点集合，关系应提示来源悬空。",
+                    }
+                ],
+                "resources": [],
+                "warnings": [],
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["summary"]["has_blocking_errors"] is True
+    assert payload["counts"]["nodes"]["invalid"] == 1
+    assert payload["counts"]["edges"]["invalid"] == 1
+    assert payload["nodes"][0]["validation_errors"] == ["invalid_req_coding"]
+    assert "dangling_source" in payload["edges"][0]["validation_errors"]
+    sessions = (await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all()
+    assert sessions == []
+
+
+async def test_patch_overlay_node_candidate_repairs_validation_and_dependent_edges(client, project):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    invalid_node = _valid_node("可修复扩展节点")
+    invalid_node["req_coding"] = 9
+    create_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/extraction-sessions",
+        json={
+            "source_ids": [source["source_id"]],
+            "extraction_payload": {
+                "nodes": [invalid_node],
+                "edges": [
+                    {
+                        "source_name_or_id": "可修复扩展节点",
+                        "target_name_or_id": "ml_c01",
+                        "relation_type": "RELATED_TO",
+                        "confidence": 0.8,
+                        "legality_rationale": "修复节点画像后，这条关系应自动重新校验通过。",
+                    }
+                ],
+                "resources": [],
+                "warnings": [],
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    node_id = created["nodes"][0]["node_id"]
+    assert created["nodes"][0]["validation_status"] == "invalid"
+    assert created["edges"][0]["validation_status"] == "invalid"
+    assert "dangling_source" in created["edges"][0]["validation_errors"]
+
+    review_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node_id}/review",
+        json={"review_status": "confirmed"},
+    )
+    assert review_resp.status_code == 200
+
+    patch_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node_id}/candidate",
+        json={"req_coding": 2},
+    )
+
+    assert patch_resp.status_code == 200
+    payload = patch_resp.json()
+    node = payload["nodes"][0]
+    edge = payload["edges"][0]
+    assert node["validation_status"] == "valid"
+    assert node["validation_errors"] == []
+    assert node["review_status"] == "pending"
+    assert edge["validation_status"] == "valid"
+    assert edge["validation_errors"] == []
+    assert edge["source_node_id"] == node_id
+
+
 async def test_overlay_preflight_reports_review_and_planning_readiness(client, project):
     source = await _create_overlay_source_via_api(client, project["id"])
     create_resp = await client.post(

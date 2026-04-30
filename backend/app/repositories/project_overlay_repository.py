@@ -574,6 +574,86 @@ async def update_validation_status(
     return candidate
 
 
+async def update_candidate_fields(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    element_type: OverlayElementType,
+    element_id: str,
+    reset_review_on_change: bool = True,
+    commit: bool = True,
+    **fields: Any,
+) -> ProjectOverlayNode | ProjectOverlayEdge | ProjectOverlayResource:
+    _reject_lifecycle_overrides(
+        fields,
+        {
+            "project_id",
+            "node_id",
+            "edge_id",
+            "resource_id",
+            "session_id",
+            "validation_status",
+            "review_status",
+            "planning_enabled",
+            "promotion_status",
+            "created_at",
+            "updated_at",
+        },
+    )
+    candidate = await get_candidate(
+        db,
+        project_id=project_id,
+        element_type=element_type,
+        element_id=element_id,
+    )
+    if candidate is None:
+        raise ValueError("OVERLAY_CANDIDATE_NOT_FOUND")
+    await _ensure_candidate_session_editable(db, candidate=candidate)
+    for field_name, value in fields.items():
+        setattr(candidate, field_name, value)
+    if reset_review_on_change and candidate.review_status != "pending":
+        candidate.review_status = "pending"
+    await db.flush()
+    if commit:
+        await db.commit()
+        await db.refresh(candidate)
+    return candidate
+
+
+async def set_candidate_validation_result(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    element_type: OverlayElementType,
+    element_id: str,
+    validation_status: str,
+    validation_errors_json: str | None,
+    duplicate_candidates_json: str,
+    canonical_payload_hash: str | None = None,
+    commit: bool = True,
+) -> ProjectOverlayNode | ProjectOverlayEdge | ProjectOverlayResource:
+    _validate_status(validation_status, VALIDATION_STATUSES, "validation_status")
+    candidate = await get_candidate(
+        db,
+        project_id=project_id,
+        element_type=element_type,
+        element_id=element_id,
+    )
+    if candidate is None:
+        raise ValueError("OVERLAY_CANDIDATE_NOT_FOUND")
+    await _ensure_candidate_session_editable(db, candidate=candidate)
+    candidate.validation_status = validation_status
+    candidate.validation_errors_json = None if validation_status == "valid" else validation_errors_json
+    candidate.duplicate_candidates_json = duplicate_candidates_json
+    if canonical_payload_hash is not None:
+        candidate.canonical_payload_hash = canonical_payload_hash
+    await db.flush()
+    if commit:
+        await db.commit()
+        await db.refresh(candidate)
+    return candidate
+
+
 async def update_review_status(
     db: AsyncSession,
     *,

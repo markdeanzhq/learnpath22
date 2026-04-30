@@ -10,6 +10,10 @@ const {
   graphCreateOverlaySourceMock,
   graphCreateOverlayExtractionSessionMock,
   graphPreviewOverlayExtractionPayloadMock,
+  graphValidateOverlayExtractionPayloadMock,
+  graphUpdateOverlayNodeCandidateMock,
+  graphUpdateOverlayEdgeCandidateMock,
+  graphUpdateOverlayResourceCandidateMock,
   graphCreateGoalExtensionDraftMock,
   graphGetGoalExtensionDraftProposalMock,
   graphSetOverlayPlanningMock,
@@ -35,6 +39,10 @@ const {
   graphCreateOverlaySourceMock: vi.fn(),
   graphCreateOverlayExtractionSessionMock: vi.fn(),
   graphPreviewOverlayExtractionPayloadMock: vi.fn(),
+  graphValidateOverlayExtractionPayloadMock: vi.fn(),
+  graphUpdateOverlayNodeCandidateMock: vi.fn(),
+  graphUpdateOverlayEdgeCandidateMock: vi.fn(),
+  graphUpdateOverlayResourceCandidateMock: vi.fn(),
   graphCreateGoalExtensionDraftMock: vi.fn(),
   graphGetGoalExtensionDraftProposalMock: vi.fn(),
   graphSetOverlayPlanningMock: vi.fn(),
@@ -127,12 +135,16 @@ vi.mock('@/api/modules/graph', () => {
     reviewEdge: vi.fn(),
     createOverlaySource: graphCreateOverlaySourceMock,
     previewOverlayExtractionPayload: graphPreviewOverlayExtractionPayloadMock,
+    validateOverlayExtractionPayload: graphValidateOverlayExtractionPayloadMock,
     createOverlayExtractionSession: graphCreateOverlayExtractionSessionMock,
     getGoalExtensionDraftProposal: graphGetGoalExtensionDraftProposalMock,
     createGoalExtensionDraft: graphCreateGoalExtensionDraftMock,
     setOverlayPlanning: graphSetOverlayPlanningMock,
     getOverlayExtractionSession: graphGetOverlayExtractionSessionMock,
     reviewOverlayElement: graphReviewOverlayElementMock,
+    updateOverlayNodeCandidate: graphUpdateOverlayNodeCandidateMock,
+    updateOverlayEdgeCandidate: graphUpdateOverlayEdgeCandidateMock,
+    updateOverlayResourceCandidate: graphUpdateOverlayResourceCandidateMock,
     previewOverlayPromotion: graphPreviewOverlayPromotionMock,
     commitOverlayPromotion: graphCommitOverlayPromotionMock,
     getOverlayProjectionStatus: graphGetOverlayProjectionStatusMock,
@@ -188,11 +200,13 @@ function mountKnowledge() {
         ElResult: slotStub('div'),
         ElAlert: slotStub('div'),
         ElDrawer: slotStub('div'),
+        ElDialog: slotStub('div'),
         ElForm: slotStub('form'),
         ElFormItem: slotStub('div'),
         ElRadioGroup: slotStub('div'),
         ElRadioButton: slotStub('button'),
         ElInput: slotStub('input'),
+        ElInputNumber: slotStub('input'),
         ElSelect: slotStub('select'),
         ElOption: slotStub('option'),
         ElDescriptions: slotStub('div'),
@@ -260,6 +274,19 @@ describe('Knowledge overlay entry', () => {
         prompt_version: 'overlay-extraction-v1',
       },
     }))
+    graphValidateOverlayExtractionPayloadMock.mockImplementation((_projectId: string, payload: any) => Promise.resolve({
+      source_ids: payload.source_ids,
+      warnings: payload.extraction_payload?.warnings || [],
+      counts: {
+        nodes: { total: payload.extraction_payload?.nodes?.length || 0, valid: payload.extraction_payload?.nodes?.length || 0, invalid: 0, needs_review: 0 },
+        edges: { total: payload.extraction_payload?.edges?.length || 0, valid: payload.extraction_payload?.edges?.length || 0, invalid: 0, needs_review: 0 },
+        resources: { total: payload.extraction_payload?.resources?.length || 0, valid: payload.extraction_payload?.resources?.length || 0, invalid: 0, needs_review: 0 },
+      },
+      summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
+      nodes: [],
+      edges: [],
+      resources: [],
+    }))
     const sessionResponse = {
       session: {
         session_id: 'sess-001',
@@ -278,6 +305,9 @@ describe('Knowledge overlay entry', () => {
       warnings: [],
     }
     graphCreateOverlayExtractionSessionMock.mockResolvedValue(sessionResponse)
+    graphUpdateOverlayNodeCandidateMock.mockResolvedValue(sessionResponse)
+    graphUpdateOverlayEdgeCandidateMock.mockResolvedValue(sessionResponse)
+    graphUpdateOverlayResourceCandidateMock.mockResolvedValue(sessionResponse)
     graphCreateGoalExtensionDraftMock.mockResolvedValue(sessionResponse)
     const draftProposalResponse = {
       resolution_session_id: 'resolution-001',
@@ -431,6 +461,7 @@ describe('Knowledge overlay entry', () => {
         prompt_version: 'overlay-extraction-v1',
         selected_counts: { nodes: 0, edges: 0, resources: 0 },
         filtered_by_user: true,
+        pre_validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
       },
     })
     expect(successMock).toHaveBeenCalled()
@@ -924,9 +955,175 @@ describe('Knowledge overlay entry', () => {
         prompt_version: 'overlay-extraction-v1',
         selected_counts: { nodes: 0, edges: 0, resources: 0 },
         filtered_by_user: true,
+        pre_validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
       },
     })
     expect(graphCreateOverlayExtractionSessionMock.mock.calls[0][1]).not.toHaveProperty('result_ids')
+  })
+
+  it('edits an invalid overlay node candidate and reloads diagnostics', async () => {
+    const repairedSession = {
+      session: {
+        session_id: 'sess-repair',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-001'],
+        warnings: [],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [{ node_id: 'po:node-001', name: '可修复节点', validation_status: 'valid', validation_errors: [], review_status: 'pending' }],
+      edges: [{ edge_id: 'po:edge-001', source_node_id: 'po:node-001', target_node_id: 'ml_c01', relation_type: 'RELATED_TO', validation_status: 'valid', validation_errors: [] }],
+      resources: [],
+      warnings: [],
+    }
+    graphUpdateOverlayNodeCandidateMock.mockResolvedValue(repairedSession)
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).openNodeCandidateEditor({
+      node_id: 'po:node-001',
+      project_id: 'project-001',
+      session_id: 'sess-repair',
+      name: '可修复节点',
+      summary: '摘要',
+      group: 'concept',
+      category: 'core',
+      difficulty_final: 2,
+      importance_final: 4,
+      estimated_hours: 2,
+      req_math: 2,
+      req_coding: 9,
+      req_ml: 1,
+      theory_weight: 0.6,
+      practice_weight: 0.4,
+      validation_status: 'invalid',
+      validation_errors: ['invalid_req_coding'],
+      review_status: 'confirmed',
+      planning_enabled: true,
+      promotion_status: 'not_promoted',
+      source_ids: ['src-001'],
+      provenance: {},
+      duplicate_candidates: {},
+      created_at: '2026-04-22T09:00:00Z',
+      updated_at: '2026-04-22T09:00:00Z',
+    })
+    ;(wrapper.vm as any).candidateEditor.form.req_coding = 2
+    await (wrapper.vm as any).saveCandidateEditor()
+
+    expect(graphUpdateOverlayNodeCandidateMock).toHaveBeenCalledWith('project-001', 'po:node-001', expect.objectContaining({ req_coding: 2 }))
+    expect((wrapper.vm as any).lastOverlaySession).toEqual(repairedSession)
+    expect(graphGetOverlayPreflightMock).toHaveBeenCalled()
+    expectLastWorkspaceCalledWith({ scope: 'path' })
+  })
+
+  it('filters overlay repair queue and applies candidate quick fixes', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).lastOverlaySession = {
+      session: {
+        session_id: 'sess-polish',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-001'],
+        warnings: [],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [
+        {
+          node_id: 'po:node-invalid',
+          name: '非法画像节点',
+          summary: '',
+          group: 'concept',
+          category: 'core',
+          difficulty_final: 2,
+          importance_final: 3,
+          estimated_hours: 2,
+          req_math: 2,
+          req_coding: 9,
+          req_ml: 1,
+          theory_weight: 1.2,
+          practice_weight: 0.2,
+          validation_status: 'invalid',
+          validation_errors: ['invalid_req_coding', 'invalid_weight_sum'],
+          review_status: 'pending',
+          planning_enabled: false,
+          promotion_status: 'not_promoted',
+          source_ids: ['src-001'],
+          provenance: {},
+          duplicate_candidates: {},
+          created_at: '2026-04-22T09:00:00Z',
+          updated_at: '2026-04-22T09:00:00Z',
+        },
+        {
+          node_id: 'po:node-pending',
+          name: '待审核节点',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'pending',
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'po:edge-review',
+          source_node_id: 'po:node-pending',
+          target_node_id: 'ml_c01',
+          relation_type: 'RELATED_TO',
+          validation_status: 'needs_review',
+          validation_errors: [],
+          review_status: 'pending',
+        },
+      ],
+      resources: [
+        {
+          resource_id: 'po:resource-invalid',
+          title: '资源候选',
+          url: 'https://example.com/resource',
+          resource_type: 'article',
+          summary: '资源摘要',
+          quality_score: 2,
+          validation_status: 'invalid',
+          validation_errors: ['invalid_quality_score'],
+          review_status: 'pending',
+          binding_summary: { count: 0 },
+        },
+      ],
+      warnings: [],
+    }
+    await wrapper.vm.$nextTick()
+
+    expect((wrapper.vm as any).overlayCandidateFilterCounts).toEqual({
+      all: 4,
+      blocking: 2,
+      review: 1,
+      pending: 1,
+      ready: 0,
+    })
+
+    ;(wrapper.vm as any).overlayCandidateFilter = 'blocking'
+    await wrapper.vm.$nextTick()
+
+    expect((wrapper.vm as any).filteredOverlayNodes).toHaveLength(1)
+    expect((wrapper.vm as any).filteredOverlayEdges).toHaveLength(0)
+    expect((wrapper.vm as any).filteredOverlayResources).toHaveLength(1)
+    expect(wrapper.text()).toContain('候选处理队列')
+
+    ;(wrapper.vm as any).openFirstRepairableCandidate()
+
+    expect((wrapper.vm as any).candidateEditor.kind).toBe('node')
+    expect((wrapper.vm as any).candidateEditorFieldIssue('req_coding')).toContain('编程基础要求必须是 1~5')
+
+    ;(wrapper.vm as any).applyCandidateQuickFix('invalid_req_coding')
+    ;(wrapper.vm as any).applyCandidateQuickFix('invalid_weight_sum')
+
+    expect((wrapper.vm as any).candidateEditor.form.req_coding).toBe(5)
+    expect((wrapper.vm as any).candidateEditor.form.theory_weight + (wrapper.vm as any).candidateEditor.form.practice_weight).toBe(1)
   })
 
   it('binds overlay resource and reloads session detail', async () => {

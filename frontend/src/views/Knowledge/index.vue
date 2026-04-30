@@ -107,9 +107,12 @@
             <el-tag :type="overlayPreflightTagType">{{ overlayPreflightStatusLabel }}</el-tag>
           </div>
           <p>{{ overlayPreflight.summary }}</p>
+          <p class="overlay-guidance">{{ overlayPreflightGuidance }}</p>
           <div class="overlay-preflight-tags">
             <el-tag type="info" effect="plain">候选 {{ overlayPreflight.counts.active_nodes }} 节点 / {{ overlayPreflight.counts.active_edges }} 关系</el-tag>
             <el-tag type="success" effect="plain">可进入增强图谱 {{ overlayPreflight.counts.visible_overlay_nodes }} 节点 / {{ overlayPreflight.counts.visible_overlay_edges }} 关系</el-tag>
+            <el-tag type="warning" effect="plain">待审核 {{ overlayPreflight.counts.nodes.pending_review + overlayPreflight.counts.edges.pending_review }}</el-tag>
+            <el-tag type="danger" effect="plain">校验失败 {{ overlayPreflight.counts.nodes.invalid + overlayPreflight.counts.edges.invalid }}</el-tag>
             <el-tag type="warning" effect="plain">当前路径命中 {{ overlayPreflight.counts.path_overlay_nodes }} 节点 / {{ overlayPreflight.counts.path_overlay_edges }} 关系</el-tag>
             <el-tag v-if="overlayPreflight.counts.ignored_overlay_edges" type="warning" effect="plain">忽略关系 {{ overlayPreflight.counts.ignored_overlay_edges }}</el-tag>
           </div>
@@ -392,6 +395,14 @@
             show-icon
             :title="overlayExtractionPreview.warnings.join('；')"
           />
+          <el-alert
+            v-if="overlayCandidateValidation"
+            class="overlay-alert"
+            :type="overlayCandidateValidation.summary.has_blocking_errors ? 'warning' : 'success'"
+            :closable="false"
+            show-icon
+            :title="`预校验：通过 ${overlayCandidateValidation.counts.nodes.valid + overlayCandidateValidation.counts.edges.valid + overlayCandidateValidation.counts.resources.valid}，失败 ${overlayCandidateValidation.summary.invalid_count}，待复核 ${overlayCandidateValidation.summary.needs_review_count}`"
+          />
         </section>
 
         <el-alert
@@ -408,7 +419,7 @@
             <div>
               <h3>抽取结果</h3>
               <p v-if="showTechnicalDetails">追溯编号：{{ lastOverlaySession.session.session_id }}</p>
-              <p v-else>请继续审核候选节点和关系，确认后再开启规划。</p>
+              <p v-else>{{ overlaySessionGuide }}</p>
             </div>
             <el-tag :type="sessionStatusMeta(lastOverlaySession.session.session_status).tagType" :title="lastOverlaySession.session.session_status">
               {{ sessionStatusMeta(lastOverlaySession.session.session_status).label }}
@@ -418,24 +429,63 @@
             <el-descriptions-item label="节点候选">{{ lastOverlaySession.nodes?.length || 0 }}</el-descriptions-item>
             <el-descriptions-item label="关系候选">{{ lastOverlaySession.edges?.length || 0 }}</el-descriptions-item>
             <el-descriptions-item label="资源候选">{{ lastOverlaySession.resources?.length || 0 }}</el-descriptions-item>
+            <el-descriptions-item label="校验概览">
+              通过 {{ overlaySessionStats.valid }}，失败 {{ overlaySessionStats.invalid }}，待复核 {{ overlaySessionStats.needsReview }}，待审核 {{ overlaySessionStats.pendingReview }}
+            </el-descriptions-item>
             <el-descriptions-item label="来源数">{{ lastOverlaySession.sources?.length || 0 }}</el-descriptions-item>
           </el-descriptions>
+          <el-alert
+            class="overlay-alert"
+            :type="overlaySessionStats.invalid ? 'warning' : 'info'"
+            :closable="false"
+            show-icon
+            :title="overlaySessionGuide"
+          />
 
-          <section v-if="lastOverlaySession.nodes?.length || lastOverlaySession.edges?.length" class="overlay-subsection">
+          <div v-if="overlayCandidateFilterCounts.all" class="overlay-candidate-toolbar">
+            <div class="overlay-candidate-toolbar-title">
+              <strong>候选处理队列</strong>
+              <p>建议顺序：先修复失败候选，再处理重复复核，最后确认可规划候选。</p>
+            </div>
+            <el-radio-group v-model="overlayCandidateFilter" size="small">
+              <el-radio-button
+                v-for="option in OVERLAY_CANDIDATE_FILTER_OPTIONS"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }} {{ overlayCandidateFilterCounts[option.value] }}
+              </el-radio-button>
+            </el-radio-group>
+            <el-button size="small" type="primary" plain :disabled="!overlayCandidateRepairTarget" @click="openFirstRepairableCandidate">
+              {{ overlayCandidateRepairTargetLabel }}
+            </el-button>
+          </div>
+
+          <p v-if="overlayCandidateFilterCounts.all && !filteredOverlayCandidateCount" class="overlay-empty-filter">
+            当前筛选下暂无候选，切换到“全部”可查看完整草稿。
+          </p>
+
+          <section v-if="filteredOverlayNodes.length || filteredOverlayEdges.length" class="overlay-subsection">
             <h4>候选校验明细</h4>
             <div class="candidate-card-list compact">
-              <article v-for="node in lastOverlaySession.nodes || []" :key="node.node_id" class="preview-candidate-card">
-                <strong>{{ node.name || node.node_id }}</strong>
+              <article v-for="node in filteredOverlayNodes" :key="node.node_id" class="preview-candidate-card">
+                <div class="candidate-card-header">
+                  <strong>{{ node.name || node.node_id }}</strong>
+                  <el-button size="small" text type="primary" @click="openNodeCandidateEditor(node)">编辑修复</el-button>
+                </div>
                 <p>{{ node.summary || node.legality_rationale || '暂无摘要' }}</p>
-                <el-tag size="small" :type="node.validation_status === 'valid' ? 'success' : 'warning'">{{ node.validation_status }}</el-tag>
+                <el-tag size="small" :type="validationStatusMeta(node.validation_status).tagType">{{ validationStatusMeta(node.validation_status).label }}</el-tag>
                 <ul v-if="node.validation_errors?.length" class="validation-errors">
                   <li v-for="error in node.validation_errors" :key="`${node.node_id}-${error}`">{{ validationErrorMessage(error) }}</li>
                 </ul>
               </article>
-              <article v-for="edge in lastOverlaySession.edges || []" :key="edge.edge_id" class="preview-candidate-card">
-                <strong>{{ edge.source_node_id }} → {{ edge.target_node_id }}</strong>
+              <article v-for="edge in filteredOverlayEdges" :key="edge.edge_id" class="preview-candidate-card">
+                <div class="candidate-card-header">
+                  <strong>{{ edge.source_node_id || edge.source_name_or_id }} → {{ edge.target_node_id || edge.target_name_or_id }}</strong>
+                  <el-button size="small" text type="primary" @click="openEdgeCandidateEditor(edge)">编辑修复</el-button>
+                </div>
                 <p>{{ edge.legality_rationale || '暂无合法性说明' }}</p>
-                <el-tag size="small" :type="edge.validation_status === 'valid' ? 'success' : 'warning'">{{ edge.validation_status }}</el-tag>
+                <el-tag size="small" :type="validationStatusMeta(edge.validation_status).tagType">{{ validationStatusMeta(edge.validation_status).label }}</el-tag>
                 <el-tag size="small" type="info">{{ edge.relation_type }}</el-tag>
                 <ul v-if="edge.validation_errors?.length" class="validation-errors">
                   <li v-for="error in edge.validation_errors" :key="`${edge.edge_id}-${error}`">{{ validationErrorMessage(error) }}</li>
@@ -478,15 +528,18 @@
             </div>
           </section>
 
-          <section v-if="lastOverlaySession.resources?.length" class="overlay-subsection">
+          <section v-if="filteredOverlayResources.length" class="overlay-subsection">
             <h4>资源候选</h4>
-            <article v-for="resource in lastOverlaySession.resources || []" :key="resource.resource_id" class="resource-candidate">
-              <div class="resource-title">{{ resource.title }}</div>
+            <article v-for="resource in filteredOverlayResources" :key="resource.resource_id" class="resource-candidate">
+              <div class="candidate-card-header">
+                <div class="resource-title">{{ resource.title }}</div>
+                <el-button size="small" text type="primary" @click="openResourceCandidateEditor(resource)">编辑修复</el-button>
+              </div>
               <p>{{ resource.summary || '暂无摘要' }}</p>
               <el-tag size="small" :type="resourceTypeMeta(resource.resource_type || 'resource').tagType" :title="resource.resource_type || 'resource'">
                 {{ resourceTypeMeta(resource.resource_type || 'resource').label }}
               </el-tag>
-              <el-tag size="small" :type="resource.validation_status === 'valid' ? 'success' : 'warning'">{{ resource.validation_status }}</el-tag>
+              <el-tag size="small" :type="validationStatusMeta(resource.validation_status).tagType">{{ validationStatusMeta(resource.validation_status).label }}</el-tag>
               <el-tag size="small" type="success">绑定 {{ resource.binding_summary?.count || 0 }}</el-tag>
               <ul v-if="resource.validation_errors?.length" class="validation-errors">
                 <li v-for="error in resource.validation_errors" :key="`${resource.resource_id}-${error}`">{{ validationErrorMessage(error) }}</li>
@@ -583,6 +636,122 @@
         </div>
       </div>
     </el-drawer>
+
+    <el-dialog v-model="candidateEditor.visible" :title="candidateEditor.title" width="620px">
+      <div v-if="candidateEditor.errors.length" class="candidate-editor-issue-panel">
+        <strong>当前问题</strong>
+        <p>{{ candidateEditorIssueSummary }}</p>
+        <div v-if="candidateEditorQuickFixErrors.length" class="candidate-editor-quick-actions">
+          <el-button
+            v-for="error in candidateEditorQuickFixErrors"
+            :key="`quick-${error}`"
+            size="small"
+            type="warning"
+            plain
+            @click="applyCandidateQuickFix(error)"
+          >
+            {{ quickFixLabel(error) }}
+          </el-button>
+        </div>
+      </div>
+      <el-form label-position="top">
+        <template v-if="candidateEditor.kind === 'node'">
+          <el-form-item label="名称"><el-input v-model="candidateEditor.form.name" /></el-form-item>
+          <el-form-item label="摘要">
+            <el-input v-model="candidateEditor.form.summary" type="textarea" :rows="3" />
+            <p v-if="candidateEditorFieldIssue('summary')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('summary') }}</p>
+          </el-form-item>
+          <el-form-item label="合法性说明">
+            <el-input v-model="candidateEditor.form.legality_rationale" type="textarea" :rows="2" />
+            <p v-if="candidateEditorFieldIssue('legality_rationale')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('legality_rationale') }}</p>
+          </el-form-item>
+          <el-form-item label="分组 / 分类">
+            <el-input v-model="candidateEditor.form.group" placeholder="group" />
+            <el-input v-model="candidateEditor.form.category" class="candidate-editor-inline" placeholder="category" />
+          </el-form-item>
+          <el-form-item label="规划评分">
+            <div class="candidate-editor-grid">
+              <el-input-number v-model="candidateEditor.form.difficulty_final" :min="1" :max="5" controls-position="right" />
+              <el-input-number v-model="candidateEditor.form.importance_final" :min="1" :max="5" controls-position="right" />
+              <el-input-number v-model="candidateEditor.form.estimated_hours" :min="0.5" :step="0.5" controls-position="right" />
+            </div>
+            <p v-if="candidateEditorFieldIssue('difficulty_final') || candidateEditorFieldIssue('importance_final') || candidateEditorFieldIssue('estimated_hours')" class="candidate-editor-field-hint">
+              {{ candidateEditorFieldIssue('difficulty_final') || candidateEditorFieldIssue('importance_final') || candidateEditorFieldIssue('estimated_hours') }}
+            </p>
+          </el-form-item>
+          <el-form-item label="画像需求 req_math / req_coding / req_ml">
+            <div class="candidate-editor-grid">
+              <el-input-number v-model="candidateEditor.form.req_math" :min="1" :max="5" controls-position="right" />
+              <el-input-number v-model="candidateEditor.form.req_coding" :min="1" :max="5" controls-position="right" />
+              <el-input-number v-model="candidateEditor.form.req_ml" :min="1" :max="5" controls-position="right" />
+            </div>
+            <p v-if="candidateEditorFieldIssue('req_math') || candidateEditorFieldIssue('req_coding') || candidateEditorFieldIssue('req_ml')" class="candidate-editor-field-hint">
+              {{ candidateEditorFieldIssue('req_math') || candidateEditorFieldIssue('req_coding') || candidateEditorFieldIssue('req_ml') }}
+            </p>
+          </el-form-item>
+          <el-form-item label="理论 / 实践权重">
+            <div class="candidate-editor-grid">
+              <el-input-number v-model="candidateEditor.form.theory_weight" :min="0" :max="1" :step="0.1" controls-position="right" />
+              <el-input-number v-model="candidateEditor.form.practice_weight" :min="0" :max="1" :step="0.1" controls-position="right" />
+            </div>
+            <p v-if="candidateEditorFieldIssue('theory_weight') || candidateEditorFieldIssue('practice_weight')" class="candidate-editor-field-hint">
+              {{ candidateEditorFieldIssue('theory_weight') || candidateEditorFieldIssue('practice_weight') }}
+            </p>
+          </el-form-item>
+        </template>
+        <template v-else-if="candidateEditor.kind === 'edge'">
+          <el-form-item label="来源节点 ID 或名称">
+            <el-input v-model="candidateEditor.form.source_node_id" />
+            <p v-if="candidateEditorFieldIssue('source_node_id')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('source_node_id') }}</p>
+          </el-form-item>
+          <el-form-item label="目标节点 ID 或名称">
+            <el-input v-model="candidateEditor.form.target_node_id" />
+            <p v-if="candidateEditorFieldIssue('target_node_id')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('target_node_id') }}</p>
+          </el-form-item>
+          <el-form-item label="关系类型">
+            <el-select v-model="candidateEditor.form.relation_type" style="width: 100%">
+              <el-option label="REQUIRES" value="REQUIRES" />
+              <el-option label="RELATED_TO" value="RELATED_TO" />
+            </el-select>
+            <p v-if="candidateEditorFieldIssue('relation_type')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('relation_type') }}</p>
+          </el-form-item>
+          <el-form-item label="合法性说明">
+            <el-input v-model="candidateEditor.form.legality_rationale" type="textarea" :rows="3" />
+            <p v-if="candidateEditorFieldIssue('legality_rationale')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('legality_rationale') }}</p>
+          </el-form-item>
+        </template>
+        <template v-else>
+          <el-form-item label="标题">
+            <el-input v-model="candidateEditor.form.title" />
+            <p v-if="candidateEditorFieldIssue('title')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('title') }}</p>
+          </el-form-item>
+          <el-form-item label="URL">
+            <el-input v-model="candidateEditor.form.url" />
+            <p v-if="candidateEditorFieldIssue('url')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('url') }}</p>
+          </el-form-item>
+          <el-form-item label="资源类型">
+            <el-input v-model="candidateEditor.form.resource_type" />
+            <p v-if="candidateEditorFieldIssue('resource_type')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('resource_type') }}</p>
+          </el-form-item>
+          <el-form-item label="摘要">
+            <el-input v-model="candidateEditor.form.summary" type="textarea" :rows="3" />
+            <p v-if="candidateEditorFieldIssue('summary')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('summary') }}</p>
+          </el-form-item>
+          <el-form-item label="证据来源 ID">
+            <el-input v-model="candidateEditor.form.evidence_source_id" />
+            <p v-if="candidateEditorFieldIssue('evidence_source_id')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('evidence_source_id') }}</p>
+          </el-form-item>
+          <el-form-item label="质量分">
+            <el-input-number v-model="candidateEditor.form.quality_score" :min="0" :max="1" :step="0.1" controls-position="right" />
+            <p v-if="candidateEditorFieldIssue('quality_score')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('quality_score') }}</p>
+          </el-form-item>
+        </template>
+      </el-form>
+      <template #footer>
+        <el-button @click="candidateEditor.visible = false">取消</el-button>
+        <el-button type="primary" :loading="candidateEditor.saving" @click="saveCandidateEditor">保存并重新校验</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -613,8 +782,12 @@ import {
   type OverlayProjectionStatusResponse,
   type OverlayPreflightResponse,
   type OverlayElementGroup,
+  type OverlayEdgeCandidate,
   type OverlayExtractionPayloadPreviewResponse,
+  type OverlayExtractionPayloadValidationResponse,
   type OverlayExtractionSessionResponse,
+  type OverlayNodeCandidate,
+  type OverlayResourceCandidate,
   type OverlayReviewStatus,
   type OverlaySourceRequest,
   type ReviewStatus,
@@ -629,6 +802,7 @@ import {
   promotionPreviewStatusMeta,
   resourceTypeMeta,
   sessionStatusMeta,
+  validationStatusMeta,
 } from '@/utils/displayLabels'
 
 type GraphState = 'loading' | 'ready' | 'empty' | 'error'
@@ -638,6 +812,31 @@ type OverlayExtractionMode = 'default' | 'custom_extension'
 type OverlayDraftMode = 'goal_draft' | 'manual'
 type OverlayPreviewGroup = 'nodes' | 'edges' | 'resources'
 type OverlaySessionView = OverlayExtractionSessionResponse & Partial<GoalExtensionDraftResponse>
+type EditableCandidateKind = 'node' | 'edge' | 'resource'
+type CandidateIssueFilter = 'all' | 'blocking' | 'review' | 'pending' | 'ready'
+
+type OverlaySessionCandidateLike = {
+  validation_status?: string | null
+  review_status?: string | null
+  validation_errors?: string[] | null
+}
+
+type OverlayRepairTarget =
+  | { kind: 'node'; candidate: OverlayNodeCandidate }
+  | { kind: 'edge'; candidate: OverlayEdgeCandidate }
+  | { kind: 'resource'; candidate: OverlayResourceCandidate }
+
+type CandidateEditorState = {
+  visible: boolean
+  saving: boolean
+  kind: EditableCandidateKind
+  id: string
+  title: string
+  errors: string[]
+  validationStatus: string
+  reviewStatus: string
+  form: Record<string, any>
+}
 
 type PreviewPayload = {
   nodes: Array<Record<string, any>>
@@ -660,6 +859,13 @@ type SelectedNodeContext = GraphNodeData & {
 
 const PROJECT_LATEST_PLAN_MISSING = 'project_latest_plan_missing'
 const SEARCH_NOT_READY = 'SEARCH_NOT_READY'
+const OVERLAY_CANDIDATE_FILTER_OPTIONS: Array<{ value: CandidateIssueFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'blocking', label: '需修复' },
+  { value: 'review', label: '待复核' },
+  { value: 'pending', label: '待审核' },
+  { value: 'ready', label: '已确认' },
+]
 
 const GraphToolbar = defineAsyncComponent(() => import('@/components/Graph/GraphToolbar.vue'))
 const GraphCanvas = defineAsyncComponent(() => import('@/components/Graph/GraphCanvas.vue'))
@@ -763,6 +969,19 @@ const manualGoalDraftResolutionSessionId = ref<string | null>(null)
 const goalDraftProposalDismissed = ref(false)
 const persistedSearchResults = ref<PersistedSearchResult[]>([])
 const lastOverlaySession = ref<OverlaySessionView | null>(null)
+const overlayCandidateValidation = ref<OverlayExtractionPayloadValidationResponse | null>(null)
+const overlayCandidateFilter = ref<CandidateIssueFilter>('all')
+const candidateEditor = ref<CandidateEditorState>({
+  visible: false,
+  saving: false,
+  kind: 'node',
+  id: '',
+  title: '',
+  errors: [],
+  validationStatus: 'unknown',
+  reviewStatus: 'pending',
+  form: {},
+})
 const promotionPreview = ref<any | null>(null)
 const promotionResult = ref<any | null>(null)
 const promotionSecret = ref('')
@@ -811,6 +1030,84 @@ const overlayPreflightIssues = computed(() => [
   ...(overlayPreflight.value?.blocking_items || []),
   ...(overlayPreflight.value?.warning_items || []),
 ])
+const overlayPreflightGuidance = computed(() => {
+  const preflight = overlayPreflight.value
+  if (!preflight) return ''
+  const counts = preflight.counts
+  const invalid = counts.nodes.invalid + counts.edges.invalid
+  const pendingReview = counts.nodes.pending_review + counts.edges.pending_review
+  const planningDisabled = counts.nodes.planning_disabled + counts.edges.planning_disabled
+  if (invalid) return '先修复校验失败候选；节点无效时，引用它的关系会暂时显示端点不存在。'
+  if (pendingReview) return '已有候选通过机器校验，请逐项确认审核；只有已确认且开启规划的候选才会进入增强图谱。'
+  if (planningDisabled) return '存在已确认但关闭规划的候选，如需参与路径，请重新开启规划开关。'
+  if (counts.visible_overlay_nodes || counts.visible_overlay_edges) return '增强图谱已可用于项目图谱和路径预检；如需写入 Neo4j 投影，再点击同步图谱。'
+  return '当前草稿尚未产生可进入增强图谱的节点或关系。'
+})
+const overlaySessionGuide = computed(() => {
+  const session = lastOverlaySession.value
+  if (!session) return ''
+  const candidates = [...(session.nodes || []), ...(session.edges || []), ...(session.resources || [])]
+  if (candidates.some((item) => item.validation_status === 'invalid')) {
+    return '下一步：先点击“编辑修复”处理校验失败项；失败节点修复后，相关关系会自动重新校验。'
+  }
+  if (candidates.some((item) => item.validation_status === 'needs_review')) {
+    return '下一步：存在重复或需要复核的候选，请确认是否保留，再进行人工审核。'
+  }
+  if (candidates.some((item) => item.review_status === 'pending')) {
+    return '下一步：候选已经通过机器校验，但仍是草稿；请在图谱或明细中确认审核。'
+  }
+  return '下一步：已确认候选可参与增强图谱；如果暂不想进入路径，可关闭规划开关。'
+})
+const overlaySessionStats = computed(() => {
+  const session = lastOverlaySession.value
+  const candidates = session ? [...(session.nodes || []), ...(session.edges || []), ...(session.resources || [])] : []
+  return {
+    invalid: candidates.filter((item) => item.validation_status === 'invalid').length,
+    needsReview: candidates.filter((item) => item.validation_status === 'needs_review').length,
+    valid: candidates.filter((item) => item.validation_status === 'valid').length,
+    pendingReview: candidates.filter((item) => item.review_status === 'pending').length,
+  }
+})
+const overlaySessionCandidates = computed<OverlayRepairTarget[]>(() => {
+  const session = lastOverlaySession.value
+  if (!session) return []
+  return [
+    ...(session.nodes || []).map((candidate) => ({ kind: 'node' as const, candidate })),
+    ...(session.edges || []).map((candidate) => ({ kind: 'edge' as const, candidate })),
+    ...(session.resources || []).map((candidate) => ({ kind: 'resource' as const, candidate })),
+  ]
+})
+const filteredOverlayNodes = computed(() => (lastOverlaySession.value?.nodes || []).filter((candidate) => matchesOverlayCandidateFilter(candidate)))
+const filteredOverlayEdges = computed(() => (lastOverlaySession.value?.edges || []).filter((candidate) => matchesOverlayCandidateFilter(candidate)))
+const filteredOverlayResources = computed(() => (lastOverlaySession.value?.resources || []).filter((candidate) => matchesOverlayCandidateFilter(candidate)))
+const overlayCandidateFilterCounts = computed<Record<CandidateIssueFilter, number>>(() => {
+  const candidates = overlaySessionCandidates.value.map((item) => item.candidate)
+  return {
+    all: candidates.length,
+    blocking: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'blocking')).length,
+    review: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'review')).length,
+    pending: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'pending')).length,
+    ready: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'ready')).length,
+  }
+})
+const filteredOverlayCandidateCount = computed(() => (
+  filteredOverlayNodes.value.length + filteredOverlayEdges.value.length + filteredOverlayResources.value.length
+))
+const overlayCandidateRepairTarget = computed(() => (
+  overlaySessionCandidates.value.find((item) => item.candidate.validation_status === 'invalid')
+  || overlaySessionCandidates.value.find((item) => item.candidate.validation_status === 'needs_review')
+  || null
+))
+const overlayCandidateRepairTargetLabel = computed(() => {
+  if (!overlayCandidateRepairTarget.value) return '暂无需修复候选'
+  return `打开首个需处理候选：${overlayRepairTargetTitle(overlayCandidateRepairTarget.value)}`
+})
+const candidateEditorIssueSummary = computed(() => {
+  const errors = candidateEditor.value.errors
+  if (!errors.length) return '当前候选暂无校验问题。'
+  return `当前候选有 ${errors.length} 个问题：${errors.map(validationErrorMessage).join('；')}`
+})
+const candidateEditorQuickFixErrors = computed(() => candidateEditor.value.errors.filter(isCandidateQuickFixAvailable))
 const resourceTargetOptions = computed(() => nodes.value.map((node) => ({
   id: node.id,
   label: node.label || node.id,
@@ -919,12 +1216,14 @@ watch(nodes, (nextNodes) => {
 
 watch(overlayForm, () => {
   overlayExtractionPreview.value = null
+  overlayCandidateValidation.value = null
   selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
 }, { deep: true })
 
 watch(overlayDraftMode, (nextMode) => {
   overlayError.value = ''
   overlayExtractionPreview.value = null
+  overlayCandidateValidation.value = null
   selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
   if (nextMode === 'goal_draft') {
     goalDraftProposalDismissed.value = false
@@ -951,7 +1250,10 @@ function resetOverlayState() {
   overlayForm.value = createOverlayForm()
   overlayDraftMode.value = activeGoalDraftResolutionSessionId.value ? 'goal_draft' : 'manual'
   overlayExtractionPreview.value = null
+  overlayCandidateValidation.value = null
   selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
+  overlayCandidateFilter.value = 'all'
+  candidateEditor.value = { visible: false, saving: false, kind: 'node', id: '', title: '', errors: [], validationStatus: 'unknown', reviewStatus: 'pending', form: {} }
   goalDraftProposal.value = null
   goalDraftProposalLoading.value = false
   goalDraftProposalDismissed.value = false
@@ -1731,17 +2033,208 @@ function edgeCandidateSummary(candidate: Record<string, any>) {
   return `${source} → ${target}`
 }
 
+function matchesOverlayCandidateFilter(candidate: OverlaySessionCandidateLike, filter = overlayCandidateFilter.value) {
+  if (filter === 'all') return true
+  if (filter === 'blocking') return candidate.validation_status === 'invalid'
+  if (filter === 'review') return candidate.validation_status === 'needs_review'
+  if (filter === 'pending') return candidate.validation_status === 'valid' && candidate.review_status === 'pending'
+  return candidate.validation_status === 'valid' && candidate.review_status === 'confirmed'
+}
+
+function overlayRepairTargetTitle(target: OverlayRepairTarget) {
+  if (target.kind === 'node') return target.candidate.name || target.candidate.node_id
+  if (target.kind === 'edge') return `${target.candidate.source_node_id || target.candidate.source_name_or_id || '未知来源'} → ${target.candidate.target_node_id || target.candidate.target_name_or_id || '未知目标'}`
+  return target.candidate.title || target.candidate.resource_id
+}
+
+function openOverlayRepairTarget(target: OverlayRepairTarget) {
+  if (target.kind === 'node') {
+    openNodeCandidateEditor(target.candidate)
+  } else if (target.kind === 'edge') {
+    openEdgeCandidateEditor(target.candidate)
+  } else {
+    openResourceCandidateEditor(target.candidate)
+  }
+}
+
+function openFirstRepairableCandidate() {
+  const target = overlayCandidateRepairTarget.value
+  if (target) openOverlayRepairTarget(target)
+}
+
+function openNodeCandidateEditor(node: OverlayNodeCandidate) {
+  candidateEditor.value = {
+    visible: true,
+    saving: false,
+    kind: 'node',
+    id: node.node_id,
+    title: `编辑节点候选：${node.name || node.node_id}`,
+    errors: node.validation_errors || [],
+    validationStatus: node.validation_status || 'unknown',
+    reviewStatus: node.review_status || 'pending',
+    form: {
+      name: node.name,
+      summary: node.summary || '',
+      group: node.group || '',
+      category: node.category || '',
+      difficulty_final: node.difficulty_final ?? 2,
+      importance_final: node.importance_final ?? 3,
+      estimated_hours: node.estimated_hours ?? 2,
+      req_math: node.req_math ?? 2,
+      req_coding: node.req_coding ?? 2,
+      req_ml: node.req_ml ?? 1,
+      theory_weight: node.theory_weight ?? 0.6,
+      practice_weight: node.practice_weight ?? 0.4,
+      confidence: node.confidence ?? null,
+      legality_rationale: node.legality_rationale || '',
+    },
+  }
+}
+
+function openEdgeCandidateEditor(edge: OverlayEdgeCandidate) {
+  candidateEditor.value = {
+    visible: true,
+    saving: false,
+    kind: 'edge',
+    id: edge.edge_id,
+    title: `编辑关系候选：${edge.source_node_id || edge.source_name_or_id || '未知来源'} → ${edge.target_node_id || edge.target_name_or_id || '未知目标'}`,
+    errors: edge.validation_errors || [],
+    validationStatus: edge.validation_status || 'unknown',
+    reviewStatus: edge.review_status || 'pending',
+    form: {
+      source_node_id: edge.source_node_id || edge.source_name_or_id || '',
+      target_node_id: edge.target_node_id || edge.target_name_or_id || '',
+      relation_type: edge.relation_type || 'RELATED_TO',
+      confidence: edge.confidence ?? null,
+      legality_rationale: edge.legality_rationale || '',
+    },
+  }
+}
+
+function openResourceCandidateEditor(resource: OverlayResourceCandidate) {
+  candidateEditor.value = {
+    visible: true,
+    saving: false,
+    kind: 'resource',
+    id: resource.resource_id,
+    title: `编辑资源候选：${resource.title || resource.resource_id}`,
+    errors: resource.validation_errors || [],
+    validationStatus: resource.validation_status || 'unknown',
+    reviewStatus: resource.review_status || 'pending',
+    form: {
+      title: resource.title || '',
+      url: resource.url || '',
+      resource_type: resource.resource_type || 'article',
+      summary: resource.summary || '',
+      quality_score: resource.quality_score ?? 0.8,
+      confidence: resource.confidence ?? null,
+      evidence_source_id: resource.evidence_source_id || resource.source_ids?.[0] || '',
+    },
+  }
+}
+
+function candidateEditorPatch() {
+  return Object.fromEntries(
+    Object.entries(candidateEditor.value.form).map(([key, value]) => [
+      key,
+      typeof value === 'string' ? value.trim() || null : value,
+    ]).filter(([, value]) => value !== undefined),
+  )
+}
+
+async function saveCandidateEditor() {
+  const currentProjectId = projectId.value
+  if (!currentProjectId || !candidateEditor.value.id) return
+  candidateEditor.value.saving = true
+  overlayError.value = ''
+  try {
+    const patch = candidateEditorPatch()
+    if (candidateEditor.value.kind === 'node') {
+      lastOverlaySession.value = await graphApi.updateOverlayNodeCandidate(currentProjectId, candidateEditor.value.id, patch)
+    } else if (candidateEditor.value.kind === 'edge') {
+      lastOverlaySession.value = await graphApi.updateOverlayEdgeCandidate(currentProjectId, candidateEditor.value.id, patch)
+    } else {
+      lastOverlaySession.value = await graphApi.updateOverlayResourceCandidate(currentProjectId, candidateEditor.value.id, patch)
+    }
+    candidateEditor.value.visible = false
+    await Promise.all([loadOverlayPreflight(), loadGraphWorkspace({ includeRequestedOverlaySession: true })])
+    ElMessage.success('候选已保存并重新校验')
+  } catch (error: any) {
+    overlayError.value = getOverlayErrorMessage(error)
+  } finally {
+    candidateEditor.value.saving = false
+  }
+}
+
+const VALIDATION_ERROR_FIELDS: Record<string, string[]> = {
+  missing_summary: ['summary'],
+  missing_legality_rationale: ['legality_rationale'],
+  invalid_difficulty_final: ['difficulty_final'],
+  invalid_importance_final: ['importance_final'],
+  invalid_req_math: ['req_math'],
+  invalid_req_coding: ['req_coding'],
+  invalid_req_ml: ['req_ml'],
+  invalid_estimated_hours: ['estimated_hours'],
+  invalid_theory_weight: ['theory_weight'],
+  invalid_practice_weight: ['practice_weight'],
+  invalid_weight_sum: ['theory_weight', 'practice_weight'],
+  invalid_confidence: ['confidence'],
+  invalid_quality_score: ['quality_score'],
+  invalid_relation_type: ['relation_type'],
+  self_loop: ['source_node_id', 'target_node_id'],
+  dangling_source: ['source_node_id'],
+  dangling_target: ['target_node_id'],
+  requires_cycle: ['relation_type'],
+  invalid_evidence_source_id: ['evidence_source_id'],
+  missing_endpoint: ['source_node_id', 'target_node_id'],
+  missing_title: ['title'],
+  missing_url: ['url'],
+  missing_resource_type: ['resource_type'],
+  missing_evidence_source_id: ['evidence_source_id'],
+}
+
+const QUICK_FIX_LABELS: Record<string, string> = {
+  missing_summary: '补默认摘要',
+  missing_legality_rationale: '补合法性说明',
+  invalid_difficulty_final: '难度归位',
+  invalid_importance_final: '重要性归位',
+  invalid_req_math: '数学要求归位',
+  invalid_req_coding: '编程要求归位',
+  invalid_req_ml: '机器学习要求归位',
+  invalid_estimated_hours: '学习时长归位',
+  invalid_theory_weight: '理论权重归位',
+  invalid_practice_weight: '实践权重归位',
+  invalid_weight_sum: '平衡理论/实践',
+  invalid_confidence: '清空置信度',
+  invalid_quality_score: '质量分归位',
+  invalid_relation_type: '改为 RELATED_TO',
+  missing_resource_type: '补资源类型',
+}
+
 const VALIDATION_ERROR_HINTS: Record<string, { label: string; suggestion: string }> = {
   missing_summary: { label: '缺少摘要', suggestion: '补充一句说明该候选的学习含义。' },
   missing_legality_rationale: { label: '缺少合法性理由', suggestion: '说明为什么该候选属于机器学习基础扩展范围。' },
+  invalid_difficulty_final: { label: '难度必须是 1~5 的整数', suggestion: '将 difficulty_final 调整到 1、2、3、4 或 5。' },
+  invalid_importance_final: { label: '重要性必须是 1~5 的整数', suggestion: '将 importance_final 调整到 1、2、3、4 或 5。' },
+  invalid_req_math: { label: '数学基础要求必须是 1~5 的整数', suggestion: '将 req_math 调整到 1、2、3、4 或 5。' },
+  invalid_req_coding: { label: '编程基础要求必须是 1~5 的整数', suggestion: '将 req_coding 调整到 1、2、3、4 或 5。' },
+  invalid_req_ml: { label: '机器学习基础要求必须是 1~5 的整数', suggestion: '将 req_ml 调整到 1、2、3、4 或 5。' },
+  invalid_estimated_hours: { label: '预计学习时长无效', suggestion: '填写大于 0 的小时数。' },
+  invalid_theory_weight: { label: '理论权重无效', suggestion: '填写 0~1 之间的小数。' },
+  invalid_practice_weight: { label: '实践权重无效', suggestion: '填写 0~1 之间的小数。' },
   invalid_weight_sum: { label: '理论/实践权重不等于 1', suggestion: '调整 theory_weight 与 practice_weight，使总和为 1。' },
+  invalid_confidence: { label: '置信度无效', suggestion: '填写 0~1 之间的小数，或留空。' },
+  invalid_quality_score: { label: '资源质量分无效', suggestion: '填写 0~1 之间的小数。' },
   invalid_relation_type: { label: '关系类型不受支持', suggestion: '只保留 REQUIRES 或 RELATED_TO。' },
   self_loop: { label: '关系不能指向自身', suggestion: '改选不同的来源节点或目标节点。' },
-  dangling_source: { label: '关系来源节点不存在', suggestion: '先补充来源节点，或改为已有节点 ID。' },
-  dangling_target: { label: '关系目标节点不存在', suggestion: '先补充目标节点，或改为已有节点 ID。' },
+  dangling_source: { label: '关系来源节点暂不可用', suggestion: '如果来源是本次新增节点，请先修复该节点的校验错误；否则改为已有节点 ID。' },
+  dangling_target: { label: '关系目标节点暂不可用', suggestion: '如果目标是本次新增节点，请先修复该节点的校验错误；否则改为已有节点 ID。' },
   requires_cycle: { label: 'REQUIRES 会形成环', suggestion: '改为 RELATED_TO，或调整依赖方向。' },
   invalid_evidence_source_id: { label: '资源证据来源无效', suggestion: '选择本次草稿使用的 source_id 作为证据来源。' },
   missing_endpoint: { label: '关系端点不完整', suggestion: '补齐 source 和 target。' },
+  missing_title: { label: '缺少资源标题', suggestion: '补充便于识别的资料标题。' },
+  missing_url: { label: '缺少资源 URL', suggestion: '补充资料链接。' },
+  missing_resource_type: { label: '缺少资源类型', suggestion: '填写 article、video、course、book 或 doc 等类型。' },
   missing_evidence_source_id: { label: '缺少资源证据来源', suggestion: '为资源候选关联一个来源。' },
 }
 
@@ -1752,6 +2245,110 @@ function validationErrorMessage(code: string) {
   }
   const hint = VALIDATION_ERROR_HINTS[code]
   return hint ? `${hint.label}。${hint.suggestion}` : code
+}
+
+function validationErrorFields(code: string) {
+  if (code.startsWith('missing_fields:')) {
+    return code.slice('missing_fields:'.length).split(',').filter(Boolean)
+  }
+  return VALIDATION_ERROR_FIELDS[code] || []
+}
+
+function candidateEditorFieldIssue(field: string) {
+  const error = candidateEditor.value.errors.find((code) => validationErrorFields(code).includes(field))
+  return error ? validationErrorMessage(error) : ''
+}
+
+function quickFixLabel(code: string) {
+  if (code.startsWith('missing_fields:')) return '补齐规划字段'
+  return QUICK_FIX_LABELS[code] || '应用建议'
+}
+
+function isCandidateQuickFixAvailable(code: string) {
+  if (code.startsWith('missing_fields:')) {
+    return validationErrorFields(code).some(canApplyCandidateFieldDefault)
+  }
+  return Boolean(QUICK_FIX_LABELS[code])
+}
+
+function canApplyCandidateFieldDefault(field: string) {
+  return [
+    'summary',
+    'legality_rationale',
+    'difficulty_final',
+    'importance_final',
+    'estimated_hours',
+    'req_math',
+    'req_coding',
+    'req_ml',
+    'theory_weight',
+    'practice_weight',
+    'quality_score',
+    'resource_type',
+  ].includes(field)
+}
+
+function applyCandidateQuickFix(code: string) {
+  if (code.startsWith('missing_fields:')) {
+    validationErrorFields(code).forEach(applyCandidateFieldDefault)
+    return
+  }
+  if (code === 'invalid_weight_sum') {
+    normalizeCandidateEditorWeights()
+    return
+  }
+  if (code === 'invalid_confidence') {
+    candidateEditor.value.form.confidence = null
+    return
+  }
+  if (code === 'invalid_relation_type') {
+    candidateEditor.value.form.relation_type = 'RELATED_TO'
+    return
+  }
+  validationErrorFields(code).forEach(applyCandidateFieldDefault)
+}
+
+function applyCandidateFieldDefault(field: string) {
+  if (!canApplyCandidateFieldDefault(field)) return
+  const form = candidateEditor.value.form
+  if (field === 'summary') {
+    form.summary = form.summary || `${candidateEditor.value.title.replace(/^编辑(节点|关系|资源)候选：/, '')} 的学习扩展说明。`
+  } else if (field === 'legality_rationale') {
+    form.legality_rationale = form.legality_rationale || '该候选来自项目资料，可作为机器学习基础学习路径的补充内容。'
+  } else if (field === 'difficulty_final') {
+    form.difficulty_final = clampInteger(form.difficulty_final, 1, 5, 2)
+  } else if (field === 'importance_final') {
+    form.importance_final = clampInteger(form.importance_final, 1, 5, 3)
+  } else if (field === 'estimated_hours') {
+    form.estimated_hours = Number(form.estimated_hours) > 0 ? Number(form.estimated_hours) : 2
+  } else if (field === 'req_math' || field === 'req_coding' || field === 'req_ml') {
+    form[field] = clampInteger(form[field], 1, 5, field === 'req_ml' ? 1 : 2)
+  } else if (field === 'theory_weight' || field === 'practice_weight') {
+    normalizeCandidateEditorWeights()
+  } else if (field === 'quality_score') {
+    form.quality_score = normalizeRatio(form.quality_score, 0.8)
+  } else if (field === 'resource_type') {
+    form.resource_type = form.resource_type || 'article'
+  }
+}
+
+function clampInteger(value: unknown, min: number, max: number, fallback: number) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.min(max, Math.max(min, Math.round(numeric)))
+}
+
+function normalizeRatio(value: unknown, fallback: number) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.min(1, Math.max(0, Number(numeric.toFixed(2))))
+}
+
+function normalizeCandidateEditorWeights() {
+  const theory = normalizeRatio(candidateEditor.value.form.theory_weight, 0.6)
+  const safeTheory = theory <= 0 || theory >= 1 ? 0.6 : theory
+  candidateEditor.value.form.theory_weight = Number(safeTheory.toFixed(2))
+  candidateEditor.value.form.practice_weight = Number((1 - safeTheory).toFixed(2))
 }
 
 function buildOverlaySourcePayload(): OverlaySourceRequest | null {
@@ -1822,7 +2419,7 @@ function getOverlayErrorMessage(error: any) {
   if (code === 'INVALID_LLM_EXTRACTION_JSON') {
     return 'LLM 返回的抽取结构不符合要求，请重新生成预览。'
   }
-  return code || error?.message || '扩展草稿创建失败'
+  return formatServiceReason(code) || code || error?.message || '扩展草稿创建失败'
 }
 
 async function previewOverlayExtractionPayload() {
@@ -1849,6 +2446,29 @@ async function previewOverlayExtractionPayload() {
   } finally {
     overlayExtractionPreviewLoading.value = false
   }
+}
+
+async function validateSelectedOverlayPayload(preview: OverlayExtractionPayloadPreviewResponse) {
+  if (!projectId.value) return null
+  const extractionPayload = filteredPreviewPayload(preview)
+  const validation = await graphApi.validateOverlayExtractionPayload(projectId.value, {
+    source_ids: preview.source_ids,
+    mode: overlayForm.value.mode,
+    extraction_payload: extractionPayload,
+  })
+  overlayCandidateValidation.value = validation
+  if (validation.summary.has_blocking_errors) {
+    await ElMessageBox.confirm(
+      `预校验发现 ${validation.summary.invalid_count} 个校验失败候选。仍可创建草稿并在下方“编辑修复”，是否继续？`,
+      '候选需要修复',
+      {
+        type: 'warning',
+        confirmButtonText: '继续创建草稿',
+        cancelButtonText: '返回调整',
+      },
+    )
+  }
+  return extractionPayload
 }
 
 async function bindOverlayResource() {
@@ -1936,19 +2556,23 @@ async function submitOverlayDraft() {
     } else {
       const preview = overlayExtractionPreview.value || await previewOverlayExtractionPayload()
       if (!preview) return
+      const extractionPayload = await validateSelectedOverlayPayload(preview)
+      if (!extractionPayload) return
       lastOverlaySession.value = await graphApi.createOverlayExtractionSession(projectId.value, {
         source_ids: preview.source_ids,
         mode: overlayForm.value.mode,
-        extraction_payload: filteredPreviewPayload(preview),
+        extraction_payload: extractionPayload,
         session_provenance: {
           ...preview.provenance,
           selected_counts: selectedPreviewCounts.value,
           filtered_by_user: true,
+          pre_validation_summary: overlayCandidateValidation.value?.summary,
         },
       })
     }
     overlayForm.value = createOverlayForm()
     overlayExtractionPreview.value = null
+    overlayCandidateValidation.value = null
     selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
     goalDraftProposalDismissed.value = Boolean(activeGoalDraftResolutionSessionId.value)
     ElMessage.success('扩展草稿已创建，请在项目图谱中审核候选节点和关系')
@@ -1956,6 +2580,7 @@ async function submitOverlayDraft() {
     await replaceGraphRoute('project', null, lastOverlaySession.value.session.session_id)
     await loadGraphWorkspace()
   } catch (error: any) {
+    if (isMessageBoxCancel(error)) return
     overlayError.value = getOverlayErrorMessage(error)
   } finally {
     overlaySubmitting.value = false
@@ -2234,6 +2859,80 @@ function toggleFullscreen() {
   color: #606266;
   font-size: 12px;
   line-height: 1.6;
+}
+
+.candidate-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overlay-guidance {
+  margin: 4px 0 0;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.overlay-candidate-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #f3d19e;
+  border-radius: 10px;
+  background: #fdf6ec;
+}
+
+.overlay-candidate-toolbar-title p,
+.overlay-empty-filter,
+.candidate-editor-issue-panel p,
+.candidate-editor-field-hint {
+  margin: 4px 0 0;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.overlay-empty-filter {
+  padding: 10px 12px;
+  border: 1px dashed #dcdfe6;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.candidate-editor-issue-panel {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #f3d19e;
+  border-radius: 10px;
+  background: #fdf6ec;
+}
+
+.candidate-editor-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.candidate-editor-field-hint {
+  color: #b88230;
+}
+
+.candidate-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.candidate-editor-inline {
+  margin-top: 8px;
 }
 
 .candidate-checkbox-row {

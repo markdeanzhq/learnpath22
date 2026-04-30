@@ -714,12 +714,16 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 |------|------|------|
 | POST | /projects/{id}/graph/overlay/sources | 创建 pasted text 或 search URL source |
 | POST | /projects/{id}/graph/overlay/extraction-payload/preview | 用 LLM 从 source IDs 生成可审阅 extraction payload，不写 session |
+| POST | /projects/{id}/graph/overlay/extraction-payload/validate | 对用户保留的 extraction payload 做创建前校验，不写 session |
 | POST | /projects/{id}/graph/overlay/extraction-sessions | 从 source IDs 和可选 extraction payload 创建抽取会话 |
 | GET | /projects/{id}/graph/overlay/extraction-sessions/{session_id} | 读取抽取会话详情 |
 | GET | /projects/{id}/graph/overlay/preflight | 预检增强图谱可用性、路径命中和阻塞/警告项 |
 | PATCH | /projects/{id}/graph/overlay/nodes/{element_id}/review | 只更新 overlay node 的 review 状态 |
 | PATCH | /projects/{id}/graph/overlay/edges/{element_id}/review | 只更新 overlay edge 的 review 状态 |
 | PATCH | /projects/{id}/graph/overlay/resources/{element_id}/review | 只更新 overlay resource 的 review 状态 |
+| PATCH | /projects/{id}/graph/overlay/nodes/{element_id}/candidate | 编辑 overlay node 字段并重算该 session 的校验状态 |
+| PATCH | /projects/{id}/graph/overlay/edges/{element_id}/candidate | 编辑 overlay edge 字段并重算该 session 的校验状态 |
+| PATCH | /projects/{id}/graph/overlay/resources/{element_id}/candidate | 编辑 overlay resource 字段并重算该 session 的校验状态 |
 | PATCH | /projects/{id}/graph/overlay/nodes/{element_id}/planning | 只更新 overlay node 的 planning 开关 |
 | PATCH | /projects/{id}/graph/overlay/edges/{element_id}/planning | 只更新 overlay edge 的 planning 开关 |
 | PATCH | /projects/{id}/graph/overlay/resources/{element_id}/planning | 只更新 overlay resource 的 planning 开关 |
@@ -732,6 +736,8 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 - resource `planning_enabled` 只影响 resource 自身显示/推广资格，不改变 node/edge planner-visible 集合、`ProjectGraphSnapshot`、path graph、goal resolution、planner、replan 或 `project_graph_hash`
 - `extraction-payload/preview` 需要 LLM 配置；未配置返回 `503 LLM_NOT_READY`，LLM 返回非 JSON/越界结构返回 `422 INVALID_LLM_EXTRACTION_JSON`
 - LLM preview 只生成 `{nodes, edges, resources, warnings}` payload 与 provenance，不写正式图谱、正式路径或 extraction session；前端可在预览中勾选 nodes / edges / resources，创建 session 时只提交用户保留的候选，并在 `session_provenance.selected_counts` 记录过滤结果；创建 session 仍复用既有字段校验、重复检测、DAG 校验、人工审核和 planning 开关
+- `extraction-payload/validate` 返回 nodes/edges/resources 的 `valid|invalid|needs_review` 计数、错误码和重复候选索引；用于创建前提示，不写数据库
+- candidate 编辑接口会拒绝已推广只读候选；编辑已确认候选会把该候选退回 `review_status=pending`，并重算同一 session 内节点、关系、资源的校验状态，修复节点后依赖它的关系会自动重新解析端点
 - `custom_extension` mode 在创建 extraction session 前检查搜索 readiness；未就绪返回 `503 SEARCH_NOT_READY`
 - 搜索未就绪只阻断 custom extension，baseline/project graph 浏览仍可用
 - overlay ID 使用 `po:{project_id}:n|e|r:{hash}` 格式并做 collision 检查

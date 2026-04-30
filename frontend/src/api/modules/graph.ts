@@ -223,6 +223,8 @@ export interface OverlayEdgeCandidate extends OverlayCandidateBase {
   edge_id: string
   source_node_id: string
   target_node_id: string
+  source_name_or_id?: string | null
+  target_name_or_id?: string | null
   relation_type: string
 }
 
@@ -295,11 +297,88 @@ export interface OverlayExtractionPayloadPreviewResponse {
   provenance: Record<string, unknown>
 }
 
+export interface ValidateOverlayExtractionPayloadRequest extends CreateOverlayExtractionSessionRequest {}
+
+export interface OverlayCandidateValidationCounts {
+  total: number
+  valid: number
+  invalid: number
+  needs_review: number
+}
+
+export interface OverlayValidationSummary {
+  has_blocking_errors: boolean
+  needs_review: boolean
+  invalid_count: number
+  needs_review_count: number
+}
+
+export interface OverlayValidationCandidatePreview {
+  index: number
+  validation_status: OverlayValidationStatus
+  validation_errors: string[]
+  duplicate_candidates: { indexes?: number[]; [key: string]: unknown }
+  [key: string]: unknown
+}
+
+export interface OverlayExtractionPayloadValidationResponse {
+  source_ids: string[]
+  warnings: string[]
+  counts: {
+    nodes: OverlayCandidateValidationCounts
+    edges: OverlayCandidateValidationCounts
+    resources: OverlayCandidateValidationCounts
+  }
+  summary: OverlayValidationSummary
+  nodes: OverlayValidationCandidatePreview[]
+  edges: OverlayValidationCandidatePreview[]
+  resources: OverlayValidationCandidatePreview[]
+}
+
 export interface CreateOverlayExtractionSessionRequest {
   source_ids: string[]
   mode?: 'default' | 'custom_extension'
   extraction_payload?: unknown
   session_provenance?: Record<string, unknown> | null
+}
+
+export interface OverlayNodeCandidatePatchRequest {
+  name?: string | null
+  group?: string | null
+  category?: string | null
+  summary?: string | null
+  difficulty_final?: number | null
+  importance_final?: number | null
+  estimated_hours?: number | null
+  req_math?: number | null
+  req_coding?: number | null
+  req_ml?: number | null
+  theory_weight?: number | null
+  practice_weight?: number | null
+  confidence?: number | null
+  legality_rationale?: string | null
+  evidence_spans?: Array<Record<string, unknown>> | null
+  provenance?: Record<string, unknown> | null
+}
+
+export interface OverlayEdgeCandidatePatchRequest {
+  source_node_id?: string | null
+  target_node_id?: string | null
+  source_name_or_id?: string | null
+  target_name_or_id?: string | null
+  relation_type?: string | null
+  confidence?: number | null
+  legality_rationale?: string | null
+}
+
+export interface OverlayResourceCandidatePatchRequest {
+  title?: string | null
+  url?: string | null
+  resource_type?: string | null
+  summary?: string | null
+  quality_score?: number | null
+  confidence?: number | null
+  evidence_source_id?: string | null
 }
 
 export interface GoalExtensionGapAnalysis {
@@ -593,6 +672,11 @@ export const graphApi = {
     payload: PreviewOverlayExtractionPayloadRequest,
   ): Promise<OverlayExtractionPayloadPreviewResponse> =>
     request.post(`/projects/${projectId}/graph/overlay/extraction-payload/preview`, payload),
+  validateOverlayExtractionPayload: (
+    projectId: string,
+    payload: ValidateOverlayExtractionPayloadRequest,
+  ): Promise<OverlayExtractionPayloadValidationResponse> =>
+    request.post(`/projects/${projectId}/graph/overlay/extraction-payload/validate`, payload),
   createOverlayExtractionSession: (
     projectId: string,
     payload: CreateOverlayExtractionSessionRequest,
@@ -630,6 +714,24 @@ export const graphApi = {
     request.patch(`/projects/${projectId}/graph/overlay/${elementGroup}/${encodeURIComponent(elementId)}/planning`, {
       planning_enabled: planningEnabled,
     }),
+  updateOverlayNodeCandidate: (
+    projectId: string,
+    nodeId: string,
+    payload: OverlayNodeCandidatePatchRequest,
+  ): Promise<OverlayExtractionSessionResponse> =>
+    request.patch(`/projects/${projectId}/graph/overlay/nodes/${encodeURIComponent(nodeId)}/candidate`, payload),
+  updateOverlayEdgeCandidate: (
+    projectId: string,
+    edgeId: string,
+    payload: OverlayEdgeCandidatePatchRequest,
+  ): Promise<OverlayExtractionSessionResponse> =>
+    request.patch(`/projects/${projectId}/graph/overlay/edges/${encodeURIComponent(edgeId)}/candidate`, payload),
+  updateOverlayResourceCandidate: (
+    projectId: string,
+    resourceId: string,
+    payload: OverlayResourceCandidatePatchRequest,
+  ): Promise<OverlayExtractionSessionResponse> =>
+    request.patch(`/projects/${projectId}/graph/overlay/resources/${encodeURIComponent(resourceId)}/candidate`, payload),
   previewOverlayPromotion: (
     projectId: string,
     payload?: OverlayPromotionRequest,
