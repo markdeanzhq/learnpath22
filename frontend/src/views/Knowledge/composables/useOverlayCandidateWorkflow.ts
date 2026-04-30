@@ -1,0 +1,243 @@
+import { computed, type Ref } from 'vue'
+import type {
+  GoalExtensionDraftResponse,
+  GraphNodeData,
+  OverlayEdgeCandidate,
+  OverlayExtractionSessionResponse,
+  OverlayNodeCandidate,
+  OverlayPreflightResponse,
+  OverlayResourceCandidate,
+} from '@/api/modules/graph'
+
+export type OverlaySessionView = OverlayExtractionSessionResponse & Partial<GoalExtensionDraftResponse>
+export type CandidateIssueFilter = 'all' | 'blocking' | 'review' | 'pending' | 'ready'
+type OverlayWorkflowStepState = 'done' | 'current' | 'pending'
+
+type OverlayWorkflowStep = {
+  key: string
+  title: string
+  description: string
+  state: OverlayWorkflowStepState
+  statusLabel: string
+  tagType: 'success' | 'warning' | 'info'
+}
+
+type OverlaySessionCandidateLike = {
+  validation_status?: string | null
+  review_status?: string | null
+  validation_errors?: string[] | null
+}
+
+export type OverlayRepairTarget =
+  | { kind: 'node'; candidate: OverlayNodeCandidate }
+  | { kind: 'edge'; candidate: OverlayEdgeCandidate }
+  | { kind: 'resource'; candidate: OverlayResourceCandidate }
+
+type OverlayEndpointOption = {
+  id: string
+  label: string
+  hint: string
+  disabled?: boolean
+}
+
+export const OVERLAY_CANDIDATE_FILTER_OPTIONS: Array<{ value: CandidateIssueFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'blocking', label: '需修复' },
+  { value: 'review', label: '待复核' },
+  { value: 'pending', label: '待审核' },
+  { value: 'ready', label: '已确认' },
+]
+
+export function useOverlayCandidateWorkflow({
+  lastOverlaySession,
+  overlayPreflight,
+  nodes,
+  overlayCandidateFilter,
+}: {
+  lastOverlaySession: Ref<OverlaySessionView | null>
+  overlayPreflight: Ref<OverlayPreflightResponse | null>
+  nodes: Ref<GraphNodeData[]>
+  overlayCandidateFilter: Ref<CandidateIssueFilter>
+}) {
+  const overlaySessionStats = computed(() => {
+    const session = lastOverlaySession.value
+    const candidates = session ? [...(session.nodes || []), ...(session.edges || []), ...(session.resources || [])] : []
+    return {
+      invalid: candidates.filter((item) => item.validation_status === 'invalid').length,
+      needsReview: candidates.filter((item) => item.validation_status === 'needs_review').length,
+      valid: candidates.filter((item) => item.validation_status === 'valid').length,
+      pendingReview: candidates.filter((item) => item.review_status === 'pending').length,
+    }
+  })
+
+  const overlaySessionGuide = computed(() => {
+    const session = lastOverlaySession.value
+    if (!session) return ''
+    const candidates = [...(session.nodes || []), ...(session.edges || []), ...(session.resources || [])]
+    if (candidates.some((item) => item.validation_status === 'invalid')) {
+      return '下一步：先点击“编辑修复”处理校验失败项；失败节点修复后，相关关系会自动重新校验。'
+    }
+    if (candidates.some((item) => item.validation_status === 'needs_review')) {
+      return '下一步：存在重复或需要复核的候选，请确认是否保留，再进行人工审核。'
+    }
+    if (candidates.some((item) => item.review_status === 'pending')) {
+      return '下一步：候选已经通过机器校验，但仍是草稿；请在图谱或明细中确认审核。'
+    }
+    return '下一步：已确认候选可参与增强图谱；如果暂不想进入路径，可关闭规划开关。'
+  })
+
+  const overlayWorkflowSteps = computed<OverlayWorkflowStep[]>(() => {
+    const stats = overlaySessionStats.value
+    const preflight = overlayPreflight.value
+    const visibleNodes = preflight?.counts.visible_overlay_nodes ?? 0
+    const visibleEdges = preflight?.counts.visible_overlay_edges ?? 0
+    const hasBlocking = stats.invalid > 0 || stats.needsReview > 0
+    const hasPendingReview = stats.pendingReview > 0
+    const hasVisibleOverlay = visibleNodes > 0 || visibleEdges > 0
+    const repairState: OverlayWorkflowStepState = hasBlocking ? 'current' : 'done'
+    const reviewState: OverlayWorkflowStepState = hasBlocking ? 'pending' : hasPendingReview ? 'current' : 'done'
+    const graphState: OverlayWorkflowStepState = hasBlocking || hasPendingReview ? 'pending' : 'current'
+
+    return [
+      {
+        key: 'source',
+        title: '来源与预览',
+        description: '先收集粘贴文本、搜索 URL、已保存搜索或目标理解推荐草稿；预览阶段不会写入正式图谱。',
+        state: 'done',
+        statusLabel: '已完成',
+        tagType: 'success',
+      },
+      {
+        key: 'repair',
+        title: '校验修复',
+        description: hasBlocking
+          ? `还有 ${stats.invalid} 个校验失败、${stats.needsReview} 个待复核候选；先修复字段或端点，关系会跟随节点重新校验。`
+          : '候选已经通过机器校验，可以进入人工审核。',
+        state: repairState,
+        statusLabel: repairState === 'current' ? '当前处理' : '已通过',
+        tagType: repairState === 'current' ? 'warning' : 'success',
+      },
+      {
+        key: 'review',
+        title: '人工审核与规划开关',
+        description: hasPendingReview
+          ? `还有 ${stats.pendingReview} 个候选待确认；只有已确认且开启规划的节点/关系才会进入增强图谱。`
+          : '候选已完成审核判断，规划开关决定它是否参与路径。',
+        state: reviewState,
+        statusLabel: reviewState === 'pending' ? '等待前置' : reviewState === 'current' ? '当前处理' : '已完成',
+        tagType: reviewState === 'done' ? 'success' : reviewState === 'current' ? 'warning' : 'info',
+      },
+      {
+        key: 'graph',
+        title: '进入增强图谱 / 可选同步',
+        description: hasVisibleOverlay
+          ? `当前已有 ${visibleNodes} 个节点 / ${visibleEdges} 条关系可用于项目增强图谱；如需 Neo4j 投影，再显式同步图谱。`
+          : '审核完成后会先进入本地增强读模型；Neo4j 投影同步是可选的显式操作。',
+        state: graphState,
+        statusLabel: graphState === 'pending' ? '等待前置' : '当前确认',
+        tagType: graphState === 'current' ? 'warning' : 'info',
+      },
+    ]
+  })
+
+  const overlayWorkflowCurrentStep = computed(() => overlayWorkflowSteps.value.find((step) => step.state === 'current') || null)
+  const overlaySessionCandidates = computed<OverlayRepairTarget[]>(() => {
+    const session = lastOverlaySession.value
+    if (!session) return []
+    return [
+      ...(session.nodes || []).map((candidate) => ({ kind: 'node' as const, candidate })),
+      ...(session.edges || []).map((candidate) => ({ kind: 'edge' as const, candidate })),
+      ...(session.resources || []).map((candidate) => ({ kind: 'resource' as const, candidate })),
+    ]
+  })
+
+  const filteredOverlayNodes = computed(() => (lastOverlaySession.value?.nodes || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
+  const filteredOverlayEdges = computed(() => (lastOverlaySession.value?.edges || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
+  const filteredOverlayResources = computed(() => (lastOverlaySession.value?.resources || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
+  const overlayCandidateFilterCounts = computed<Record<CandidateIssueFilter, number>>(() => {
+    const candidates = overlaySessionCandidates.value.map((item) => item.candidate)
+    return {
+      all: candidates.length,
+      blocking: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'blocking')).length,
+      review: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'review')).length,
+      pending: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'pending')).length,
+      ready: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'ready')).length,
+    }
+  })
+  const filteredOverlayCandidateCount = computed(() => (
+    filteredOverlayNodes.value.length + filteredOverlayEdges.value.length + filteredOverlayResources.value.length
+  ))
+  const overlayCandidateRepairTarget = computed(() => (
+    overlaySessionCandidates.value.find((item) => item.candidate.validation_status === 'invalid')
+    || overlaySessionCandidates.value.find((item) => item.candidate.validation_status === 'needs_review')
+    || null
+  ))
+  const overlayCandidateRepairTargetLabel = computed(() => {
+    if (!overlayCandidateRepairTarget.value) return '暂无需修复候选'
+    return `打开首个需处理候选：${overlayRepairTargetTitle(overlayCandidateRepairTarget.value)}`
+  })
+  const overlayEndpointOptions = computed(() => {
+    const options = new Map<string, OverlayEndpointOption>()
+    nodes.value.forEach((node) => addEndpointOption(options, node.id, node.label || node.id, '当前图谱节点'))
+    ;(lastOverlaySession.value?.nodes || []).forEach((node) => {
+      const isUsable = node.validation_status === 'valid'
+      addEndpointOption(
+        options,
+        node.node_id,
+        node.name || node.node_id,
+        isUsable ? '本次草稿节点' : '本次草稿节点（需先修复节点）',
+        !isUsable,
+      )
+    })
+    return Array.from(options.values())
+  })
+
+  return {
+    overlaySessionGuide,
+    overlaySessionStats,
+    overlayWorkflowSteps,
+    overlayWorkflowCurrentStep,
+    overlaySessionCandidates,
+    filteredOverlayNodes,
+    filteredOverlayEdges,
+    filteredOverlayResources,
+    overlayCandidateFilterCounts,
+    filteredOverlayCandidateCount,
+    overlayCandidateRepairTarget,
+    overlayCandidateRepairTargetLabel,
+    overlayEndpointOptions,
+    overlayRepairTargetTitle,
+  }
+}
+
+function matchesOverlayCandidateFilter(candidate: OverlaySessionCandidateLike, filter: CandidateIssueFilter) {
+  if (filter === 'all') return true
+  if (filter === 'blocking') return candidate.validation_status === 'invalid'
+  if (filter === 'review') return candidate.validation_status === 'needs_review'
+  if (filter === 'pending') return candidate.validation_status === 'valid' && candidate.review_status === 'pending'
+  return candidate.validation_status === 'valid' && candidate.review_status === 'confirmed'
+}
+
+function overlayRepairTargetTitle(target: OverlayRepairTarget) {
+  if (target.kind === 'node') return target.candidate.name || target.candidate.node_id
+  if (target.kind === 'edge') return `${target.candidate.source_node_id || target.candidate.source_name_or_id || '未知来源'} → ${target.candidate.target_node_id || target.candidate.target_name_or_id || '未知目标'}`
+  return target.candidate.title || target.candidate.resource_id
+}
+
+function addEndpointOption(
+  options: Map<string, OverlayEndpointOption>,
+  id?: string | null,
+  label?: string | null,
+  hint = '可选节点',
+  disabled = false,
+) {
+  const normalizedId = typeof id === 'string' ? id.trim() : ''
+  if (!normalizedId || options.has(normalizedId)) return
+  const normalizedLabel = typeof label === 'string' && label.trim() ? label.trim() : normalizedId
+  options.set(normalizedId, {
+    id: normalizedId,
+    label: normalizedLabel === normalizedId ? normalizedId : `${normalizedLabel}（${normalizedId}）`,
+    hint,
+    disabled,
+  })
+}

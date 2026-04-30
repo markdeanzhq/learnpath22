@@ -1019,6 +1019,68 @@ describe('Knowledge overlay entry', () => {
     expectLastWorkspaceCalledWith({ scope: 'path' })
   })
 
+  it('offers endpoint options when repairing overlay edge candidates', async () => {
+    const repairedSession = {
+      session: {
+        session_id: 'sess-edge-repair',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-001'],
+        warnings: [],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [{ node_id: 'po:node-001', name: '可修复节点', validation_status: 'valid', validation_errors: [], review_status: 'pending' }],
+      edges: [{ edge_id: 'po:edge-001', source_node_id: 'po:node-001', target_node_id: 'ml_c01', relation_type: 'RELATED_TO', validation_status: 'valid', validation_errors: [] }],
+      resources: [],
+      warnings: [],
+    }
+    graphUpdateOverlayEdgeCandidateMock.mockResolvedValue(repairedSession)
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).elements = [{ group: 'nodes', data: { id: 'ml_c01', label: '机器学习概览' } }]
+    ;(wrapper.vm as any).lastOverlaySession = {
+      ...repairedSession,
+      nodes: [
+        ...repairedSession.nodes,
+        { node_id: 'po:node-invalid', name: '未修复节点', validation_status: 'invalid', validation_errors: ['invalid_req_ml'], review_status: 'pending' },
+      ],
+    }
+    await wrapper.vm.$nextTick()
+
+    expect((wrapper.vm as any).overlayEndpointOptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'ml_c01', label: '机器学习概览（ml_c01）', hint: '当前图谱节点' }),
+      expect.objectContaining({ id: 'po:node-001', label: '可修复节点（po:node-001）', hint: '本次草稿节点' }),
+      expect.objectContaining({ id: 'po:node-invalid', disabled: true, hint: '本次草稿节点（需先修复节点）' }),
+    ]))
+
+    ;(wrapper.vm as any).openEdgeCandidateEditor({
+      edge_id: 'po:edge-001',
+      source_node_id: '',
+      target_node_id: '',
+      source_name_or_id: '悬空来源',
+      target_name_or_id: '未知目标',
+      relation_type: 'RELATED_TO',
+      validation_status: 'invalid',
+      validation_errors: ['dangling_source', 'dangling_target'],
+      review_status: 'pending',
+      legality_rationale: '需要修复关系端点',
+    })
+    ;(wrapper.vm as any).candidateEditor.form.source_node_id = 'po:node-001'
+    ;(wrapper.vm as any).candidateEditor.form.target_node_id = 'ml_c01'
+    await (wrapper.vm as any).saveCandidateEditor()
+
+    expect(graphUpdateOverlayEdgeCandidateMock).toHaveBeenCalledWith('project-001', 'po:edge-001', expect.objectContaining({
+      source_node_id: 'po:node-001',
+      target_node_id: 'ml_c01',
+      relation_type: 'RELATED_TO',
+    }))
+    expect((wrapper.vm as any).lastOverlaySession).toEqual(repairedSession)
+  })
+
   it('filters overlay repair queue and applies candidate quick fixes', async () => {
     const wrapper = mountKnowledge()
     await flushPromises()
@@ -1105,6 +1167,9 @@ describe('Knowledge overlay entry', () => {
       pending: 1,
       ready: 0,
     })
+    expect((wrapper.vm as any).overlayWorkflowCurrentStep.title).toBe('校验修复')
+    expect(wrapper.text()).toContain('草稿处理流程')
+    expect(wrapper.text()).toContain('当前阶段：校验修复')
 
     ;(wrapper.vm as any).overlayCandidateFilter = 'blocking'
     await wrapper.vm.$nextTick()
@@ -1124,6 +1189,51 @@ describe('Knowledge overlay entry', () => {
 
     expect((wrapper.vm as any).candidateEditor.form.req_coding).toBe(5)
     expect((wrapper.vm as any).candidateEditor.form.theory_weight + (wrapper.vm as any).candidateEditor.form.practice_weight).toBe(1)
+  })
+
+  it('shows overlay workflow phases for review and enhanced graph readiness', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+    const session = {
+      session: {
+        session_id: 'sess-flow',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-001'],
+        warnings: [],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [
+        {
+          node_id: 'po:node-ready',
+          name: '可审核节点',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'pending',
+        },
+      ],
+      edges: [],
+      resources: [],
+      warnings: [],
+    }
+
+    ;(wrapper.vm as any).lastOverlaySession = session
+    await wrapper.vm.$nextTick()
+
+    expect((wrapper.vm as any).overlayWorkflowCurrentStep.title).toBe('人工审核与规划开关')
+    expect(wrapper.text()).toContain('只有已确认且开启规划的节点/关系才会进入增强图谱')
+
+    ;(wrapper.vm as any).lastOverlaySession = {
+      ...session,
+      nodes: [{ ...session.nodes[0], review_status: 'confirmed' }],
+    }
+    await wrapper.vm.$nextTick()
+
+    expect((wrapper.vm as any).overlayWorkflowCurrentStep.title).toBe('进入增强图谱 / 可选同步')
+    expect(wrapper.text()).toContain('当前已有 1 个节点 / 1 条关系可用于项目增强图谱')
   })
 
   it('binds overlay resource and reloads session detail', async () => {

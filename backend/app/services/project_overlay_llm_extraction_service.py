@@ -39,6 +39,25 @@ def _strip_code_fence(value: str | None) -> str:
     return text.strip()
 
 
+def _loads_llm_json_object(value: str | None) -> dict[str, Any]:
+    text = _strip_code_fence(value)
+    if not text:
+        raise ValueError("INVALID_LLM_EXTRACTION_JSON")
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    raise ValueError("INVALID_LLM_EXTRACTION_JSON")
+
+
 def _clip_text(value: Any, limit: int) -> str | None:
     if not isinstance(value, str):
         return None
@@ -220,9 +239,9 @@ async def _request_llm_payload(messages: list[dict[str, str]]) -> tuple[dict[str
         raise AppError(code=503, message="LLM_EXTRACTION_FAILED") from exc
 
     try:
-        content = _strip_code_fence(response.json()["choices"][0]["message"].get("content"))
-        parsed = json.loads(content)
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        content = response.json()["choices"][0]["message"].get("content")
+        parsed = _loads_llm_json_object(content)
+    except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("INVALID_LLM_EXTRACTION_JSON") from exc
 
     return parse_extraction_payload(parsed), model

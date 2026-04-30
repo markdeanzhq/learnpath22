@@ -442,6 +442,30 @@
             :title="overlaySessionGuide"
           />
 
+          <section class="overlay-workflow" data-testid="overlay-workflow">
+            <div class="overlay-workflow-header">
+              <strong>草稿处理流程</strong>
+              <span v-if="overlayWorkflowCurrentStep">当前阶段：{{ overlayWorkflowCurrentStep.title }}</span>
+            </div>
+            <ol class="overlay-workflow-steps">
+              <li
+                v-for="(step, index) in overlayWorkflowSteps"
+                :key="step.key"
+                class="overlay-workflow-step"
+                :class="`is-${step.state}`"
+              >
+                <span class="overlay-workflow-index">{{ index + 1 }}</span>
+                <div>
+                  <div class="overlay-workflow-step-title">
+                    <strong>{{ step.title }}</strong>
+                    <el-tag size="small" :type="step.tagType" effect="plain">{{ step.statusLabel }}</el-tag>
+                  </div>
+                  <p>{{ step.description }}</p>
+                </div>
+              </li>
+            </ol>
+          </section>
+
           <div v-if="overlayCandidateFilterCounts.all" class="overlay-candidate-toolbar">
             <div class="overlay-candidate-toolbar-title">
               <strong>候选处理队列</strong>
@@ -701,11 +725,47 @@
         </template>
         <template v-else-if="candidateEditor.kind === 'edge'">
           <el-form-item label="来源节点 ID 或名称">
-            <el-input v-model="candidateEditor.form.source_node_id" />
+            <el-select
+              v-model="candidateEditor.form.source_node_id"
+              filterable
+              allow-create
+              default-first-option
+              placeholder="搜索当前图谱或本次草稿节点，也可手动输入 ID/名称"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="option in overlayEndpointOptions"
+                :key="`source-${option.id}`"
+                :label="option.label"
+                :value="option.id"
+                :disabled="option.disabled"
+              >
+                <span>{{ option.label }}</span>
+                <span class="endpoint-option-hint">{{ option.hint }}</span>
+              </el-option>
+            </el-select>
             <p v-if="candidateEditorFieldIssue('source_node_id')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('source_node_id') }}</p>
           </el-form-item>
           <el-form-item label="目标节点 ID 或名称">
-            <el-input v-model="candidateEditor.form.target_node_id" />
+            <el-select
+              v-model="candidateEditor.form.target_node_id"
+              filterable
+              allow-create
+              default-first-option
+              placeholder="搜索当前图谱或本次草稿节点，也可手动输入 ID/名称"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="option in overlayEndpointOptions"
+                :key="`target-${option.id}`"
+                :label="option.label"
+                :value="option.id"
+                :disabled="option.disabled"
+              >
+                <span>{{ option.label }}</span>
+                <span class="endpoint-option-hint">{{ option.hint }}</span>
+              </el-option>
+            </el-select>
             <p v-if="candidateEditorFieldIssue('target_node_id')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('target_node_id') }}</p>
           </el-form-item>
           <el-form-item label="关系类型">
@@ -765,6 +825,13 @@ import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
 import { useGraphCacheDiagnostics } from './composables/useGraphCacheDiagnostics'
 import {
+  OVERLAY_CANDIDATE_FILTER_OPTIONS,
+  useOverlayCandidateWorkflow,
+  type CandidateIssueFilter,
+  type OverlayRepairTarget,
+  type OverlaySessionView,
+} from './composables/useOverlayCandidateWorkflow'
+import {
   buildGraphQuery,
   graphApi,
   normalizeGraphPathId,
@@ -785,7 +852,6 @@ import {
   type OverlayEdgeCandidate,
   type OverlayExtractionPayloadPreviewResponse,
   type OverlayExtractionPayloadValidationResponse,
-  type OverlayExtractionSessionResponse,
   type OverlayNodeCandidate,
   type OverlayResourceCandidate,
   type OverlayReviewStatus,
@@ -811,20 +877,7 @@ type OverlaySourceType = 'pasted_text' | 'search_url' | 'saved_search'
 type OverlayExtractionMode = 'default' | 'custom_extension'
 type OverlayDraftMode = 'goal_draft' | 'manual'
 type OverlayPreviewGroup = 'nodes' | 'edges' | 'resources'
-type OverlaySessionView = OverlayExtractionSessionResponse & Partial<GoalExtensionDraftResponse>
 type EditableCandidateKind = 'node' | 'edge' | 'resource'
-type CandidateIssueFilter = 'all' | 'blocking' | 'review' | 'pending' | 'ready'
-
-type OverlaySessionCandidateLike = {
-  validation_status?: string | null
-  review_status?: string | null
-  validation_errors?: string[] | null
-}
-
-type OverlayRepairTarget =
-  | { kind: 'node'; candidate: OverlayNodeCandidate }
-  | { kind: 'edge'; candidate: OverlayEdgeCandidate }
-  | { kind: 'resource'; candidate: OverlayResourceCandidate }
 
 type CandidateEditorState = {
   visible: boolean
@@ -859,13 +912,6 @@ type SelectedNodeContext = GraphNodeData & {
 
 const PROJECT_LATEST_PLAN_MISSING = 'project_latest_plan_missing'
 const SEARCH_NOT_READY = 'SEARCH_NOT_READY'
-const OVERLAY_CANDIDATE_FILTER_OPTIONS: Array<{ value: CandidateIssueFilter; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'blocking', label: '需修复' },
-  { value: 'review', label: '待复核' },
-  { value: 'pending', label: '待审核' },
-  { value: 'ready', label: '已确认' },
-]
 
 const GraphToolbar = defineAsyncComponent(() => import('@/components/Graph/GraphToolbar.vue'))
 const GraphCanvas = defineAsyncComponent(() => import('@/components/Graph/GraphCanvas.vue'))
@@ -1043,65 +1089,6 @@ const overlayPreflightGuidance = computed(() => {
   if (counts.visible_overlay_nodes || counts.visible_overlay_edges) return '增强图谱已可用于项目图谱和路径预检；如需写入 Neo4j 投影，再点击同步图谱。'
   return '当前草稿尚未产生可进入增强图谱的节点或关系。'
 })
-const overlaySessionGuide = computed(() => {
-  const session = lastOverlaySession.value
-  if (!session) return ''
-  const candidates = [...(session.nodes || []), ...(session.edges || []), ...(session.resources || [])]
-  if (candidates.some((item) => item.validation_status === 'invalid')) {
-    return '下一步：先点击“编辑修复”处理校验失败项；失败节点修复后，相关关系会自动重新校验。'
-  }
-  if (candidates.some((item) => item.validation_status === 'needs_review')) {
-    return '下一步：存在重复或需要复核的候选，请确认是否保留，再进行人工审核。'
-  }
-  if (candidates.some((item) => item.review_status === 'pending')) {
-    return '下一步：候选已经通过机器校验，但仍是草稿；请在图谱或明细中确认审核。'
-  }
-  return '下一步：已确认候选可参与增强图谱；如果暂不想进入路径，可关闭规划开关。'
-})
-const overlaySessionStats = computed(() => {
-  const session = lastOverlaySession.value
-  const candidates = session ? [...(session.nodes || []), ...(session.edges || []), ...(session.resources || [])] : []
-  return {
-    invalid: candidates.filter((item) => item.validation_status === 'invalid').length,
-    needsReview: candidates.filter((item) => item.validation_status === 'needs_review').length,
-    valid: candidates.filter((item) => item.validation_status === 'valid').length,
-    pendingReview: candidates.filter((item) => item.review_status === 'pending').length,
-  }
-})
-const overlaySessionCandidates = computed<OverlayRepairTarget[]>(() => {
-  const session = lastOverlaySession.value
-  if (!session) return []
-  return [
-    ...(session.nodes || []).map((candidate) => ({ kind: 'node' as const, candidate })),
-    ...(session.edges || []).map((candidate) => ({ kind: 'edge' as const, candidate })),
-    ...(session.resources || []).map((candidate) => ({ kind: 'resource' as const, candidate })),
-  ]
-})
-const filteredOverlayNodes = computed(() => (lastOverlaySession.value?.nodes || []).filter((candidate) => matchesOverlayCandidateFilter(candidate)))
-const filteredOverlayEdges = computed(() => (lastOverlaySession.value?.edges || []).filter((candidate) => matchesOverlayCandidateFilter(candidate)))
-const filteredOverlayResources = computed(() => (lastOverlaySession.value?.resources || []).filter((candidate) => matchesOverlayCandidateFilter(candidate)))
-const overlayCandidateFilterCounts = computed<Record<CandidateIssueFilter, number>>(() => {
-  const candidates = overlaySessionCandidates.value.map((item) => item.candidate)
-  return {
-    all: candidates.length,
-    blocking: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'blocking')).length,
-    review: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'review')).length,
-    pending: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'pending')).length,
-    ready: candidates.filter((item) => matchesOverlayCandidateFilter(item, 'ready')).length,
-  }
-})
-const filteredOverlayCandidateCount = computed(() => (
-  filteredOverlayNodes.value.length + filteredOverlayEdges.value.length + filteredOverlayResources.value.length
-))
-const overlayCandidateRepairTarget = computed(() => (
-  overlaySessionCandidates.value.find((item) => item.candidate.validation_status === 'invalid')
-  || overlaySessionCandidates.value.find((item) => item.candidate.validation_status === 'needs_review')
-  || null
-))
-const overlayCandidateRepairTargetLabel = computed(() => {
-  if (!overlayCandidateRepairTarget.value) return '暂无需修复候选'
-  return `打开首个需处理候选：${overlayRepairTargetTitle(overlayCandidateRepairTarget.value)}`
-})
 const candidateEditorIssueSummary = computed(() => {
   const errors = candidateEditor.value.errors
   if (!errors.length) return '当前候选暂无校验问题。'
@@ -1168,6 +1155,25 @@ function normalizePreviewPayload(payload: unknown): PreviewPayload {
 
 const nodes = computed(() => elements.value.filter(isNodeElement).map((element) => element.data))
 const edges = computed(() => elements.value.filter(isEdgeElement).map((element) => element.data))
+const {
+  overlaySessionGuide,
+  overlaySessionStats,
+  overlayWorkflowSteps,
+  overlayWorkflowCurrentStep,
+  filteredOverlayNodes,
+  filteredOverlayEdges,
+  filteredOverlayResources,
+  overlayCandidateFilterCounts,
+  filteredOverlayCandidateCount,
+  overlayCandidateRepairTarget,
+  overlayCandidateRepairTargetLabel,
+  overlayEndpointOptions,
+} = useOverlayCandidateWorkflow({
+  lastOverlaySession,
+  overlayPreflight,
+  nodes,
+  overlayCandidateFilter,
+})
 const graphNodeCount = computed(() => nodes.value.length)
 const graphEdgeCount = computed(() => edges.value.length)
 const graphScopeLabel = computed(() => {
@@ -2033,20 +2039,6 @@ function edgeCandidateSummary(candidate: Record<string, any>) {
   return `${source} → ${target}`
 }
 
-function matchesOverlayCandidateFilter(candidate: OverlaySessionCandidateLike, filter = overlayCandidateFilter.value) {
-  if (filter === 'all') return true
-  if (filter === 'blocking') return candidate.validation_status === 'invalid'
-  if (filter === 'review') return candidate.validation_status === 'needs_review'
-  if (filter === 'pending') return candidate.validation_status === 'valid' && candidate.review_status === 'pending'
-  return candidate.validation_status === 'valid' && candidate.review_status === 'confirmed'
-}
-
-function overlayRepairTargetTitle(target: OverlayRepairTarget) {
-  if (target.kind === 'node') return target.candidate.name || target.candidate.node_id
-  if (target.kind === 'edge') return `${target.candidate.source_node_id || target.candidate.source_name_or_id || '未知来源'} → ${target.candidate.target_node_id || target.candidate.target_name_or_id || '未知目标'}`
-  return target.candidate.title || target.candidate.resource_id
-}
-
 function openOverlayRepairTarget(target: OverlayRepairTarget) {
   if (target.kind === 'node') {
     openNodeCandidateEditor(target.candidate)
@@ -2409,15 +2401,6 @@ function getOverlayErrorMessage(error: any) {
   const code = error?.response?.data?.error
   if (code === SEARCH_NOT_READY) {
     return '搜索服务尚未就绪，自定义扩展暂不可用；领域基线图谱浏览不受影响。'
-  }
-  if (code === 'LLM_NOT_READY') {
-    return 'LLM 尚未配置，无法生成扩展抽取预览。'
-  }
-  if (code === 'LLM_EXTRACTION_FAILED') {
-    return 'LLM 抽取暂时失败，请稍后重试或缩短资料内容。'
-  }
-  if (code === 'INVALID_LLM_EXTRACTION_JSON') {
-    return 'LLM 返回的抽取结构不符合要求，请重新生成预览。'
   }
   return formatServiceReason(code) || code || error?.message || '扩展草稿创建失败'
 }
@@ -2875,6 +2858,70 @@ function toggleFullscreen() {
   line-height: 1.6;
 }
 
+.overlay-workflow {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #d9ecff;
+  border-radius: 10px;
+  background: #f4faff;
+}
+
+.overlay-workflow-header,
+.overlay-workflow-step-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overlay-workflow-header span {
+  color: #409eff;
+  font-size: 12px;
+}
+
+.overlay-workflow-steps {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.overlay-workflow-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.overlay-workflow-step.is-current {
+  border-color: #f3d19e;
+  background: #fdf6ec;
+}
+
+.overlay-workflow-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 12px;
+  background: #909399;
+}
+
+.overlay-workflow-step.is-done .overlay-workflow-index {
+  background: #67c23a;
+}
+
+.overlay-workflow-step.is-current .overlay-workflow-index {
+  background: #e6a23c;
+}
+
 .overlay-candidate-toolbar {
   display: flex;
   align-items: center;
@@ -2889,6 +2936,7 @@ function toggleFullscreen() {
 }
 
 .overlay-candidate-toolbar-title p,
+.overlay-workflow-step p,
 .overlay-empty-filter,
 .candidate-editor-issue-panel p,
 .candidate-editor-field-hint {
@@ -2922,6 +2970,13 @@ function toggleFullscreen() {
 
 .candidate-editor-field-hint {
   color: #b88230;
+}
+
+.endpoint-option-hint {
+  float: right;
+  margin-left: 12px;
+  color: #909399;
+  font-size: 12px;
 }
 
 .candidate-editor-grid {

@@ -86,7 +86,7 @@
       <el-alert
         v-if="readiness || readinessError"
         :title="readinessTitle"
-        :type="readiness?.demo_ready ? 'success' : 'warning'"
+        :type="readinessAlertType"
         show-icon
         :closable="false"
         style="margin-top: 12px; max-width: 720px"
@@ -94,15 +94,18 @@
         <template #default>
           <template v-if="readiness">
             <div class="readiness-summary">
-              <el-tag size="small" :type="readiness.demo_ready ? 'success' : 'danger'">
-                论文主链{{ readiness.demo_ready ? '可演示' : '暂不可演示' }}
+              <el-tag size="small" :type="readiness.local_demo_ready ? 'success' : 'danger'">
+                本地主链{{ readiness.local_demo_ready ? '可演示' : '暂不可演示' }}
+              </el-tag>
+              <el-tag size="small" :type="readiness.demo_ready ? 'success' : 'warning'">
+                Neo4j 投影{{ readiness.demo_ready ? '就绪' : '待同步' }}
               </el-tag>
               <el-tag size="small" :type="readiness.enhanced_ready ? 'success' : 'warning'">
-                在线增强{{ readiness.enhanced_ready ? '就绪' : '待完善' }}
+                在线增强{{ readiness.enhanced_ready ? '就绪' : '可选配置' }}
               </el-tag>
             </div>
             <div class="readiness-note">
-              路径规划主链依赖 SQLite、Neo4j 与图谱同步；LLM 与资料搜索属于在线增强能力，未就绪时不会否定论文主链演示价值。
+              本地图谱浏览与路径规划主链优先依赖 SQLite 和本地 Domain Pack；Neo4j 投影用于显式同步、投影诊断和推广流程，LLM 与资料搜索属于在线增强能力。
             </div>
             <div class="readiness-row" v-for="(service, key) in readiness.services" :key="key">
               <span class="readiness-label">{{ serviceLabel(String(key)) }}</span>
@@ -158,15 +161,16 @@ const llmTestMsg = ref('')
 const readiness = ref<ReadinessResponse | null>(null)
 const readinessError = ref('')
 const llmTestStatus = ref<'success' | 'warning' | 'error'>('success')
+const readinessAlertType = computed(() => readiness.value?.local_demo_ready ? 'success' : 'warning')
 const readinessTitle = computed(() => {
   if (readiness.value) {
-    if (readiness.value.demo_ready && readiness.value.enhanced_ready) {
-      return '论文主链与在线增强能力均已就绪'
+    if (readiness.value.local_demo_ready && readiness.value.enhanced_ready) {
+      return '本地主链可演示，在线增强能力已就绪'
     }
-    if (readiness.value.demo_ready) {
-      return '论文主链可演示，在线增强能力待完善'
+    if (readiness.value.local_demo_ready) {
+      return '本地主链可演示，Neo4j 投影或在线增强可按需完善'
     }
-    return '论文主链暂不可演示'
+    return '本地主链暂不可演示'
   }
   return readinessError.value || '演示主链路检查未通过'
 })
@@ -285,7 +289,7 @@ async function repairGraphSync() {
 function serviceLabel(key: string) {
   if (key === 'sqlite') return 'SQLite'
   if (key === 'neo4j') return 'Neo4j'
-  if (key === 'graph_sync') return '图谱同步'
+  if (key === 'graph_sync') return 'Neo4j 投影'
   if (key === 'llm') return 'LLM'
   if (key === 'search') return '搜索'
   return key
@@ -318,9 +322,9 @@ function serviceDetail(key: string, service: ReadinessServiceStatus) {
   if (key === 'graph_sync') {
     if (service.in_sync) {
       const domainLabel = service.domain || '当前默认领域'
-      return `${domainLabel} 已同步，可支撑论文主链演示`
+      return `${domainLabel} Neo4j 投影已同步；本地读模型不依赖该投影`
     }
-    return service.reason || '需先完成 Domain Pack 到 Neo4j 的同步'
+    return service.reason || '仅影响显式同步、投影诊断和推广流程'
   }
   if (key === 'llm') {
     if (service.base_url && service.model) return `${service.model} @ ${service.base_url}`

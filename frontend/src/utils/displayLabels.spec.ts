@@ -26,6 +26,15 @@ describe('displayLabels', () => {
     expect(auditSourceLabel('audit.ordering_logs').label).toBe('排序审计记录')
     expect(formatErrorCode('EMPTY_CANDIDATES')).toBe('未找到可确认的目标候选')
     expect(formatErrorCode('negative_patterns_excluded_all')).toBe('目标文本被排除规则过滤')
+    expect(formatErrorCode('INVALID_LLM_EXTRACTION_JSON')).toContain('重新生成预览')
+    expect(formatErrorCode('LLM_NOT_READY')).toBe('LLM 尚未配置，无法生成扩展抽取预览')
     expect(formatErrorCode('UNKNOWN_CODE')).toBe('UNKNOWN_CODE')
+  })
+
+  it('maps optional enhancement and projection reason codes without exposing raw backend terms', () => {
+    expect(formatErrorCode('projection_missing')).toContain('普通浏览和路径预检不受影响')
+    expect(formatErrorCode('overlay_projection_drifted')).toContain('等待重新同步')
+    expect(formatErrorCode('source_context_sparse')).toContain('资料内容较少')
+    expect(formatErrorCode('neo4j_unavailable')).toContain('本地图谱浏览不受影响')
   })
 })

@@ -34,7 +34,7 @@ export interface LlmTestResponse {
   reason?: string
 }
 
-export type HealthServiceStatus = 'ok' | 'skipped' | 'error' | 'blocked' | 'missing' | 'stale' | 'drifted' | 'unknown'
+export type HealthServiceStatus = 'ok' | 'skipped' | 'error' | 'blocked' | 'missing' | 'stale' | 'drifted' | 'degraded' | 'unknown'
 
 export interface SearchHealthResponse {
   status: 'ok' | 'skipped' | 'error'
@@ -60,12 +60,20 @@ export interface ReadinessServiceStatus {
   edges?: number
 }
 
+export interface ReadinessCapabilities {
+  local_graph_read: ReadinessServiceStatus
+  neo4j_projection: ReadinessServiceStatus
+  online_enhancement: ReadinessServiceStatus
+}
+
 interface ReadinessResponsePayload {
   status: 'ready' | 'degraded'
   ready: boolean
   core_ready?: boolean
   demo_ready?: boolean
+  local_demo_ready?: boolean
   enhanced_ready?: boolean
+  capabilities?: Partial<ReadinessCapabilities>
   services: Partial<{
     sqlite: ReadinessServiceStatus
     neo4j: ReadinessServiceStatus
@@ -80,7 +88,9 @@ export interface ReadinessResponse {
   ready: boolean
   core_ready: boolean
   demo_ready: boolean
+  local_demo_ready: boolean
   enhanced_ready: boolean
+  capabilities: ReadinessCapabilities
   services: {
     sqlite: ReadinessServiceStatus
     neo4j: ReadinessServiceStatus
@@ -115,15 +125,36 @@ function normalizeReadiness(payload: ReadinessResponsePayload): ReadinessRespons
   })
   const coreReady = payload.core_ready ?? (sqlite.ready && neo4j.ready && graphSync.ready)
   const demoReady = payload.demo_ready ?? coreReady
+  const localDemoReady = payload.local_demo_ready ?? sqlite.ready
   const enhancedReady = payload.enhanced_ready ?? (llm.ready && search.ready)
   const ready = demoReady && enhancedReady
+  const capabilities: ReadinessCapabilities = {
+    local_graph_read: ensureServiceStatus(payload.capabilities?.local_graph_read, {
+      status: localDemoReady ? 'ok' : 'blocked',
+      ready: localDemoReady,
+      reason: localDemoReady ? 'local_read_model_ready' : 'SQLite 状态缺失或不可用',
+    }),
+    neo4j_projection: ensureServiceStatus(payload.capabilities?.neo4j_projection, {
+      status: graphSync.status,
+      ready: demoReady,
+      in_sync: graphSync.in_sync,
+      reason: graphSync.reason,
+    }),
+    online_enhancement: ensureServiceStatus(payload.capabilities?.online_enhancement, {
+      status: enhancedReady ? 'ok' : 'degraded',
+      ready: enhancedReady,
+      reason: enhancedReady ? 'online_services_ready' : 'online_enhancement_optional',
+    }),
+  }
 
   return {
     status: ready ? 'ready' : 'degraded',
     ready,
     core_ready: coreReady,
     demo_ready: demoReady,
+    local_demo_ready: localDemoReady,
     enhanced_ready: enhancedReady,
+    capabilities,
     services: {
       sqlite,
       neo4j,

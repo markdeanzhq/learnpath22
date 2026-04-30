@@ -412,6 +412,9 @@ async def test_health_readiness_exposes_overlay_projection_error_without_blockin
     assert resp.status_code == 200
     body = resp.json()
     assert body["core_ready"] is False
+    assert body["local_demo_ready"] is True
+    assert body["capabilities"]["local_graph_read"]["ready"] is True
+    assert body["capabilities"]["neo4j_projection"]["ready"] is False
     assert body["services"]["graph_sync"]["ready"] is True
     overlay_projection = body["services"]["graph_sync"]["overlay_projection"]
     assert overlay_projection["status"] == "error"
@@ -447,7 +450,16 @@ async def test_health_readiness_reports_blocked_graph_sync_with_registry_default
         resp = await client.get("/api/v1/health/readiness")
 
     assert resp.status_code == 200
-    assert resp.json()["services"]["graph_sync"] == {
+    body = resp.json()
+    assert body["local_demo_ready"] is True
+    assert body["capabilities"]["local_graph_read"] == {"status": "ok", "ready": True, "reason": "local_read_model_ready"}
+    assert body["capabilities"]["neo4j_projection"] == {
+        "status": "blocked",
+        "ready": False,
+        "in_sync": False,
+        "reason": "neo4j_unavailable",
+    }
+    assert body["services"]["graph_sync"] == {
         "status": "blocked",
         "ready": False,
         "in_sync": False,
@@ -504,7 +516,17 @@ async def test_health_readiness_reports_demo_ready_when_core_services_are_ready(
         "ready": False,
         "core_ready": True,
         "demo_ready": True,
+        "local_demo_ready": True,
         "enhanced_ready": False,
+        "capabilities": {
+            "local_graph_read": {"status": "ok", "ready": True, "reason": "local_read_model_ready"},
+            "neo4j_projection": {"status": "ok", "ready": True, "in_sync": True, "reason": "synced"},
+            "online_enhancement": {
+                "status": "degraded",
+                "ready": False,
+                "reason": "LLM_API_KEY not configured；搜索服务未配置",
+            },
+        },
         "services": {
             "sqlite": {"status": "ok", "ready": True},
             "neo4j": {"status": "ok", "ready": True},
@@ -566,7 +588,15 @@ async def test_health_readiness_reports_not_demo_ready_when_graph_is_not_synced(
     assert data["ready"] is False
     assert data["core_ready"] is False
     assert data["demo_ready"] is False
+    assert data["local_demo_ready"] is True
     assert data["enhanced_ready"] is True
+    assert data["capabilities"]["local_graph_read"] == {"status": "ok", "ready": True, "reason": "local_read_model_ready"}
+    assert data["capabilities"]["neo4j_projection"] == {
+        "status": "missing",
+        "ready": False,
+        "in_sync": False,
+        "reason": "domain_pack_not_seeded",
+    }
     assert data["services"]["graph_sync"] == {
         "status": "missing",
         "ready": False,
@@ -632,7 +662,13 @@ async def test_health_readiness_reports_search_auth_failure(client):
     assert data["ready"] is False
     assert data["core_ready"] is True
     assert data["demo_ready"] is True
+    assert data["local_demo_ready"] is True
     assert data["enhanced_ready"] is False
+    assert data["capabilities"]["online_enhancement"] == {
+        "status": "degraded",
+        "ready": False,
+        "reason": "搜索服务鉴权失败",
+    }
     assert data["services"]["search"] == {
         "status": "error",
         "ready": False,
@@ -682,7 +718,13 @@ async def test_health_readiness_reports_ready_when_all_services_are_ready(client
         "ready": True,
         "core_ready": True,
         "demo_ready": True,
+        "local_demo_ready": True,
         "enhanced_ready": True,
+        "capabilities": {
+            "local_graph_read": {"status": "ok", "ready": True, "reason": "local_read_model_ready"},
+            "neo4j_projection": {"status": "ok", "ready": True, "in_sync": True, "reason": "synced"},
+            "online_enhancement": {"status": "ok", "ready": True, "reason": "online_services_ready"},
+        },
         "services": {
             "sqlite": {"status": "ok", "ready": True},
             "neo4j": {"status": "ok", "ready": True},

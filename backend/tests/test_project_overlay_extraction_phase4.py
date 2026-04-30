@@ -455,6 +455,28 @@ async def test_preview_overlay_extraction_payload_uses_llm_without_creating_sess
     assert sessions == []
 
 
+async def test_preview_overlay_extraction_payload_accepts_text_wrapped_llm_json(client, project, db_session):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    replace_runtime_settings({"llm_api_key": "sk-test"})
+    wrapped_payload = f"抽取完成，JSON 如下：\n{_llm_payload(source['source_id'])}\n请进入人工审核。"
+
+    with patch(
+        "app.services.project_overlay_llm_extraction_service.httpx.AsyncClient",
+        return_value=_MockAsyncLLMClient(wrapped_payload),
+    ):
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/graph/overlay/extraction-payload/preview",
+            json={"source_ids": [source["source_id"]]},
+        )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["counts"] == {"nodes": 1, "edges": 1, "resources": 1}
+    assert payload["extraction_payload"]["nodes"][0]["name"] == "随机森林扩展"
+    sessions = (await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all()
+    assert sessions == []
+
+
 async def test_preview_overlay_extraction_payload_rejects_invalid_llm_json(client, project, db_session):
     source = await _create_overlay_source_via_api(client, project["id"])
     replace_runtime_settings({"llm_api_key": "sk-test"})

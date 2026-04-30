@@ -131,15 +131,63 @@ async def readiness_check(
     graph_ready = graph_sync_status["ready"] and graph_sync_status.get("overlay_projection", {"ready": True})["ready"]
     core_ready = sqlite_status["ready"] and neo4j_status["ready"] and graph_ready
     demo_ready = core_ready
+    local_demo_ready = sqlite_status["ready"]
     enhanced_ready = all(service["ready"] for service in (llm_status, search_status))
+    capabilities = _build_readiness_capabilities(
+        sqlite_status=sqlite_status,
+        graph_sync_status=graph_sync_status,
+        graph_ready=graph_ready,
+        enhanced_ready=enhanced_ready,
+        llm_status=llm_status,
+        search_status=search_status,
+    )
 
     return {
         "status": "ready" if demo_ready and enhanced_ready else "degraded",
         "ready": demo_ready and enhanced_ready,
         "core_ready": core_ready,
         "demo_ready": demo_ready,
+        "local_demo_ready": local_demo_ready,
         "enhanced_ready": enhanced_ready,
+        "capabilities": capabilities,
         "services": services,
+    }
+
+
+def _build_readiness_capabilities(
+    *,
+    sqlite_status: dict,
+    graph_sync_status: dict,
+    graph_ready: bool,
+    enhanced_ready: bool,
+    llm_status: dict,
+    search_status: dict,
+) -> dict:
+    local_graph_read = {
+        "status": "ok" if sqlite_status["ready"] else "blocked",
+        "ready": sqlite_status["ready"],
+        "reason": "local_read_model_ready" if sqlite_status["ready"] else sqlite_status.get("reason", "sqlite_unavailable"),
+    }
+    neo4j_projection = {
+        "status": graph_sync_status.get("status", "unknown"),
+        "ready": graph_ready,
+        "in_sync": graph_sync_status.get("in_sync", False),
+        "reason": graph_sync_status.get("overlay_projection", {}).get("reason") or graph_sync_status.get("reason"),
+    }
+    online_reasons = [
+        service.get("reason")
+        for service in (llm_status, search_status)
+        if not service.get("ready") and service.get("reason")
+    ]
+    online_enhancement = {
+        "status": "ok" if enhanced_ready else "degraded",
+        "ready": enhanced_ready,
+        "reason": "online_services_ready" if enhanced_ready else "；".join(online_reasons) or "online_enhancement_optional",
+    }
+    return {
+        "local_graph_read": local_graph_read,
+        "neo4j_projection": neo4j_projection,
+        "online_enhancement": online_enhancement,
     }
 
 
