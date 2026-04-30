@@ -818,13 +818,15 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
-import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useRoute, useRouter } from 'vue-router'
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
 import { useGraphCacheDiagnostics } from './composables/useGraphCacheDiagnostics'
+import { useGraphWorkspaceLoader, type GraphWorkspaceLoadOptions } from './composables/useGraphWorkspaceLoader'
+import { useGraphReviewActions } from './composables/useGraphReviewActions'
 import { useOverlayCandidateEditor } from './composables/useOverlayCandidateEditor'
+import { useOverlayPostActions } from './composables/useOverlayPostActions'
 import {
   OVERLAY_CANDIDATE_FILTER_OPTIONS,
   useOverlayCandidateWorkflow,
@@ -832,35 +834,19 @@ import {
   type OverlayRepairTarget,
   type OverlaySessionView,
 } from './composables/useOverlayCandidateWorkflow'
+import { useOverlayDraftInput } from './composables/useOverlayDraftInput'
 import {
   buildGraphQuery,
   graphApi,
   normalizeGraphPathId,
   normalizeGraphScope,
-  type GraphData,
   type GraphEdgeData,
   type GraphElement,
   type GraphEntityMetadata,
   type GraphNodeData,
   type GraphScope,
-  type GraphWorkspaceData,
-  type GoalExtensionDraftProposal,
-  type GoalExtensionDraftProposalResponse,
-  type GoalExtensionDraftResponse,
-  type OverlayProjectionStatusResponse,
-  type OverlayPreflightResponse,
-  type OverlayElementGroup,
-  type OverlayExtractionPayloadPreviewResponse,
-  type OverlayExtractionPayloadValidationResponse,
-  type OverlayReviewStatus,
-  type OverlaySourceRequest,
-  type ReviewStatus,
 } from '@/api/modules/graph'
 import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph/graphMeta'
-import { searchApi, type PersistedSearchResult } from '@/api/modules/search'
-import { projectApi, type GoalResolutionPreviewResponse, type ReviewExtensionDraftCoverageResponse } from '@/api/modules/project'
-import { resourceApi } from '@/api/modules/resource'
-import { isCanceledRequest } from '@/api/request'
 import {
   formatServiceReason,
   promotionPreviewStatusMeta,
@@ -869,19 +855,7 @@ import {
   validationStatusMeta,
 } from '@/utils/displayLabels'
 
-type GraphState = 'loading' | 'ready' | 'empty' | 'error'
 type GraphLayout = 'cose' | 'breadthfirst'
-type OverlaySourceType = 'pasted_text' | 'search_url' | 'saved_search'
-type OverlayExtractionMode = 'default' | 'custom_extension'
-type OverlayDraftMode = 'goal_draft' | 'manual'
-type OverlayPreviewGroup = 'nodes' | 'edges' | 'resources'
-
-type PreviewPayload = {
-  nodes: Array<Record<string, any>>
-  edges: Array<Record<string, any>>
-  resources: Array<Record<string, any>>
-  warnings: string[]
-}
 
 type SelectedAdjacentEdge = GraphEdgeData & {
   direction: 'incoming' | 'outgoing'
@@ -913,19 +887,6 @@ type GraphCanvasHandle = {
   setEdgeReviewStatus: (edgeId: string, status: string) => void
 }
 
-function createOverlayForm() {
-  return {
-    sourceType: 'pasted_text' as OverlaySourceType,
-    selectedResultIds: [] as string[],
-    rawText: '',
-    url: '',
-    title: '',
-    snippet: '',
-    summary: '',
-    mode: 'default' as OverlayExtractionMode,
-  }
-}
-
 function firstQueryValue(value: unknown): unknown {
   return Array.isArray(value) ? value[0] : value
 }
@@ -946,28 +907,15 @@ function normalizeGoalDraftFlag(value: unknown): boolean {
   return nextValue === '1' || nextValue === 'true'
 }
 
-function isReviewExtensionDraftResponse(response: GoalResolutionPreviewResponse): response is ReviewExtensionDraftCoverageResponse {
-  return response.result_type === 'review_extension_draft' && response.coverage_status === 'in_domain_uncovered'
-}
-
-function normalizePreviewGoalType(value: unknown): 'domain' | 'concept' | 'problem' | undefined {
-  return value === 'domain' || value === 'concept' || value === 'problem' ? value : undefined
-}
-
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
 const { displayMode, showAuditDetails, showTechnicalDetails } = useDisplayMode()
 const projectId = computed(() => projectStore.currentProject?.id)
-const elements = ref<GraphElement[]>([])
+const currentProject = computed(() => projectStore.currentProject)
 const layout = ref<GraphLayout>('cose')
 const scope = ref<GraphScope>(normalizeGraphScope(route.query.scope))
-const graphState = ref<GraphState>('loading')
-const loading = ref(false)
 const syncing = ref(false)
-const errorMessage = ref('')
-const lastRefreshError = ref('')
-const emptyReason = ref<string | undefined>()
 const selectedNodeId = ref<string | null>(null)
 const graphRef = ref<GraphCanvasHandle>()
 const pageRef = ref<HTMLDivElement>()
@@ -982,33 +930,11 @@ const reviewMode = ref(false)
 const entityDrawerVisible = ref(false)
 const entityLoading = ref(false)
 const entityMetadata = ref<GraphEntityMetadata | null>(null)
-const projectionStatus = ref<OverlayProjectionStatusResponse | null>(null)
-const overlayPreflight = ref<OverlayPreflightResponse | null>(null)
 const overlayDrawerVisible = ref(false)
-const overlaySubmitting = ref(false)
-const overlayExtractionPreviewLoading = ref(false)
 const overlayError = ref('')
-const overlayBridgeMessage = ref('')
-const overlayForm = ref(createOverlayForm())
-const overlayDraftMode = ref<OverlayDraftMode>('manual')
-const overlayExtractionPreview = ref<OverlayExtractionPayloadPreviewResponse | null>(null)
-const selectedPreviewCandidates = ref<Record<OverlayPreviewGroup, number[]>>({ nodes: [], edges: [], resources: [] })
-const goalDraftProposal = ref<GoalExtensionDraftProposalResponse | null>(null)
-const goalDraftProposalLoading = ref(false)
-const manualGoalDraftLoading = ref(false)
-const manualGoalDraftResolutionSessionId = ref<string | null>(null)
-const goalDraftProposalDismissed = ref(false)
-const persistedSearchResults = ref<PersistedSearchResult[]>([])
 const lastOverlaySession = ref<OverlaySessionView | null>(null)
-const overlayCandidateValidation = ref<OverlayExtractionPayloadValidationResponse | null>(null)
 const overlayCandidateFilter = ref<CandidateIssueFilter>('all')
-const promotionPreview = ref<any | null>(null)
-const promotionResult = ref<any | null>(null)
-const promotionSecret = ref('')
-const promotionLoading = ref(false)
-const resourceBinding = ref({ resourceId: '', targetType: 'project_node', targetId: '' })
-let graphLoadRequestId = 0
-let graphLoadController: AbortController | null = null
+let graphWorkspaceLoader: ReturnType<typeof useGraphWorkspaceLoader> | null = null
 const categoryLegend = GRAPH_CATEGORY_LEGEND
 const relationLegend = GRAPH_RELATION_LEGEND
 const requestedScope = computed<GraphScope>(() => normalizeGraphScope(route.query.scope))
@@ -1018,17 +944,11 @@ const requestedSessionId = computed<string | null>(() => normalizeRouteSessionId
 const goalDraftResolutionSessionId = computed<string | null>(() => (
   normalizeGoalDraftFlag(route.query.goalDraft) ? normalizeRouteSessionId(route.query.resolutionSessionId) : null
 ))
-const activeGoalDraftResolutionSessionId = computed(() => goalDraftResolutionSessionId.value || manualGoalDraftResolutionSessionId.value)
 const emptyDescription = computed(() =>
   emptyReason.value === PROJECT_LATEST_PLAN_MISSING
     ? '当前项目尚未生成学习路径，暂时无法展示路径子图；项目图谱仍可显示领域基线与项目扩展草稿。'
     : '当前范围暂无图谱数据，可刷新或先同步领域知识包到 Neo4j',
 )
-const promotionStatusMessage = computed(() => {
-  if (!promotionResult.value) return ''
-  if (promotionResult.value.reason === 'promoted') return '推广成功，候选已归档隐藏。'
-  return formatServiceReason(promotionResult.value.reason) || promotionPreviewStatusMeta(promotionResult.value.status).label || '推广状态已更新'
-})
 const projectionAlertType = computed(() => projectionStatus.value?.status === 'ok' ? 'success' : 'warning')
 const projectionStatusTitle = computed(() => {
   if (!projectionStatus.value) return ''
@@ -1036,37 +956,6 @@ const projectionStatusTitle = computed(() => {
   const reason = formatServiceReason(projectionStatus.value.reason)
   return reason ? `${status}：${reason}` : status
 })
-const resourceTargetOptions = computed(() => nodes.value.map((node) => ({
-  id: node.id,
-  label: node.label || node.id,
-})))
-const goalExtensionDraftDetails = computed(() => {
-  const session = lastOverlaySession.value
-  if (!session?.gap_analysis && !session?.review_notes?.length && !session?.draft_metadata) {
-    return null
-  }
-  return session
-})
-const goalDraftMissingConcepts = computed(() => (
-  goalExtensionDraftDetails.value?.gap_analysis?.missing_concepts
-  || goalExtensionDraftDetails.value?.missing_concepts
-  || []
-))
-const goalDraftReviewNotes = computed(() => goalExtensionDraftDetails.value?.review_notes || [])
-const goalDraftReviewFocus = computed(() => goalExtensionDraftDetails.value?.gap_analysis?.recommended_review_focus || [])
-const manualOverlayMode = computed(() => !activeGoalDraftResolutionSessionId.value || overlayDraftMode.value === 'manual')
-const goalDraftInboxProposal = computed<GoalExtensionDraftProposal | null>(() => goalDraftProposal.value?.draft_proposal || null)
-const goalDraftInboxCounts = computed(() => goalDraftInboxProposal.value?.counts || { nodes: 0, edges: 0, resources: 0 })
-const goalDraftInboxMissingConcepts = computed(() => goalDraftInboxProposal.value?.missing_concepts || goalDraftMissingConcepts.value)
-const goalDraftInboxNodes = computed(() => goalDraftInboxProposal.value?.nodes || [])
-const goalDraftInboxEdges = computed(() => goalDraftInboxProposal.value?.edges || [])
-const goalDraftInboxResources = computed(() => goalDraftInboxProposal.value?.resources || [])
-const normalizedPreviewPayload = computed(() => normalizePreviewPayload(overlayExtractionPreview.value?.extraction_payload))
-const selectedPreviewCounts = computed(() => ({
-  nodes: selectedPreviewCandidates.value.nodes.length,
-  edges: selectedPreviewCandidates.value.edges.length,
-  resources: selectedPreviewCandidates.value.resources.length,
-}))
 const graphQuery = computed(() => buildGraphQuery({
   scope: scope.value,
   path_id: requestedPathId.value,
@@ -1081,19 +970,91 @@ function isEdgeElement(element: GraphElement): element is Extract<GraphElement, 
   return element.group === 'edges'
 }
 
-function normalizePreviewPayload(payload: unknown): PreviewPayload {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return { nodes: [], edges: [], resources: [], warnings: [] }
-  }
-  const record = payload as Record<string, unknown>
-  return {
-    nodes: Array.isArray(record.nodes) ? record.nodes.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [],
-    edges: Array.isArray(record.edges) ? record.edges.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [],
-    resources: Array.isArray(record.resources) ? record.resources.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [],
-    warnings: Array.isArray(record.warnings) ? record.warnings.filter((item): item is string => typeof item === 'string') : [],
-  }
-}
-
+const {
+  overlaySubmitting,
+  overlayExtractionPreviewLoading,
+  overlayBridgeMessage,
+  overlayForm,
+  overlayDraftMode,
+  overlayExtractionPreview,
+  overlayCandidateValidation,
+  goalDraftProposalLoading,
+  manualGoalDraftLoading,
+  manualGoalDraftResolutionSessionId,
+  goalDraftProposalDismissed,
+  activeGoalDraftResolutionSessionId,
+  goalExtensionDraftDetails,
+  goalDraftMissingConcepts,
+  goalDraftReviewNotes,
+  goalDraftReviewFocus,
+  manualOverlayMode,
+  goalDraftInboxProposal,
+  goalDraftInboxCounts,
+  goalDraftInboxMissingConcepts,
+  goalDraftInboxNodes,
+  goalDraftInboxEdges,
+  goalDraftInboxResources,
+  normalizedPreviewPayload,
+  selectedPreviewCounts,
+  openOverlayDrawer,
+  prepareGoalDraftFromCurrentProject,
+  openGoalDraftEntry,
+  loadGoalDraftProposal,
+  dismissGoalDraftProposal,
+  togglePreviewCandidate,
+  isPreviewCandidateSelected,
+  previewOverlayExtractionPayload,
+  submitOverlayDraft,
+  resetOverlayDraftInput,
+  applyWorkspaceGoalDraftProposal,
+  prepareWorkspaceGoalDraftLoading,
+  candidateTitle,
+  edgeCandidateSummary,
+} = useOverlayDraftInput({
+  projectId,
+  currentProject,
+  routeGoalDraftResolutionSessionId: goalDraftResolutionSessionId,
+  overlayDrawerVisible,
+  overlayError,
+  lastOverlaySession,
+  loadPersistedSearchResults,
+  onDraftCreated: async (session) => {
+    scope.value = 'project'
+    await replaceGraphRoute('project', null, session.session.session_id)
+    await loadGraphWorkspace()
+  },
+  getErrorMessage: getOverlayErrorMessage,
+  notifySuccess: (message) => ElMessage.success(message),
+})
+const workspaceLoader = useGraphWorkspaceLoader({
+  projectId,
+  graphQuery,
+  requestedSessionId,
+  activeGoalDraftResolutionSessionId,
+  overlayDrawerVisible,
+  overlayError,
+  lastOverlaySession,
+  selectedNodeId,
+  goalDraftProposalLoading,
+  resetOverlayState,
+  prepareWorkspaceGoalDraftLoading,
+  applyWorkspaceGoalDraftProposal,
+  refreshGraphCacheStats,
+  focusRequestedNode,
+  notifyError: (message) => ElMessage.error(message),
+})
+graphWorkspaceLoader = workspaceLoader
+const {
+  elements,
+  graphState,
+  loading,
+  errorMessage,
+  lastRefreshError,
+  emptyReason,
+  projectionStatus,
+  overlayPreflight,
+  persistedSearchResults,
+} = workspaceLoader
 const nodes = computed(() => elements.value.filter(isNodeElement).map((element) => element.data))
 const edges = computed(() => elements.value.filter(isEdgeElement).map((element) => element.data))
 const {
@@ -1142,6 +1103,43 @@ const {
   getErrorMessage: getOverlayErrorMessage,
   notifySuccess: (message) => ElMessage.success(message),
 })
+const {
+  promotionPreview,
+  promotionResult,
+  promotionSecret,
+  promotionLoading,
+  resourceBinding,
+  promotionStatusMessage,
+  resourceTargetOptions,
+  resetOverlayPostActions,
+  bindOverlayResource,
+  previewPromotion,
+  commitPromotion,
+} = useOverlayPostActions({
+  projectId,
+  nodes,
+  lastOverlaySession,
+  overlayError,
+  refreshProjectionStatus: loadProjectionStatus,
+  refreshGraphWorkspace: async () => { await loadGraphWorkspace() },
+  notifySuccess: (message) => ElMessage.success(message),
+})
+const {
+  onReviewNode,
+  onReviewEdge,
+  onSetOverlayPlanning,
+} = useGraphReviewActions({
+  projectId,
+  nodes,
+  edges,
+  elements,
+  selectedNodeId,
+  refreshOverlayPreflight: loadOverlayPreflight,
+  setCanvasNodeReviewStatus: (nodeId, status) => graphRef.value?.setNodeReviewStatus(nodeId, status),
+  setCanvasEdgeReviewStatus: (edgeId, status) => graphRef.value?.setEdgeReviewStatus(edgeId, status),
+  notifySuccess: (message) => ElMessage.success(message),
+  notifyError: (message) => ElMessage.error(message),
+})
 const graphNodeCount = computed(() => nodes.value.length)
 const graphEdgeCount = computed(() => edges.value.length)
 const graphScopeLabel = computed(() => {
@@ -1188,86 +1186,27 @@ watch(nodes, (nextNodes) => {
   }
 })
 
-watch(overlayForm, () => {
-  overlayExtractionPreview.value = null
-  overlayCandidateValidation.value = null
-  selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
-}, { deep: true })
-
-watch(overlayDraftMode, (nextMode) => {
-  overlayError.value = ''
-  overlayExtractionPreview.value = null
-  overlayCandidateValidation.value = null
-  selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
-  if (nextMode === 'goal_draft') {
-    goalDraftProposalDismissed.value = false
-  }
-})
-
 function resetGraphState() {
-  elements.value = []
-  selectedNodeId.value = null
-  errorMessage.value = ''
-  lastRefreshError.value = ''
-  emptyReason.value = undefined
-  graphState.value = 'loading'
-  projectionStatus.value = null
-  overlayPreflight.value = null
+  requireGraphWorkspaceLoader().resetGraphState()
 }
 
 function resetOverlayState() {
-  overlayDrawerVisible.value = false
-  overlaySubmitting.value = false
-  overlayExtractionPreviewLoading.value = false
-  overlayError.value = ''
-  overlayBridgeMessage.value = ''
-  overlayForm.value = createOverlayForm()
-  overlayDraftMode.value = activeGoalDraftResolutionSessionId.value ? 'goal_draft' : 'manual'
-  overlayExtractionPreview.value = null
-  overlayCandidateValidation.value = null
-  selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
+  resetOverlayDraftInput(activeGoalDraftResolutionSessionId.value ? 'goal_draft' : 'manual')
   overlayCandidateFilter.value = 'all'
   resetCandidateEditor()
-  goalDraftProposal.value = null
-  goalDraftProposalLoading.value = false
-  goalDraftProposalDismissed.value = false
   lastOverlaySession.value = null
-  promotionPreview.value = null
-  promotionResult.value = null
-  promotionSecret.value = ''
-  resourceBinding.value = { resourceId: '', targetType: 'project_node', targetId: '' }
+  resetOverlayPostActions()
 }
 
-function createGraphLoadController() {
-  graphLoadController?.abort()
-  graphLoadController = new AbortController()
-  return graphLoadController
-}
-
-function clearGraphLoadController(controller: AbortController) {
-  if (graphLoadController === controller) {
-    graphLoadController = null
+function requireGraphWorkspaceLoader() {
+  if (!graphWorkspaceLoader) {
+    throw new Error('Graph workspace loader is not initialized')
   }
+  return graphWorkspaceLoader
 }
 
 function abortGraphLoad() {
-  graphLoadController?.abort()
-  graphLoadController = null
-}
-
-function workspaceErrorMessage(detail?: { message?: string } | null, fallback?: string | null) {
-  return detail?.message || fallback || ''
-}
-
-function performanceNow() {
-  return typeof performance !== 'undefined' ? performance.now() : Date.now()
-}
-
-function logKnowledgePerformance(event: string, payload: Record<string, unknown>) {
-  if (!import.meta.env.DEV || typeof console === 'undefined') {
-    return
-  }
-  console.debug('[Knowledge performance]', { event, ...payload })
+  requireGraphWorkspaceLoader().abortGraphLoad()
 }
 
 function graphRouteQuery(nextScope: GraphScope, nodeId?: string | null, sessionId?: string | null) {
@@ -1291,93 +1230,19 @@ async function replaceGraphRoute(nextScope: GraphScope, nodeId?: string | null, 
 }
 
 async function loadPersistedSearchResults() {
-  const currentProjectId = projectId.value
-  if (!currentProjectId) {
-    persistedSearchResults.value = []
-    return
-  }
-  const results = await searchApi.listPersistedResults(currentProjectId)
-  if (projectId.value === currentProjectId) {
-    persistedSearchResults.value = results
-  }
+  await requireGraphWorkspaceLoader().loadPersistedSearchResults()
 }
 
 async function loadProjectionStatus() {
-  const currentProjectId = projectId.value
-  if (!currentProjectId) {
-    projectionStatus.value = null
-    return
-  }
-  try {
-    const status = await graphApi.getOverlayProjectionStatus(currentProjectId)
-    if (projectId.value === currentProjectId) {
-      projectionStatus.value = status
-    }
-  } catch {
-    if (projectId.value === currentProjectId) {
-      projectionStatus.value = {
-        project_id: currentProjectId,
-        status: 'error',
-        ready: false,
-        in_sync: false,
-        reason: 'projection_status_unavailable',
-      }
-    }
-  }
+  await requireGraphWorkspaceLoader().loadProjectionStatus()
 }
 
 async function loadOverlayPreflight() {
-  const currentProjectId = projectId.value
-  if (!currentProjectId) {
-    overlayPreflight.value = null
-    return
-  }
-  try {
-    const preflight = await graphApi.getOverlayPreflight(currentProjectId)
-    if (projectId.value === currentProjectId) {
-      overlayPreflight.value = preflight
-    }
-  } catch {
-    if (projectId.value === currentProjectId) {
-      overlayPreflight.value = null
-    }
-  }
-}
-
-function applyGraphData(data: GraphData) {
-  const nextElements = data.elements ?? []
-
-  elements.value = nextElements
-  errorMessage.value = ''
-  lastRefreshError.value = ''
-  emptyReason.value = data.empty_reason
-  graphState.value = nextElements.length > 0 ? 'ready' : 'empty'
+  await requireGraphWorkspaceLoader().loadOverlayPreflight()
 }
 
 async function loadRequestedOverlaySession() {
-  const currentProjectId = projectId.value
-  const currentSessionId = requestedSessionId.value
-  if (!currentProjectId || !currentSessionId) {
-    return
-  }
-
-  try {
-    const session = await graphApi.getOverlayExtractionSession(
-      currentProjectId,
-      currentSessionId,
-    )
-    if (projectId.value !== currentProjectId || requestedSessionId.value !== currentSessionId) {
-      return
-    }
-    lastOverlaySession.value = session
-    overlayDrawerVisible.value = true
-  } catch (error: any) {
-    if (projectId.value !== currentProjectId || requestedSessionId.value !== currentSessionId) {
-      return
-    }
-    resetOverlayState()
-    overlayError.value = error?.response?.data?.error || '扩展抽取会话加载失败'
-  }
+  await requireGraphWorkspaceLoader().loadRequestedOverlaySession()
 }
 
 async function focusRequestedNode() {
@@ -1393,290 +1258,8 @@ async function focusRequestedNode() {
   }
 }
 
-type CompanionLoadOptions = {
-  includePersistedSearchResults?: boolean
-  includeRequestedOverlaySession?: boolean
-  includeGoalDraftEntry?: boolean
-}
-
-type GoalDraftEntryOptions = {
-  refreshPersistedSearchResults?: boolean
-}
-
-async function loadGraphWorkspace(options: CompanionLoadOptions = {}) {
-  const currentProjectId = projectId.value
-  const currentGraphQuery = graphQuery.value
-  const currentSessionId = options.includeRequestedOverlaySession ? requestedSessionId.value : null
-  const currentGoalDraftResolutionSessionId = options.includeGoalDraftEntry ? activeGoalDraftResolutionSessionId.value : null
-  const requestId = ++graphLoadRequestId
-
-  if (!currentProjectId) {
-    abortGraphLoad()
-    resetGraphState()
-    loading.value = false
-    return
-  }
-
-  const controller = createGraphLoadController()
-  const loadStartedAt = performanceNow()
-  const hasExistingGraph = elements.value.length > 0
-  if (!hasExistingGraph) {
-    graphState.value = 'loading'
-  }
-
-  if (currentGoalDraftResolutionSessionId) {
-    overlayDrawerVisible.value = true
-    overlayDraftMode.value = 'goal_draft'
-    overlayError.value = ''
-    overlayBridgeMessage.value = ''
-    overlayForm.value = createOverlayForm()
-    goalDraftProposalLoading.value = true
-  }
-
-  loading.value = true
-  errorMessage.value = ''
-
-  try {
-    const workspace: GraphWorkspaceData = await graphApi.getGraphWorkspace(currentProjectId, {
-      ...currentGraphQuery,
-      include_persisted_search_results: options.includePersistedSearchResults,
-      session_id: currentSessionId,
-      goal_draft_resolution_session_id: currentGoalDraftResolutionSessionId,
-    }, {
-      signal: controller.signal,
-      silent: true,
-    })
-    const requestDurationMs = Math.round(performanceNow() - loadStartedAt)
-    if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
-      logKnowledgePerformance('workspace_stale_response', {
-        project_id: currentProjectId,
-        scope: currentGraphQuery.scope,
-        path_id: currentGraphQuery.path_id,
-        duration_ms: requestDurationMs,
-      })
-      return
-    }
-
-    applyGraphData(workspace.graph)
-    projectionStatus.value = workspace.projection_status
-    overlayPreflight.value = workspace.overlay_preflight ?? null
-
-    if (options.includePersistedSearchResults) {
-      persistedSearchResults.value = workspace.persisted_search_results ?? []
-    }
-
-    if (currentSessionId) {
-      const overlaySessionError = workspaceErrorMessage(
-        workspace.overlay_session_error_detail,
-        workspace.overlay_session_error,
-      )
-      if (overlaySessionError) {
-        resetOverlayState()
-        overlayError.value = overlaySessionError
-      } else if (workspace.overlay_session) {
-        lastOverlaySession.value = workspace.overlay_session
-        overlayDrawerVisible.value = true
-      }
-    }
-
-    if (currentGoalDraftResolutionSessionId) {
-      goalDraftProposal.value = workspace.goal_draft_proposal ?? null
-      const goalDraftError = workspaceErrorMessage(
-        workspace.goal_draft_error_detail,
-        workspace.goal_draft_error,
-      )
-      if (goalDraftError) {
-        overlayError.value = goalDraftError
-      }
-    }
-
-    logKnowledgePerformance('workspace_loaded', {
-      project_id: currentProjectId,
-      scope: workspace.graph.scope,
-      path_id: workspace.graph.path_id ?? currentGraphQuery.path_id ?? null,
-      duration_ms: requestDurationMs,
-      elements: workspace.graph.elements?.length ?? 0,
-      optional_errors: [
-        workspace.overlay_preflight_error_detail?.code,
-        workspace.persisted_search_results_error_detail?.code,
-        workspace.overlay_session_error_detail?.code,
-        workspace.goal_draft_error_detail?.code,
-      ].filter(Boolean),
-    })
-    void refreshGraphCacheStats()
-  } catch (e: any) {
-    const durationMs = Math.round(performanceNow() - loadStartedAt)
-    if (isCanceledRequest(e)) {
-      logKnowledgePerformance('workspace_canceled', {
-        project_id: currentProjectId,
-        scope: currentGraphQuery.scope,
-        path_id: currentGraphQuery.path_id,
-        duration_ms: durationMs,
-      })
-      return
-    }
-    if (requestId !== graphLoadRequestId || projectId.value !== currentProjectId) {
-      return
-    }
-    const message = e?.response?.data?.error || e?.message || '知识图谱加载失败，请稍后重试'
-
-    logKnowledgePerformance('workspace_failed', {
-      project_id: currentProjectId,
-      scope: currentGraphQuery.scope,
-      path_id: currentGraphQuery.path_id,
-      duration_ms: durationMs,
-      message,
-    })
-    errorMessage.value = message
-    if (hasExistingGraph) {
-      lastRefreshError.value = message
-      graphState.value = 'ready'
-      ElMessage.error(message)
-    } else {
-      selectedNodeId.value = null
-      lastRefreshError.value = ''
-      emptyReason.value = undefined
-      graphState.value = 'error'
-    }
-  } finally {
-    clearGraphLoadController(controller)
-    if (requestId === graphLoadRequestId && projectId.value === currentProjectId) {
-      loading.value = false
-      if (currentGoalDraftResolutionSessionId) {
-        goalDraftProposalLoading.value = false
-      }
-    }
-  }
-
-  await focusRequestedNode()
-}
-
-function getElementGroup(data: GraphNodeData | GraphEdgeData): OverlayElementGroup {
-  return 'source' in data && 'target' in data ? 'edges' : 'nodes'
-}
-
-function normalizeOverlayReviewStatus(status: string): OverlayReviewStatus {
-  return status === 'rejected' ? 'rejected' : status as OverlayReviewStatus
-}
-
-function isMessageBoxCancel(error: unknown): boolean {
-  if (typeof error === 'string') {
-    return error === 'cancel' || error === 'close'
-  }
-  if (error && typeof error === 'object' && 'action' in error) {
-    const action = (error as { action?: unknown }).action
-    return action === 'cancel' || action === 'close'
-  }
-  return false
-}
-
-function overlayElementLabel(group: OverlayElementGroup): string {
-  return group === 'nodes' ? '节点' : '关系'
-}
-
-async function confirmOverlayReview(group: OverlayElementGroup, status: OverlayReviewStatus): Promise<boolean> {
-  if (status !== 'confirmed') {
-    return true
-  }
-
-  try {
-    await ElMessageBox.confirm(
-      `确认该扩展${overlayElementLabel(group)}有效后，它会进入“已确认候选”；是否参与增强图谱规划仍由规划开关控制。`,
-      '确认扩展候选有效',
-      {
-        type: 'warning',
-        confirmButtonText: '确认有效',
-        cancelButtonText: '取消',
-      },
-    )
-    return true
-  } catch (error) {
-    if (isMessageBoxCancel(error)) {
-      return false
-    }
-    throw error
-  }
-}
-
-async function confirmOverlayPlanning(data: GraphNodeData | GraphEdgeData, enabled: boolean): Promise<boolean> {
-  if (!enabled) {
-    return true
-  }
-
-  const label = data.label ? `「${data.label}」` : '该扩展候选'
-  try {
-    await ElMessageBox.confirm(
-      `${label}开启规划后会进入增强图谱预检和路径对比，但不会直接保存为正式学习路径。`,
-      '纳入增强图谱规划',
-      {
-        type: 'warning',
-        confirmButtonText: '纳入规划',
-        cancelButtonText: '取消',
-      },
-    )
-    return true
-  } catch (error) {
-    if (isMessageBoxCancel(error)) {
-      return false
-    }
-    throw error
-  }
-}
-
-function patchElementLifecycle(
-  elementId: string,
-  lifecycle: {
-    review_status?: string
-    planning_enabled?: boolean
-    validation_status?: string
-    promotion_status?: string
-  },
-) {
-  elements.value = elements.value.map((element) => {
-    if (element.data.id !== elementId) {
-      return element
-    }
-
-    return {
-      ...element,
-      data: {
-        ...element.data,
-        ...lifecycle,
-      },
-    } as GraphElement
-  })
-}
-
-function updateNodeReviewStatus(nodeId: string, status: ReviewStatus) {
-  elements.value = elements.value.map((element) => {
-    if (!isNodeElement(element) || element.data.id !== nodeId) {
-      return element
-    }
-
-    return {
-      ...element,
-      data: {
-        ...element.data,
-        review_status: status,
-      },
-    }
-  })
-}
-
-function updateEdgeReviewStatus(edgeId: string, status: ReviewStatus) {
-  elements.value = elements.value.map((element) => {
-    if (!isEdgeElement(element) || element.data.id !== edgeId) {
-      return element
-    }
-
-    return {
-      ...element,
-      data: {
-        ...element.data,
-        review_status: status,
-      },
-    }
-  })
+async function loadGraphWorkspace(options: GraphWorkspaceLoadOptions = {}) {
+  await requireGraphWorkspaceLoader().loadGraphWorkspace(options)
 }
 
 watch(
@@ -1797,216 +1380,6 @@ async function onSync() {
   }
 }
 
-async function onReviewNode(nodeId: string, status: string) {
-  if (!projectId.value) return
-  const node = nodes.value.find((item) => item.id === nodeId)
-  try {
-    if (node?.origin === 'overlay') {
-      const nextStatus = normalizeOverlayReviewStatus(status)
-      if (!(await confirmOverlayReview('nodes', nextStatus))) {
-        return
-      }
-      const result = await graphApi.reviewOverlayElement(
-        projectId.value,
-        'nodes',
-        nodeId,
-        nextStatus,
-      )
-      selectedNodeId.value = nodeId
-      patchElementLifecycle(nodeId, result)
-      graphRef.value?.setNodeReviewStatus(nodeId, result.review_status)
-      await loadOverlayPreflight()
-    } else {
-      const nextStatus = status as ReviewStatus
-      await graphApi.reviewNode(projectId.value, nodeId, nextStatus)
-      selectedNodeId.value = nodeId
-      updateNodeReviewStatus(nodeId, nextStatus)
-      graphRef.value?.setNodeReviewStatus(nodeId, nextStatus)
-    }
-    ElMessage.success('节点审核状态已更新')
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '节点审核失败')
-  }
-}
-
-async function onReviewEdge(edgeId: string, status: string) {
-  if (!projectId.value) return
-  const edge = edges.value.find((item) => item.id === edgeId)
-  try {
-    if (edge?.origin === 'overlay') {
-      const nextStatus = normalizeOverlayReviewStatus(status)
-      if (!(await confirmOverlayReview('edges', nextStatus))) {
-        return
-      }
-      const result = await graphApi.reviewOverlayElement(
-        projectId.value,
-        'edges',
-        edgeId,
-        nextStatus,
-      )
-      patchElementLifecycle(edgeId, result)
-      graphRef.value?.setEdgeReviewStatus(edgeId, result.review_status)
-      await loadOverlayPreflight()
-    } else {
-      const nextStatus = status as ReviewStatus
-      await graphApi.reviewEdge(projectId.value, edgeId, nextStatus)
-      updateEdgeReviewStatus(edgeId, nextStatus)
-      graphRef.value?.setEdgeReviewStatus(edgeId, nextStatus)
-    }
-    ElMessage.success('边审核状态已更新')
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '边审核失败')
-  }
-}
-
-async function onSetOverlayPlanning(data: GraphNodeData | GraphEdgeData, enabled: boolean) {
-  if (!projectId.value || data.origin !== 'overlay') return
-  try {
-    if (!(await confirmOverlayPlanning(data, enabled))) {
-      return
-    }
-    const result = await graphApi.setOverlayPlanning(
-      projectId.value,
-      getElementGroup(data),
-      data.id,
-      enabled,
-    )
-    patchElementLifecycle(data.id, result)
-    await loadOverlayPreflight()
-    ElMessage.success(enabled ? '已允许参与规划' : '已从规划中排除')
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '规划开关更新失败')
-  }
-}
-
-async function openOverlayDrawer() {
-  overlayDrawerVisible.value = true
-  overlayDraftMode.value = activeGoalDraftResolutionSessionId.value ? overlayDraftMode.value : 'manual'
-  overlayError.value = ''
-  overlayBridgeMessage.value = ''
-  await loadPersistedSearchResults()
-}
-
-async function prepareGoalDraftFromCurrentProject() {
-  if (!projectId.value || !projectStore.currentProject?.goal_text) return
-  manualGoalDraftLoading.value = true
-  overlayError.value = ''
-  goalDraftProposalDismissed.value = false
-  try {
-    const preview = await projectApi.previewForProject(projectId.value, {
-      goal_text: projectStore.currentProject.goal_text,
-      requested_goal_type: normalizePreviewGoalType(projectStore.currentProject.goal_type),
-      domain: projectStore.currentProject.domain,
-    })
-    if (!isReviewExtensionDraftResponse(preview) || !preview.session_id || !preview.draft_proposal) {
-      overlayDraftMode.value = 'manual'
-      overlayError.value = '当前目标已被现有图谱覆盖，暂不需要生成自动扩展草稿。'
-      return
-    }
-    manualGoalDraftResolutionSessionId.value = preview.session_id
-    goalDraftProposal.value = {
-      resolution_session_id: preview.session_id,
-      project_id: projectId.value,
-      session_status: 'draft_previewed',
-      expires_at: preview.expires_at || undefined,
-      draft_proposal: preview.draft_proposal,
-    }
-    overlayDraftMode.value = 'goal_draft'
-    overlayDrawerVisible.value = true
-  } catch (error: any) {
-    overlayError.value = getOverlayErrorMessage(error)
-  } finally {
-    manualGoalDraftLoading.value = false
-  }
-}
-
-async function openGoalDraftEntry({ refreshPersistedSearchResults = true }: GoalDraftEntryOptions = {}) {
-  if (!activeGoalDraftResolutionSessionId.value) return
-  overlayDrawerVisible.value = true
-  overlayDraftMode.value = 'goal_draft'
-  overlayError.value = ''
-  overlayBridgeMessage.value = ''
-  overlayForm.value = createOverlayForm()
-  if (refreshPersistedSearchResults) {
-    await loadPersistedSearchResults()
-  }
-  await loadGoalDraftProposal()
-}
-
-async function loadGoalDraftProposal() {
-  const currentProjectId = projectId.value
-  const currentResolutionSessionId = activeGoalDraftResolutionSessionId.value
-  if (!currentProjectId || !currentResolutionSessionId) return
-  goalDraftProposalLoading.value = true
-  try {
-    const proposal = await graphApi.getGoalExtensionDraftProposal(
-      currentProjectId,
-      currentResolutionSessionId,
-    )
-    if (projectId.value === currentProjectId && activeGoalDraftResolutionSessionId.value === currentResolutionSessionId) {
-      goalDraftProposal.value = proposal
-    }
-  } catch (error: any) {
-    if (projectId.value === currentProjectId && activeGoalDraftResolutionSessionId.value === currentResolutionSessionId) {
-      overlayError.value = getOverlayErrorMessage(error)
-    }
-  } finally {
-    if (projectId.value === currentProjectId && activeGoalDraftResolutionSessionId.value === currentResolutionSessionId) {
-      goalDraftProposalLoading.value = false
-    }
-  }
-}
-
-function dismissGoalDraftProposal() {
-  goalDraftProposalDismissed.value = true
-  overlayDraftMode.value = 'manual'
-}
-
-function selectAllPreviewCandidates(payload: PreviewPayload) {
-  selectedPreviewCandidates.value = {
-    nodes: payload.nodes.map((_, index) => index),
-    edges: payload.edges.map((_, index) => index),
-    resources: payload.resources.map((_, index) => index),
-  }
-}
-
-function togglePreviewCandidate(group: OverlayPreviewGroup, index: number, checked: boolean) {
-  const current = new Set(selectedPreviewCandidates.value[group])
-  if (checked) {
-    current.add(index)
-  } else {
-    current.delete(index)
-  }
-  selectedPreviewCandidates.value = {
-    ...selectedPreviewCandidates.value,
-    [group]: [...current].sort((a, b) => a - b),
-  }
-}
-
-function isPreviewCandidateSelected(group: OverlayPreviewGroup, index: number) {
-  return selectedPreviewCandidates.value[group].includes(index)
-}
-
-function filteredPreviewPayload(preview: OverlayExtractionPayloadPreviewResponse) {
-  const payload = normalizePreviewPayload(preview.extraction_payload)
-  return {
-    nodes: payload.nodes.filter((_, index) => selectedPreviewCandidates.value.nodes.includes(index)),
-    edges: payload.edges.filter((_, index) => selectedPreviewCandidates.value.edges.includes(index)),
-    resources: payload.resources.filter((_, index) => selectedPreviewCandidates.value.resources.includes(index)),
-    warnings: payload.warnings,
-  }
-}
-
-function candidateTitle(candidate: Record<string, any>, fallback: string) {
-  return candidate.name || candidate.title || candidate.relation_type || fallback
-}
-
-function edgeCandidateSummary(candidate: Record<string, any>) {
-  const source = candidate.source_name_or_id || candidate.source_node_id || '未知来源'
-  const target = candidate.target_name_or_id || candidate.target_node_id || '未知目标'
-  return `${source} → ${target}`
-}
-
 function openOverlayRepairTarget(target: OverlayRepairTarget) {
   if (target.kind === 'node') {
     openNodeCandidateEditor(target.candidate)
@@ -2022,231 +1395,12 @@ function openFirstRepairableCandidate() {
   if (target) openOverlayRepairTarget(target)
 }
 
-function buildOverlaySourcePayload(): OverlaySourceRequest | null {
-  const form = overlayForm.value
-  if (form.sourceType === 'pasted_text') {
-    const rawText = form.rawText.trim()
-    if (!rawText) {
-      overlayError.value = '请先粘贴资料文本'
-      return null
-    }
-    return {
-      source_type: 'pasted_text',
-      raw_text: rawText,
-      raw_text_excerpt: rawText.slice(0, 12000),
-      summary: form.summary.trim() || null,
-    }
-  }
-
-  if (form.sourceType === 'search_url') {
-    const url = form.url.trim()
-    if (!url) {
-      overlayError.value = '请填写搜索结果 URL'
-      return null
-    }
-
-    return {
-      source_type: 'search_url',
-      url,
-      title: form.title.trim() || url,
-      snippet: form.snippet.trim() || null,
-      summary: form.summary.trim() || null,
-      provider: 'manual',
-    }
-  }
-
-  return null
-}
-
-async function resolveOverlaySourceIds() {
-  const form = overlayForm.value
-  if (form.sourceType === 'saved_search') {
-    if (!projectId.value || !form.selectedResultIds.length) {
-      overlayError.value = '请选择已保存搜索结果'
-      return null
-    }
-    const bridged = await searchApi.bridgeOverlaySources(projectId.value, form.selectedResultIds)
-    overlayBridgeMessage.value = `已解析 ${bridged.source_ids.length} 个项目扩展来源，${bridged.results.filter((item) => item.reused).length} 个复用。`
-    return bridged.source_ids
-  }
-
-  const sourcePayload = buildOverlaySourcePayload()
-  if (!sourcePayload || !projectId.value) return null
-  const source = await graphApi.createOverlaySource(projectId.value, sourcePayload)
-  return [source.source_id]
-}
-
 function getOverlayErrorMessage(error: any) {
   const code = error?.response?.data?.error
   if (code === SEARCH_NOT_READY) {
     return '搜索服务尚未就绪，自定义扩展暂不可用；领域基线图谱浏览不受影响。'
   }
   return formatServiceReason(code) || code || error?.message || '扩展草稿创建失败'
-}
-
-async function previewOverlayExtractionPayload() {
-  if (!projectId.value || !manualOverlayMode.value) return null
-
-  overlayExtractionPreviewLoading.value = true
-  overlayError.value = ''
-  overlayBridgeMessage.value = ''
-
-  try {
-    const sourceIds = await resolveOverlaySourceIds()
-    if (!sourceIds) return null
-    const preview = await graphApi.previewOverlayExtractionPayload(projectId.value, {
-      source_ids: sourceIds,
-      mode: overlayForm.value.mode,
-    })
-    overlayExtractionPreview.value = preview
-    selectAllPreviewCandidates(normalizePreviewPayload(preview.extraction_payload))
-    ElMessage.success('AI 抽取预览已生成，创建草稿时仍会经过校验。')
-    return preview
-  } catch (error: any) {
-    overlayError.value = getOverlayErrorMessage(error)
-    return null
-  } finally {
-    overlayExtractionPreviewLoading.value = false
-  }
-}
-
-async function validateSelectedOverlayPayload(preview: OverlayExtractionPayloadPreviewResponse) {
-  if (!projectId.value) return null
-  const extractionPayload = filteredPreviewPayload(preview)
-  const validation = await graphApi.validateOverlayExtractionPayload(projectId.value, {
-    source_ids: preview.source_ids,
-    mode: overlayForm.value.mode,
-    extraction_payload: extractionPayload,
-  })
-  overlayCandidateValidation.value = validation
-  if (validation.summary.has_blocking_errors) {
-    await ElMessageBox.confirm(
-      `预校验发现 ${validation.summary.invalid_count} 个校验失败候选。仍可创建草稿并在下方“编辑修复”，是否继续？`,
-      '候选需要修复',
-      {
-        type: 'warning',
-        confirmButtonText: '继续创建草稿',
-        cancelButtonText: '返回调整',
-      },
-    )
-  }
-  return extractionPayload
-}
-
-async function bindOverlayResource() {
-  if (!projectId.value || !resourceBinding.value.resourceId || !resourceBinding.value.targetId.trim()) {
-    overlayError.value = '请选择资源和绑定目标'
-    return
-  }
-  try {
-    await resourceApi.bindProjectResource(projectId.value, {
-      resource_id: resourceBinding.value.resourceId,
-      target_type: resourceBinding.value.targetType as 'project_node' | 'path_stage',
-      target_id: resourceBinding.value.targetId.trim(),
-      binding_source: 'overlay',
-    })
-    if (lastOverlaySession.value) {
-      lastOverlaySession.value = await graphApi.getOverlayExtractionSession(projectId.value, lastOverlaySession.value.session.session_id)
-    }
-    await loadProjectionStatus()
-    ElMessage.success('资源绑定已保存')
-  } catch (error: any) {
-    overlayError.value = error?.response?.data?.error || '资源绑定失败'
-  }
-}
-
-async function previewPromotion() {
-  if (!projectId.value) return
-  promotionLoading.value = true
-  promotionResult.value = null
-  try {
-    promotionPreview.value = await graphApi.previewOverlayPromotion(projectId.value)
-  } catch (error: any) {
-    overlayError.value = formatServiceReason(error?.response?.data?.error) || '推广预览失败'
-  } finally {
-    promotionLoading.value = false
-  }
-}
-
-async function commitPromotion() {
-  const currentProjectId = projectId.value
-  if (!currentProjectId) return
-  if (!promotionSecret.value.trim()) {
-    overlayError.value = '请输入 admin secret'
-    return
-  }
-  promotionLoading.value = true
-  try {
-    promotionResult.value = await graphApi.commitOverlayPromotion(currentProjectId, {
-      admin_secret: promotionSecret.value,
-      requested_by: 'frontend',
-    })
-    promotionSecret.value = ''
-    const sessionId = lastOverlaySession.value?.session.session_id
-    await Promise.all([
-      loadGraphWorkspace(),
-      sessionId
-        ? graphApi.getOverlayExtractionSession(currentProjectId, sessionId).then((session) => {
-          if (projectId.value === currentProjectId) {
-            lastOverlaySession.value = session
-          }
-        })
-        : Promise.resolve(),
-    ])
-  } catch (error: any) {
-    const code = error?.response?.data?.error
-    overlayError.value = formatServiceReason(code) || '确认推广失败'
-    promotionResult.value = error?.response?.data?.details?.preview || error?.response?.data?.details || null
-  } finally {
-    promotionLoading.value = false
-  }
-}
-
-async function submitOverlayDraft() {
-  if (!projectId.value) return
-
-  overlaySubmitting.value = true
-  overlayError.value = ''
-  overlayBridgeMessage.value = ''
-
-  try {
-    if (activeGoalDraftResolutionSessionId.value && overlayDraftMode.value === 'goal_draft') {
-      lastOverlaySession.value = await graphApi.createGoalExtensionDraft(
-        projectId.value,
-        activeGoalDraftResolutionSessionId.value,
-      ) as GoalExtensionDraftResponse
-    } else {
-      const preview = overlayExtractionPreview.value || await previewOverlayExtractionPayload()
-      if (!preview) return
-      const extractionPayload = await validateSelectedOverlayPayload(preview)
-      if (!extractionPayload) return
-      lastOverlaySession.value = await graphApi.createOverlayExtractionSession(projectId.value, {
-        source_ids: preview.source_ids,
-        mode: overlayForm.value.mode,
-        extraction_payload: extractionPayload,
-        session_provenance: {
-          ...preview.provenance,
-          selected_counts: selectedPreviewCounts.value,
-          filtered_by_user: true,
-          pre_validation_summary: overlayCandidateValidation.value?.summary,
-        },
-      })
-    }
-    overlayForm.value = createOverlayForm()
-    overlayExtractionPreview.value = null
-    overlayCandidateValidation.value = null
-    selectedPreviewCandidates.value = { nodes: [], edges: [], resources: [] }
-    goalDraftProposalDismissed.value = Boolean(activeGoalDraftResolutionSessionId.value)
-    ElMessage.success('扩展草稿已创建，请在项目图谱中审核候选节点和关系')
-    scope.value = 'project'
-    await replaceGraphRoute('project', null, lastOverlaySession.value.session.session_id)
-    await loadGraphWorkspace()
-  } catch (error: any) {
-    if (isMessageBoxCancel(error)) return
-    overlayError.value = getOverlayErrorMessage(error)
-  } finally {
-    overlaySubmitting.value = false
-  }
 }
 
 async function onShowEntities() {

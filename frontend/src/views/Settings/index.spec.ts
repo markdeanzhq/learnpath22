@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsIndex from './index.vue'
 
@@ -60,7 +60,7 @@ vi.mock('element-plus/es/components/message/index', () => ({
 }))
 
 function mountSettings() {
-  return shallowMount(SettingsIndex, {
+  return mount(SettingsIndex, {
     global: {
       stubs: {
         ElCard: { template: '<section><slot name="header" /><slot /></section>' },

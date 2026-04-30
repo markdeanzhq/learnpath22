@@ -107,22 +107,7 @@
             <div class="readiness-note">
               本地图谱浏览与路径规划主链优先依赖 SQLite 和本地 Domain Pack；Neo4j 投影用于显式同步、投影诊断和推广流程，LLM 与资料搜索属于在线增强能力。
             </div>
-            <div class="readiness-capabilities">
-              <article
-                v-for="card in readinessCapabilityCards"
-                :key="card.key"
-                class="readiness-capability-card"
-              >
-                <div class="readiness-capability-header">
-                  <strong>{{ card.title }}</strong>
-                  <el-tag size="small" :type="serviceTagType(card.service.status)">
-                    {{ serviceStatusText(card.key, card.service) }}
-                  </el-tag>
-                </div>
-                <p>{{ card.description }}</p>
-                <span>{{ serviceReasonText(card.key, card.service) }}</span>
-              </article>
-            </div>
+            <ReadinessCapabilityCards :readiness="readiness" />
             <div class="readiness-row" v-for="(service, key) in readiness.services" :key="key">
               <span class="readiness-label">{{ serviceLabel(String(key)) }}</span>
               <el-tag size="small" :type="serviceTagType(service.status)">
@@ -153,6 +138,7 @@ import { healthApi, type ReadinessResponse, type ReadinessServiceStatus } from '
 import { graphApi } from '@/api/modules/graph'
 import { useSettingsStore } from '@/stores/settings'
 import { formatServiceReason } from '@/utils/displayLabels'
+import ReadinessCapabilityCards from './components/ReadinessCapabilityCards.vue'
 
 const settingsStore = useSettingsStore()
 const createEmptyForm = () => ({
@@ -194,31 +180,6 @@ const canRepairGraphSync = computed(() => {
   const graphSync = readiness.value?.services.graph_sync
   return graphSync?.reason === 'seed_metadata_stale' || graphSync?.status === 'stale'
 })
-const readinessCapabilityCards = computed(() => {
-  if (!readiness.value) return []
-  const capabilities = readiness.value.capabilities
-  return [
-    {
-      key: 'local_graph_read',
-      title: '本地主链',
-      description: '项目创建、图谱浏览与路径规划优先走 SQLite 本地读模型和 Domain Pack。',
-      service: capabilities.local_graph_read,
-    },
-    {
-      key: 'neo4j_projection',
-      title: 'Neo4j 投影',
-      description: '仅用于显式同步、投影诊断和推广流程，不阻塞本地主链演示。',
-      service: capabilities.neo4j_projection,
-    },
-    {
-      key: 'online_enhancement',
-      title: '在线增强',
-      description: 'LLM 润色、抽取预览和资料搜索能力，可按网络与密钥情况选择启用。',
-      service: capabilities.online_enhancement,
-    },
-  ]
-})
-
 onMounted(async () => {
   Object.assign(form.value, settingsStore.hydrateFromLocal())
 
@@ -400,34 +361,6 @@ function serviceDetail(key: string, service: ReadinessServiceStatus) {
   margin-bottom: 8px;
   color: #606266;
   line-height: 1.6;
-}
-.readiness-capabilities {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-  margin: 10px 0;
-}
-.readiness-capability-card {
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  padding: 10px;
-  background: #fafafa;
-}
-.readiness-capability-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 6px;
-}
-.readiness-capability-card p {
-  margin: 0 0 6px;
-  color: #606266;
-  line-height: 1.5;
-}
-.readiness-capability-card span {
-  color: #909399;
-  font-size: 12px;
 }
 .readiness-row {
   display: flex;
