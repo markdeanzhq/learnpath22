@@ -439,10 +439,6 @@ function handleUnsafeError(error: any) {
 
 function applyPreview(preview: GoalResolutionPreviewResponse) {
   operationErrorMessage.value = ''
-  if (preview.goal_frame?.raw_text && preview.goal_frame.raw_text !== normalizedGoalText.value) {
-    form.goal_text = preview.goal_frame.raw_text
-  }
-
   previewState.value = preview
   unsafeStateMessage.value = ''
   acceptPartial.value = false
@@ -541,6 +537,7 @@ async function handleClarificationAnswer() {
     if (response.status === 'active' && isClarificationResponse(previewState.value)) {
       previewState.value = {
         ...previewState.value,
+        goal_frame: response.goal_frame || previewState.value.goal_frame,
         expires_at: response.expires_at,
         turn_count: response.turn_count,
         max_turns: response.max_turns,

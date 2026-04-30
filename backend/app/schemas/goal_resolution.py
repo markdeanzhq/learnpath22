@@ -224,7 +224,7 @@ class AnswerClarificationCoverageResponse(CoverageResponseBase):
     clarification_session_id: str
     expires_at: datetime
     turn_count: int = 0
-    max_turns: int = 3
+    max_turns: int = 5
     questions: list[ClarificationQuestion]
 
 

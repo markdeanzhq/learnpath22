@@ -16,6 +16,12 @@ from app.services.saved_search_overlay_bridge_service import ensure_overlay_sour
 from app.services.search_service import search
 
 DEFAULT_SEARCH_PROVIDER = "tavily"
+RECOVERABLE_EXTRACTION_ERRORS = {
+    "LLM_EXTRACTION_FAILED",
+    "LLM_NOT_READY",
+    "INVALID_LLM_EXTRACTION_JSON",
+    "AUTO_DRAFT_EMPTY_EXTRACTION",
+}
 
 
 def _normalize_query(query: str | None, fallback_goal_text: str | None) -> str:
@@ -48,6 +54,25 @@ def _normalize_search_result(result: dict[str, Any], *, index: int, query: str) 
         "result_rank": index + 1,
         "is_selected": True,
         "metadata_json": json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+    }
+
+
+def _empty_extraction_preview(*, source_ids: list[str], mode: str, warning: str) -> dict[str, Any]:
+    payload = {"nodes": [], "edges": [], "resources": [], "warnings": [warning]}
+    return {
+        "source_ids": source_ids,
+        "mode": mode,
+        "extraction_payload": payload,
+        "warnings": payload["warnings"],
+        "counts": {"nodes": 0, "edges": 0, "resources": 0},
+        "provenance": {
+            "schema_version": "v1",
+            "draft_origin": "auto_overlay_draft",
+            "draft_engine": "search_sources_only",
+            "extraction_error": warning,
+            "writes_formal_graph": False,
+            "writes_formal_path": False,
+        },
     }
 
 
@@ -89,18 +114,34 @@ async def create_project_overlay_auto_draft(
         result_ids=[result.result_id for result in persisted_results],
     )
     source_ids = [item["source_id"] for item in bridged]
-    preview = await preview_overlay_extraction_payload_from_sources(
-        db,
-        project_id=project_id,
-        source_ids=source_ids,
-        mode=mode,
-        domain=domain,
-    )
-    preview_counts = preview.get("counts") or {}
-    extracted_count = sum(int(preview_counts.get(key) or 0) for key in ("nodes", "edges", "resources"))
-    if extracted_count <= 0:
-        raise AppError(code=422, message="AUTO_DRAFT_EMPTY_EXTRACTION")
+    extraction_status = "extracted"
+    extraction_error: str | None = None
+    try:
+        preview = await preview_overlay_extraction_payload_from_sources(
+            db,
+            project_id=project_id,
+            source_ids=source_ids,
+            mode=mode,
+            domain=domain,
+        )
+        preview_counts = preview.get("counts") or {}
+        extracted_count = sum(int(preview_counts.get(key) or 0) for key in ("nodes", "edges", "resources"))
+        if extracted_count <= 0:
+            extraction_status = "empty_extraction"
+            extraction_error = "AUTO_DRAFT_EMPTY_EXTRACTION"
+            preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=extraction_error)
+    except AppError as exc:
+        if exc.message not in RECOVERABLE_EXTRACTION_ERRORS:
+            raise
+        extraction_status = "extraction_failed"
+        extraction_error = exc.message
+        preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=exc.message)
+    except ValueError as exc:
+        extraction_status = "extraction_failed"
+        extraction_error = str(exc) or "INVALID_LLM_EXTRACTION_JSON"
+        preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=extraction_error)
 
+    preview_counts = preview.get("counts") or {}
     validation = await validate_extraction_payload_for_sources(
         db,
         project_id=project_id,
@@ -119,12 +160,14 @@ async def create_project_overlay_auto_draft(
         session_provenance={
             **preview.get("provenance", {}),
             "draft_origin": "auto_overlay_draft",
-            "draft_engine": "search_llm",
+            "draft_engine": "search_llm" if extraction_status == "extracted" else "search_sources_only",
             "query": effective_query,
             "selected_result_ids": [result.result_id for result in persisted_results],
             "source_ids": source_ids,
             "preview_counts": preview_counts,
             "pre_validation_summary": validation.get("summary"),
+            "extraction_status": extraction_status,
+            "extraction_error": extraction_error,
             "writes_formal_graph": False,
             "writes_formal_path": False,
         },
@@ -138,4 +181,6 @@ async def create_project_overlay_auto_draft(
         "persisted_results": persisted_results,
         "bridged_results": bridged,
         "source_ids": source_ids,
+        "extraction_status": extraction_status,
+        "extraction_error": extraction_error,
     }

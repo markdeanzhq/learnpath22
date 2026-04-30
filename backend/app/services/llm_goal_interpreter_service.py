@@ -160,10 +160,15 @@ def _build_messages(goal_text: str, requested_goal_type: str | None, domain: str
         {
             "role": "system",
             "content": (
-                "你是 LearnPath-KG 的目标解析器。当前系统只支持机器学习基础学习路径规划。"
-                "判断用户目标是否属于机器学习基础、跨领域机器学习应用、领域外目标或信息不足。"
-                "只输出 JSON 对象，不要输出 Markdown。不要生成学习路径，不要编造知识图谱节点 ID。"
-                "字段必须包含 schema_version, domain_decision, primary_domain, ml_relevance, goal_type, "
+                "你是 LearnPath-KG 的目标解析器，不是学习顾问或聊天助手。当前系统只支持机器学习基础学习路径规划。"
+                "你的任务只是在机器学习基础图谱边界内做结构化判定，不要生成学习路径，不要回答泛泛建议，不要编造知识图谱节点 ID。"
+                "若目标明确属于机器学习基础概念、基础算法、基础问题，domain_decision=in_domain。"
+                "若目标是医学、金融、前端等外部领域中的机器学习应用，domain_decision=cross_domain 且 ml_relevance=application。"
+                "若目标主要是深度学习、大模型或当前基础图谱之外但仍相关的主题，domain_decision=in_domain 且 ml_relevance=application，并给出一个最小澄清问题。"
+                "若目标与机器学习无关，domain_decision=out_of_domain。若信息太少才使用 ambiguous。"
+                "clarification_question 只能在确实需要用户确认边界时出现，且必须只问一个问题。"
+                "confidence 必须反映可映射把握：明确基础目标>=0.8，跨领域应用0.45-0.75，信息不足<0.45。"
+                "只输出 JSON 对象，不要输出 Markdown。字段必须包含 schema_version, domain_decision, primary_domain, ml_relevance, goal_type, "
                 "target_concepts, constraints, preferences, uncertainties, clarification_question, confidence, evidence。"
                 "domain_decision 只能是 in_domain/cross_domain/out_of_domain/ambiguous。"
                 "ml_relevance 只能是 core/prerequisite/application/none/unclear。"
@@ -178,6 +183,14 @@ def _build_messages(goal_text: str, requested_goal_type: str | None, domain: str
                     "requested_goal_type": requested_goal_type,
                     "supported_domain": domain,
                     "supported_scope": "机器学习基础单领域原型",
+                    "classification_examples": [
+                        {"goal_text": "我想系统学习机器学习基础", "domain_decision": "in_domain", "ml_relevance": "core", "confidence": 0.9},
+                        {"goal_text": "理解逻辑回归为什么能分类", "domain_decision": "in_domain", "ml_relevance": "core", "confidence": 0.88},
+                        {"goal_text": "我想学 AI", "domain_decision": "ambiguous", "ml_relevance": "unclear", "confidence": 0.35},
+                        {"goal_text": "我想用机器学习做医学预测", "domain_decision": "cross_domain", "ml_relevance": "application", "confidence": 0.62},
+                        {"goal_text": "我想学随机森林", "domain_decision": "in_domain", "ml_relevance": "application", "confidence": 0.7},
+                        {"goal_text": "我想学 Vue", "domain_decision": "out_of_domain", "ml_relevance": "none", "confidence": 0.86},
+                    ],
                 },
                 ensure_ascii=False,
             ),

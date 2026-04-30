@@ -348,6 +348,8 @@ export interface CreateOverlayAutoDraftRequest {
   mode?: 'default' | 'custom_extension'
 }
 
+export type OverlayAutoDraftExtractionStatus = 'extracted' | 'empty_extraction' | 'extraction_failed'
+
 export interface OverlayAutoDraftMetadata {
   query: string
   search_result_count: number
@@ -362,6 +364,8 @@ export interface OverlayAutoDraftMetadata {
     [key: string]: unknown
   }
   validation_summary: Record<string, unknown>
+  extraction_status?: OverlayAutoDraftExtractionStatus
+  extraction_error?: string | null
 }
 
 export interface OverlayAutoDraftResponse extends OverlayExtractionSessionResponse {

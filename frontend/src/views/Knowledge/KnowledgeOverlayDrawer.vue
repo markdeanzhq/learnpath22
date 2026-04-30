@@ -81,11 +81,11 @@
       </section>
 
       <section v-if="manualOverlayMode" class="overlay-subsection overlay-search-card">
-        <h4>自动搜索资料并加入草稿</h4>
-        <p>输入具体概念或问题，系统会搜索资料并保存为项目扩展来源；加入后可直接生成候选预览。</p>
+        <h4>按扩展主题自动搜索资料</h4>
+        <p>输入现有图谱之外想补充的概念或问题，系统会保存资料并尝试抽取项目级扩展候选。</p>
         <div class="auto-draft-action-row">
-          <el-button type="primary" :loading="overlayAutoDraftLoading" @click="emit('create-auto-draft')">一键自动生成草稿</el-button>
-          <span>自动搜索、保存资料、尝试安全抓取正文并创建待审核草稿；不会直接写入正式图谱或路径。</span>
+          <el-button type="primary" :loading="overlayAutoDraftLoading" @click="emit('create-auto-draft')">搜索资料并生成草稿</el-button>
+          <span>资料保存与 AI 抽取分开处理；即使抽取失败，已保存资料仍可用于重试或手动补充。</span>
         </div>
         <div class="overlay-search-row">
           <el-input

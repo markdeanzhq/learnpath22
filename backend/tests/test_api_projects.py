@@ -275,6 +275,37 @@ async def test_get_project_not_found(client):
     assert resp.status_code == 404
 
 
+async def test_get_project_workflow_state_recommends_profile_collection(client, project):
+    resp = await client.get(f"/api/v1/projects/{project['id']}/workflow-state")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project_id"] == project["id"]
+    assert data["goal"]["confirmed"] is True
+    assert data["profile"]["completed"] is False
+    assert data["path"]["exists"] is False
+    assert data["recommended_next_action"]["action"] == "complete_profile"
+    assert [step["key"] for step in data["steps"]] == ["goal", "profile", "overlay", "path", "tracking"]
+
+
+async def test_get_project_workflow_state_links_generated_path(client, project, plan):
+    resp = await client.get(f"/api/v1/projects/{project['id']}/workflow-state")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["profile"]["completed"] is True
+    assert data["path"]["exists"] is True
+    assert data["path"]["version"] == 1
+    assert data["tracking"]["available"] is True
+    assert data["recommended_next_action"]["action"] in {"start_tracking", "view_path"}
+
+
+async def test_get_project_workflow_state_not_found(client):
+    resp = await client.get("/api/v1/projects/nonexistent-id/workflow-state")
+
+    assert resp.status_code == 404
+
+
 async def test_list_projects_empty(client):
     resp = await client.get("/api/v1/projects")
     assert resp.status_code == 200

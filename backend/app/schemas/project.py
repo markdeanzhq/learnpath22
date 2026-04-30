@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -66,6 +66,36 @@ class ProjectResponse(BaseModel):
         return validate_path_mode(value)
 
     model_config = {"from_attributes": True}
+
+
+class ProjectWorkflowAction(BaseModel):
+    action: str
+    label: str
+    description: str
+    route: str
+    enabled: bool = True
+
+
+class ProjectWorkflowStep(BaseModel):
+    key: str
+    label: str
+    status: Literal["pending", "active", "completed", "blocked", "warning"]
+    summary: str
+    action: ProjectWorkflowAction | None = None
+
+
+class ProjectWorkflowStateResponse(BaseModel):
+    project_id: str
+    project_status: str
+    updated_at: datetime
+    current_stage: str
+    recommended_next_action: ProjectWorkflowAction
+    steps: list[ProjectWorkflowStep]
+    goal: dict[str, Any]
+    profile: dict[str, Any]
+    overlay: dict[str, Any]
+    path: dict[str, Any]
+    tracking: dict[str, Any]
 
 
 class DeleteProjectResponse(BaseModel):

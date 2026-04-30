@@ -1,4 +1,4 @@
-import request from '../request'
+import request, { type RequestConfig } from '../request'
 
 export type GoalType = 'domain' | 'concept' | 'problem'
 export type GoalTypeSelection = 'auto' | GoalType
@@ -285,6 +285,38 @@ export interface ProjectGoalResolutionSummary {
   missing_concepts: string[]
 }
 
+export type ProjectWorkflowStepStatus = 'pending' | 'active' | 'completed' | 'blocked' | 'warning'
+
+export interface ProjectWorkflowAction {
+  action: string
+  label: string
+  description: string
+  route: string
+  enabled: boolean
+}
+
+export interface ProjectWorkflowStep {
+  key: string
+  label: string
+  status: ProjectWorkflowStepStatus
+  summary: string
+  action?: ProjectWorkflowAction | null
+}
+
+export interface ProjectWorkflowState {
+  project_id: string
+  project_status: string
+  updated_at: string
+  current_stage: string
+  recommended_next_action: ProjectWorkflowAction
+  steps: ProjectWorkflowStep[]
+  goal: Record<string, unknown>
+  profile: Record<string, unknown>
+  overlay: Record<string, unknown>
+  path: Record<string, unknown>
+  tracking: Record<string, unknown>
+}
+
 export interface Project {
   id: string
   title: string
@@ -310,6 +342,8 @@ export const projectApi = {
     request.post(`/projects/${projectId}/goal-resolution/clarifications/${sessionId}/answers`, data),
   confirmGoalResolution: (projectId: string, data: UpdateProjectGoalResolutionDto): Promise<Project> =>
     request.put(`/projects/${projectId}/goal-resolution`, data),
+  getWorkflowState: (id: string): Promise<ProjectWorkflowState> =>
+    request.get(`/projects/${id}/workflow-state`, { silent: true } as RequestConfig),
   get: (id: string): Promise<Project> => request.get(`/projects/${id}`),
   list: (): Promise<Project[]> => request.get('/projects'),
   delete: (id: string): Promise<void> => request.delete(`/projects/${id}`),

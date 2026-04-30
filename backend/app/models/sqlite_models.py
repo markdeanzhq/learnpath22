@@ -489,7 +489,7 @@ class ClarificationSession(Base):
     project_graph_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
     turn_count: Mapped[int] = mapped_column(Integer, default=0)
-    max_turns: Mapped[int] = mapped_column(Integer, default=3)
+    max_turns: Mapped[int] = mapped_column(Integer, default=5)
     controlled_questions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     controlled_answers_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     goal_frame_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

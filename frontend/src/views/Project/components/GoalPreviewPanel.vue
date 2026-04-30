@@ -255,9 +255,9 @@
       <div class="section-header">
         <div>
           <h3>请选择继续方式</h3>
-          <p>你的选择会先经过后端校验，不会直接写入项目。</p>
+          <p>系统每轮只确认一个关键边界；如果仍不明确，会在有限次数内结束并给出改写或扩展方案。</p>
         </div>
-        <el-tag type="warning">{{ previewState.turn_count }}/{{ previewState.max_turns }}</el-tag>
+        <el-tag type="warning">还可澄清 {{ remainingClarificationTurns }} 次</el-tag>
       </div>
 
       <div v-for="question in previewState.questions" :key="question.question_id" class="clarification-question">
@@ -279,7 +279,7 @@
           :model-value="clarificationAnswers[question.question_id].free_text"
           type="textarea"
           :rows="2"
-          placeholder="可选：补充一句自然语言说明"
+          placeholder="如果选项都不准确，请重新描述你的学习目标"
           @update:model-value="$emit('updateClarificationFreeText', question.question_id, String($event))"
         />
       </div>
@@ -418,6 +418,10 @@ const props = defineProps<{
 
 const showAuditDetails = computed(() => props.displayMode !== 'simple')
 const showTechnicalDetails = computed(() => props.displayMode === 'debug')
+const remainingClarificationTurns = computed(() => {
+  if (!isClarificationResponse(props.previewState)) return 0
+  return Math.max(props.previewState.max_turns - props.previewState.turn_count, 0)
+})
 
 const emit = defineEmits<{
   'update:selectedCandidateId': [candidateId: string]

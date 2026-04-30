@@ -1163,6 +1163,8 @@ async def create_overlay_auto_draft(
         "reused_source_count": sum(1 for item in auto_draft["bridged_results"] if item["reused"]),
         "preview_counts": auto_draft["preview"].get("counts", {}),
         "validation_summary": auto_draft["validation"].get("summary", {}),
+        "extraction_status": auto_draft.get("extraction_status", "extracted"),
+        "extraction_error": auto_draft.get("extraction_error"),
     }
     return response
 

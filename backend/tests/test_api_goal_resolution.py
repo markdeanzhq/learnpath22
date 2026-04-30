@@ -392,6 +392,7 @@ async def test_goal_resolution_preview_returns_ambiguous_clarification(client, d
     assert data["coverage_status"] == "ambiguous"
     assert data["goal_understanding"]["domain_decision"] == "ambiguous"
     assert data["clarification_session_id"]
+    assert data["max_turns"] == 5
 
 
 async def test_goal_resolution_preview_returns_cross_domain_clarification(client, db_session):
@@ -544,6 +545,36 @@ async def test_clarification_controlled_answer_resolves_to_fresh_goal_preview(cl
     assert clarification.goal_resolution_session_id == data["coverage_response"]["session_id"]
     assert clarification.controlled_answers_json
     assert clarification.coverage_response_json
+
+
+async def test_clarification_answer_continues_same_session_when_still_ambiguous(client, db_session):
+    ambiguous_understanding = goal_understanding(
+        domain_decision="ambiguous",
+        primary_domain="unknown",
+        ml_relevance="unclear",
+        confidence=0.32,
+        clarification_question="请确认你想学习机器学习基础还是其他方向？",
+    )
+    with patch("app.services.goal_resolution_service.interpret_goal_with_llm", return_value=ambiguous_understanding):
+        preview_resp = await client.post("/api/v1/goal-resolution/preview", json={"goal_text": "AI"})
+        preview = preview_resp.json()
+        answer_resp = await client.post(
+            f"/api/v1/goal-resolution/clarifications/{preview['clarification_session_id']}/answers",
+            json={"answers": [{"question_id": "goal_direction", "selected_option_id": "machine_learning_foundation"}]},
+        )
+
+    assert answer_resp.status_code == 200
+    data = answer_resp.json()
+    assert data["clarification_session_id"] == preview["clarification_session_id"]
+    assert data["status"] == "active"
+    assert data["turn_count"] == 1
+    assert data["max_turns"] == 5
+    assert data["coverage_response"] is None
+    clarification = await db_session.get(ClarificationSession, preview["clarification_session_id"])
+    assert clarification is not None
+    assert clarification.status == "active"
+    assert clarification.turn_count == 1
+    assert clarification.raw_text == "机器学习基础"
 
 
 async def test_clarification_answer_rejects_invalid_option_without_resolving(client, db_session):

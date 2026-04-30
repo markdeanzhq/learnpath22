@@ -4,6 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import ProjectIndex from './index.vue'
 import ProjectListPanel from './components/ProjectListPanel.vue'
 import ProjectWorkflowPanel from './components/ProjectWorkflowPanel.vue'
+import type { ProjectWorkflowState, ProjectWorkflowStepStatus } from '@/api/modules/project'
 
 const {
   pushMock,
@@ -14,6 +15,7 @@ const {
   setCurrentProjectMock,
   clearCurrentProjectMock,
   deleteProjectMock,
+  getWorkflowStateMock,
   trackingResetMock,
   planResetMock,
   routeState,
@@ -27,6 +29,7 @@ const {
   setCurrentProjectMock: vi.fn(),
   clearCurrentProjectMock: vi.fn(),
   deleteProjectMock: vi.fn(),
+  getWorkflowStateMock: vi.fn(),
   trackingResetMock: vi.fn(),
   planResetMock: vi.fn(),
   routeState: {
@@ -61,6 +64,12 @@ vi.mock('element-plus/es/components/message/index', () => ({
 vi.mock('element-plus/es/components/message-box/index', () => ({
   ElMessageBox: {
     confirm: vi.fn(),
+  },
+}))
+
+vi.mock('@/api/modules/project', () => ({
+  projectApi: {
+    getWorkflowState: getWorkflowStateMock,
   },
 }))
 
@@ -128,6 +137,38 @@ const projectListPanelStub = defineComponent({
   name: 'ProjectListPanel',
   template: '<div data-testid="project-list-panel" />',
 })
+
+function createWorkflowState(action = 'complete_profile'): ProjectWorkflowState {
+  const profileStatus: ProjectWorkflowStepStatus = action === 'complete_profile' ? 'active' : 'completed'
+  const overlayStatus: ProjectWorkflowStepStatus = action === 'review_overlay' ? 'warning' : 'pending'
+  const pathStatus: ProjectWorkflowStepStatus = action === 'generate_path' ? 'active' : 'pending'
+
+  return {
+    project_id: 'project-001',
+    project_status: 'active',
+    updated_at: '2026-04-22T09:00:00Z',
+    current_stage: action,
+    recommended_next_action: {
+      action,
+      label: action === 'review_overlay' ? '审核扩展候选' : action === 'generate_path' ? '生成学习路径' : '继续画像采集',
+      description: '下一步建议',
+      route: action === 'review_overlay' ? '/knowledge' : action === 'generate_path' ? '/path' : '/project',
+      enabled: true,
+    },
+    steps: [
+      { key: 'goal', label: '目标确认', status: 'completed', summary: '已确认 3 个目标节点。' },
+      { key: 'profile', label: '画像采集', status: profileStatus, summary: '画像状态' },
+      { key: 'overlay', label: '图谱扩展', status: overlayStatus, summary: '扩展状态' },
+      { key: 'path', label: '路径规划', status: pathStatus, summary: '路径状态' },
+      { key: 'tracking', label: '学习跟踪', status: 'pending', summary: '跟踪状态' },
+    ],
+    goal: { confirmed: true },
+    profile: { completed: action !== 'complete_profile' },
+    overlay: { counts: { active_nodes: action === 'review_overlay' ? 1 : 0, active_edges: 0 } },
+    path: { node_count: action === 'generate_path' ? 0 : 6 },
+    tracking: { completion_rate: 0 },
+  }
+}
 
 const slotStub = (tag: string) => defineComponent({
   template: `<${tag}><slot /></${tag}>`,
@@ -241,7 +282,7 @@ function findButtonByText(wrapper: ReturnType<typeof mountProjectIndex>, text: s
   return matched
 }
 
-function mountProjectWorkflowPanel(step = 2) {
+function mountProjectWorkflowPanel(step = 2, workflowState: ReturnType<typeof createWorkflowState> | null = null) {
   return mount(ProjectWorkflowPanel, {
     props: {
       step,
@@ -250,6 +291,8 @@ function mountProjectWorkflowPanel(step = 2) {
       currentProject: currentProjectState.value,
       reconfirmReason: '',
       generatingPlan: false,
+      workflowState,
+      workflowLoading: false,
     },
     global: {
       stubs: {
@@ -259,6 +302,7 @@ function mountProjectWorkflowPanel(step = 2) {
         ElSteps: slotStub('div'),
         ElStep: slotStub('div'),
         ElButton: buttonStub,
+        ElTag: slotStub('span'),
         ElResult: resultStub,
         ElIcon: slotStub('i'),
       },
@@ -269,6 +313,7 @@ function mountProjectWorkflowPanel(step = 2) {
 describe('Project page panels', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    getWorkflowStateMock.mockResolvedValue(createWorkflowState())
     routeState.query = {}
     currentProjectState.value = {
       id: 'project-001',
@@ -336,6 +381,19 @@ describe('Project page panels', () => {
     expect(wrapper.emitted('generatePath')).toBeTruthy()
   })
 
+  it('renders project workflow overview and emits the recommended action', async () => {
+    const wrapper = mountProjectWorkflowPanel(2, createWorkflowState('review_overlay'))
+
+    expect(wrapper.text()).toContain('项目工作流总览')
+    expect(wrapper.text()).toContain('目标确认')
+    expect(wrapper.text()).toContain('图谱扩展')
+    expect(wrapper.text()).toContain('扩展候选')
+    expect(wrapper.text()).toContain('审核扩展候选')
+
+    await wrapper.findAll('button').find((button) => button.text().includes('审核扩展候选'))?.trigger('click')
+    expect(wrapper.emitted('openKnowledge')).toBeTruthy()
+  })
+
   it('opens the create wizard dialog without replacing the launcher panel', async () => {
     const wrapper = mountProjectIndex()
     const vm = wrapper.vm as any
@@ -400,6 +458,7 @@ describe('Project page panels', () => {
 describe('Project page goal reconfirm flow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    getWorkflowStateMock.mockResolvedValue(createWorkflowState())
     routeState.query = {}
     currentProjectState.value = {
       id: 'project-001',

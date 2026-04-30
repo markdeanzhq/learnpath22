@@ -546,6 +546,51 @@ describe('Knowledge overlay entry', () => {
     expect(successMock).toHaveBeenCalledWith('自动扩展草稿已创建，请审核候选节点、关系和资源')
   })
 
+  it('keeps automatic overlay sources when extraction is unavailable', async () => {
+    graphCreateOverlayAutoDraftMock.mockResolvedValueOnce({
+      session: {
+        session_id: 'sess-auto-source-only',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-auto-001'],
+        warnings: ['LLM_EXTRACTION_FAILED'],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [{ source_id: 'src-auto-001', title: '随机森林入门' }],
+      nodes: [],
+      edges: [],
+      resources: [],
+      warnings: ['LLM_EXTRACTION_FAILED'],
+      auto_draft: {
+        query: '随机森林',
+        search_result_count: 1,
+        selected_result_count: 1,
+        selected_result_ids: ['result-auto-001'],
+        source_ids: ['src-auto-001'],
+        reused_source_count: 0,
+        preview_counts: { nodes: 0, edges: 0, resources: 0 },
+        validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
+        extraction_status: 'extraction_failed',
+        extraction_error: 'LLM_EXTRACTION_FAILED',
+      },
+    })
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).overlaySearchQuery = '随机森林'
+    await (wrapper.vm as any).createAutoOverlayDraft()
+
+    expect(replaceMock).toHaveBeenCalledWith({
+      name: 'Knowledge',
+      query: expect.objectContaining({ scope: 'project', sessionId: 'sess-auto-source-only' }),
+    })
+    expect((wrapper.vm as any).overlayBridgeMessage).toContain('已保存 1 条资料')
+    expect((wrapper.vm as any).overlayBridgeMessage).toContain('AI 抽取未生成候选')
+    expect(successMock).toHaveBeenCalledWith('资料已保存，可重试抽取或手动补充候选')
+  })
+
   it('summarizes repair diagnostics for automatic overlay draft candidates', async () => {
     graphCreateOverlayAutoDraftMock.mockResolvedValueOnce({
       session: {

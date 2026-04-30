@@ -137,9 +137,6 @@ export function useOverlayDraftInput({
     overlayError.value = ''
     overlayBridgeMessage.value = ''
     overlaySearchError.value = ''
-    if (!overlaySearchQuery.value.trim() && currentProject.value?.goal_text) {
-      overlaySearchQuery.value = currentProject.value.goal_text
-    }
     await loadPersistedSearchResults()
   }
 
@@ -298,10 +295,9 @@ export function useOverlayDraftInput({
     const currentProjectId = projectId.value
     if (!currentProjectId) return
 
-    const fallbackQuery = typeof currentProject.value?.goal_text === 'string' ? currentProject.value.goal_text.trim() : ''
-    const query = overlaySearchQuery.value.trim() || fallbackQuery
+    const query = overlaySearchQuery.value.trim()
     if (!query) {
-      overlaySearchError.value = '请输入搜索关键词，或先为项目设置学习目标。'
+      overlaySearchError.value = '请输入想扩展的主题，例如“随机森林 机器学习 入门”。'
       return
     }
 
@@ -320,9 +316,17 @@ export function useOverlayDraftInput({
       overlayDraftMode.value = 'manual'
       overlayForm.value = createOverlayForm()
       clearPreviewSelection()
-      overlayBridgeMessage.value = `自动草稿已基于 ${session.auto_draft?.selected_result_count || 0} 条资料创建，请审核候选后再启用规划。`
+      const selectedCount = session.auto_draft?.selected_result_count || 0
+      const extractionStatus = session.auto_draft?.extraction_status || 'extracted'
+      if (extractionStatus === 'extracted') {
+        overlayBridgeMessage.value = `自动草稿已基于 ${selectedCount} 条资料创建，请审核候选后再启用规划。`
+        notifySuccess?.('自动扩展草稿已创建，请审核候选节点、关系和资源')
+      } else {
+        const reason = session.auto_draft?.extraction_error ? `（${session.auto_draft.extraction_error}）` : ''
+        overlayBridgeMessage.value = `已保存 ${selectedCount} 条资料，但 AI 抽取未生成候选${reason}。请在已保存搜索中重试生成候选预览，或改用手动资料补充。`
+        notifySuccess?.('资料已保存，可重试抽取或手动补充候选')
+      }
       await loadPersistedSearchResults()
-      notifySuccess?.('自动扩展草稿已创建，请审核候选节点、关系和资源')
       await onDraftCreated(session)
     } catch (error: unknown) {
       overlayError.value = getErrorMessage(error)

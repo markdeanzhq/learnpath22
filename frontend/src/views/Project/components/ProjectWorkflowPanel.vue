@@ -6,6 +6,45 @@
       <el-step title="完成" />
     </el-steps>
 
+    <section v-if="currentProject && workflowState" class="workflow-overview">
+      <div class="workflow-overview-header">
+        <div>
+          <p class="overview-eyebrow">项目工作流总览</p>
+          <h3>{{ currentProject.title }}</h3>
+          <p>{{ currentProject.goal_text }}</p>
+        </div>
+        <el-tag :type="statusTagType(recommendedStatus)">
+          {{ workflowLoading ? '状态刷新中' : recommendedAction?.label || '等待下一步' }}
+        </el-tag>
+      </div>
+
+      <div class="workflow-step-grid">
+        <article v-for="item in workflowState.steps" :key="item.key" class="workflow-step-card">
+          <div class="workflow-step-card-title">
+            <strong>{{ item.label }}</strong>
+            <el-tag size="small" :type="statusTagType(item.status)">{{ statusLabel(item.status) }}</el-tag>
+          </div>
+          <p>{{ item.summary }}</p>
+        </article>
+      </div>
+
+      <div class="workflow-metrics">
+        <span>扩展候选 <strong>{{ overlayCandidateCount }}</strong></span>
+        <span>路径节点 <strong>{{ pathNodeCount }}</strong></span>
+        <span>学习进度 <strong>{{ trackingCompletionLabel }}</strong></span>
+      </div>
+
+      <div v-if="recommendedAction" class="workflow-next-action">
+        <div>
+          <strong>{{ recommendedAction.label }}</strong>
+          <p>{{ recommendedAction.description }}</p>
+        </div>
+        <el-button type="primary" :disabled="recommendedAction.enabled === false" @click="handleRecommendedAction">
+          {{ recommendedAction.label }}
+        </el-button>
+      </div>
+    </section>
+
     <GoalForm
       v-if="step === 0"
       :mode="goalFormMode"
@@ -72,7 +111,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Document } from '@element-plus/icons-vue'
-import type { GoalTypeSelection, Project } from '@/api/modules/project'
+import type { GoalTypeSelection, Project, ProjectWorkflowState, ProjectWorkflowStepStatus } from '@/api/modules/project'
 import GoalForm from './GoalForm.vue'
 import ProfileQuestionnaire from './ProfileQuestionnaire.vue'
 
@@ -83,26 +122,181 @@ const props = defineProps<{
   currentProject: Project | null
   reconfirmReason: string
   generatingPlan: boolean
+  workflowState?: ProjectWorkflowState | null
+  workflowLoading?: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   projectCreated: [project: Project]
   goalResolutionUpdated: [project: Project]
   profileCompleted: []
   generatePath: []
   startCreate: []
   createFormDirtyChanged: [dirty: boolean]
+  continueProfile: []
+  openKnowledge: []
+  openPath: []
 }>()
 
 const currentProjectGoalType = computed<GoalTypeSelection>(() => {
   const goalType = props.currentProject?.goal_type
   return goalType === 'domain' || goalType === 'concept' || goalType === 'problem' ? goalType : 'auto'
 })
+
+const recommendedAction = computed(() => props.workflowState?.recommended_next_action ?? null)
+const recommendedStatus = computed<ProjectWorkflowStepStatus>(() => recommendedAction.value?.enabled === false ? 'pending' : 'active')
+
+const overlayCandidateCount = computed(() => {
+  const counts = props.workflowState?.overlay?.counts as Record<string, unknown> | undefined
+  const activeNodes = Number(counts?.active_nodes || 0)
+  const activeEdges = Number(counts?.active_edges || 0)
+  return activeNodes + activeEdges
+})
+
+const pathNodeCount = computed(() => Number(props.workflowState?.path?.node_count || 0))
+const trackingCompletionLabel = computed(() => {
+  const rate = Number(props.workflowState?.tracking?.completion_rate || 0)
+  return `${Math.round(rate * 100)}%`
+})
+
+function statusLabel(status: ProjectWorkflowStepStatus) {
+  const labels: Record<ProjectWorkflowStepStatus, string> = {
+    pending: '待处理',
+    active: '进行中',
+    completed: '已完成',
+    blocked: '阻塞',
+    warning: '需关注',
+  }
+  return labels[status]
+}
+
+function statusTagType(status: ProjectWorkflowStepStatus) {
+  if (status === 'completed') return 'success'
+  if (status === 'blocked') return 'danger'
+  if (status === 'warning') return 'warning'
+  if (status === 'active') return 'primary'
+  return 'info'
+}
+
+function handleRecommendedAction() {
+  const action = recommendedAction.value?.action
+  if (!action || recommendedAction.value?.enabled === false) return
+  if (action === 'complete_profile') {
+    emit('continueProfile')
+    return
+  }
+  if (action === 'review_overlay' || action === 'fix_overlay') {
+    emit('openKnowledge')
+    return
+  }
+  if (action === 'generate_path') {
+    emit('generatePath')
+    return
+  }
+  if (action === 'reconfirm_goal') {
+    emit('startCreate')
+    return
+  }
+  emit('openPath')
+}
 </script>
 
 <style scoped>
 .workflow-steps {
   margin-bottom: 30px;
+}
+
+.workflow-overview {
+  margin-bottom: 24px;
+  padding: 18px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--el-fill-color-light), var(--el-fill-color-blank));
+}
+
+.workflow-overview-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.overview-eyebrow {
+  margin: 0 0 6px;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-overview-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.workflow-overview-header p:last-child {
+  margin: 6px 0 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
+.workflow-step-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-step-card {
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: var(--el-fill-color-blank);
+}
+
+.workflow-step-card-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.workflow-step-card p {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.workflow-metrics {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.workflow-metrics span {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+}
+
+.workflow-next-action {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--el-color-success-light-9);
+}
+
+.workflow-next-action p {
+  margin: 4px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .complete-section {
@@ -202,9 +396,22 @@ const currentProjectGoalType = computed<GoalTypeSelection>(() => {
   font-size: 12px;
 }
 
+@media (max-width: 1080px) {
+  .workflow-step-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 768px) {
-  .complete-summary {
+  .complete-summary,
+  .workflow-step-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-overview-header,
+  .workflow-next-action {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

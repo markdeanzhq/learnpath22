@@ -61,7 +61,8 @@ _ADJACENT_DOMAIN_MAPPINGS = {
 }
 _MAX_WEEKLY_HOURS = 40.0
 _MAX_DEADLINE_WEEKS = 52
-_MIN_IN_DOMAIN_CONFIDENCE = 0.65
+_MAX_CLARIFICATION_TURNS = 5
+_MIN_IN_DOMAIN_CONFIDENCE = 0.6
 _ALLOWED_IN_DOMAIN_ML_RELEVANCE = {"core", "prerequisite"}
 _CHINESE_NUMBER_VALUES = {
     "一": 1,
@@ -474,6 +475,7 @@ def _controlled_questions(
                         "value": {
                             "coverage_status": "out_of_domain",
                             "goal_text_suffix": "其他方向",
+                            "replace_goal_text": True,
                         },
                     },
                 ],
@@ -492,6 +494,7 @@ def _controlled_questions(
                     "value": {
                         "coverage_status": "covered",
                         "goal_text_suffix": "机器学习基础",
+                        "replace_goal_text": True,
                     },
                 },
                 {
@@ -500,6 +503,7 @@ def _controlled_questions(
                     "value": {
                         "coverage_status": "in_domain_uncovered",
                         "goal_text_suffix": "深度学习入门",
+                        "replace_goal_text": True,
                     },
                 },
                 {
@@ -508,6 +512,7 @@ def _controlled_questions(
                     "value": {
                         "coverage_status": "adjacent_domain",
                         "goal_text_suffix": "大模型应用",
+                        "replace_goal_text": True,
                     },
                 },
                 {
@@ -516,6 +521,7 @@ def _controlled_questions(
                     "value": {
                         "coverage_status": "out_of_domain",
                         "goal_text_suffix": "其他方向",
+                        "replace_goal_text": True,
                     },
                 },
             ],
@@ -729,14 +735,50 @@ async def answer_clarification_session(
         domain=session.domain,
         expected_domain=session.domain,
         project_id=project_id,
+        allow_clarification=next_turn_count < session.max_turns,
     )
+    session.raw_text = clarified_goal_text
+    session.goal_text_hash = _build_goal_text_hash(clarified_goal_text)
     session.turn_count = next_turn_count
     session.controlled_answers_json = _json_dumps(normalized_answers)
     _append_decision_history(session, {
         "event": "clarification_answered",
         "turn_count": session.turn_count,
         "answers": normalized_answers,
+        "clarified_goal_text": clarified_goal_text,
     })
+
+    if preview.get("result_type") == "answer_clarification" and session.turn_count < session.max_turns:
+        child_session_id = str(preview.get("clarification_session_id") or "")
+        if child_session_id and child_session_id != session.clarification_session_id:
+            child_session = await db.get(ClarificationSession, child_session_id)
+            if child_session is not None and child_session.status == "active":
+                child_session.status = "resolved"
+                child_session.completed_at = _naive_utc_now()
+        next_questions = list(preview.get("questions") or [])
+        session.status = "active"
+        session.controlled_questions_json = _json_dumps(next_questions)
+        session.goal_frame_json = _json_dumps(preview.get("goal_frame"))
+        session.coverage_response_json = None
+        _append_decision_history(session, {
+            "event": "clarification_continued",
+            "turn_count": session.turn_count,
+            "coverage_status": preview.get("coverage_status"),
+            "result_type": preview.get("result_type"),
+        })
+        await db.commit()
+        await db.refresh(session)
+        return {
+            "clarification_session_id": session.clarification_session_id,
+            "status": session.status,
+            "expires_at": _ensure_utc(session.expires_at),
+            "turn_count": session.turn_count,
+            "max_turns": session.max_turns,
+            "questions": next_questions,
+            "goal_frame": _json_loads(session.goal_frame_json, None),
+            "coverage_response": None,
+        }
+
     if preview.get("result_type") in {"select_candidate", "confirm_partial"}:
         session.goal_resolution_session_id = str(preview.get("session_id") or "") or None
     session.status = "resolved"
@@ -746,6 +788,7 @@ async def answer_clarification_session(
         "event": "clarification_resolved",
         "coverage_status": preview.get("coverage_status"),
         "result_type": preview.get("result_type"),
+        "limit_reached": session.turn_count >= session.max_turns,
     })
     await db.commit()
     await db.refresh(session)
@@ -769,6 +812,7 @@ async def create_goal_resolution_preview(
     domain: str | None,
     expected_domain: str | None = None,
     project_id: str | None = None,
+    allow_clarification: bool = True,
 ) -> dict[str, object]:
     pack = _resolve_pack(domain, expected_domain=expected_domain)
     pack_domain = getattr(pack, "domain", resolve_compatible_domain(domain, expected_domain=expected_domain))
@@ -822,7 +866,7 @@ async def create_goal_resolution_preview(
             "rewrite_suggestions": _build_admission_rewrite_suggestions(goal_understanding),
         }
 
-    if domain_decision in {"cross_domain", "ambiguous"} or _requires_admission_clarification(goal_understanding):
+    if allow_clarification and (domain_decision in {"cross_domain", "ambiguous"} or _requires_admission_clarification(goal_understanding)):
         coverage_status = "cross_domain" if domain_decision == "cross_domain" else "ambiguous"
         questions = _controlled_questions(coverage_status=coverage_status, goal_understanding=goal_understanding)
         clarification = ClarificationSession(
@@ -833,6 +877,7 @@ async def create_goal_resolution_preview(
             pack_hash=session_pack_hash,
             project_graph_hash=graph_hash,
             status="active",
+            max_turns=_MAX_CLARIFICATION_TURNS,
             controlled_questions_json=_json_dumps(questions),
             goal_frame_json=_json_dumps(goal_frame),
             decision_history_json=_json_dumps([{
@@ -942,7 +987,7 @@ async def create_goal_resolution_preview(
         await db.commit()
         return response
 
-    if coverage_status == "ambiguous" and not candidates:
+    if allow_clarification and coverage_status == "ambiguous" and not candidates:
         clarification = ClarificationSession(
             project_id=project_id,
             raw_text=goal_text,
@@ -951,6 +996,7 @@ async def create_goal_resolution_preview(
             pack_hash=session_pack_hash,
             project_graph_hash=graph_hash,
             status="active",
+            max_turns=_MAX_CLARIFICATION_TURNS,
             controlled_questions_json=_json_dumps(_controlled_questions()),
             goal_frame_json=_json_dumps(goal_frame),
             decision_history_json=_json_dumps([{"event": "clarification_created", "coverage_status": "ambiguous"}]),

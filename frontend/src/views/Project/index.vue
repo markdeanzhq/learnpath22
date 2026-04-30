@@ -32,15 +32,20 @@
         <ProjectWorkflowPanel
           :step="step"
           :goal-form-mode="goalFormMode"
-          :current-project-id="currentProjectId"
+          :current-project-id="workflowProjectId"
           :current-project="projectStore.currentProject"
           :reconfirm-reason="reconfirmReason"
           :generating-plan="generatingPlan"
+          :workflow-state="workflowState"
+          :workflow-loading="workflowLoading"
           @project-created="onProjectCreated"
           @goal-resolution-updated="onGoalResolutionUpdated"
           @profile-completed="onProfileCompleted"
           @generate-path="goToPath"
           @start-create="startCreate"
+          @continue-profile="continueProfile"
+          @open-knowledge="openKnowledge"
+          @open-path="openPath"
         />
       </el-col>
     </el-row>
@@ -64,14 +69,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useTrackingStore } from '@/stores/tracking'
-import type { Project } from '@/api/modules/project'
+import { projectApi, type Project, type ProjectWorkflowState } from '@/api/modules/project'
 import ProjectCreateWizardDialog from './components/ProjectCreateWizardDialog.vue'
 import ProjectListPanel from './components/ProjectListPanel.vue'
 import ProjectWorkflowPanel from './components/ProjectWorkflowPanel.vue'
@@ -93,10 +98,39 @@ const createWizardStep = ref(0)
 const createWizardProjectId = ref('')
 const createWizardProject = ref<Project | null>(null)
 const createWizardFormDirty = ref(false)
+const workflowState = ref<ProjectWorkflowState | null>(null)
+const workflowLoading = ref(false)
+const workflowProjectId = computed(() => currentProjectId.value || projectStore.currentProject?.id || '')
+let workflowRequestId = 0
 
-onMounted(() => {
-  projectStore.loadList()
+onMounted(async () => {
+  await projectStore.loadList()
+  await loadWorkflowState()
 })
+
+async function loadWorkflowState(projectId = workflowProjectId.value) {
+  if (!projectId) {
+    workflowState.value = null
+    return
+  }
+
+  const requestId = ++workflowRequestId
+  workflowLoading.value = true
+  try {
+    const state = await projectApi.getWorkflowState(projectId)
+    if (requestId === workflowRequestId) {
+      workflowState.value = state
+    }
+  } catch {
+    if (requestId === workflowRequestId) {
+      workflowState.value = null
+    }
+  } finally {
+    if (requestId === workflowRequestId) {
+      workflowLoading.value = false
+    }
+  }
+}
 
 watch(
   () => [route.query.mode, route.query.projectId, route.query.reason, route.query.create] as const,
@@ -111,6 +145,7 @@ watch(
       goalFormMode.value = 'reconfirm'
       reconfirmReason.value = typeof reason === 'string' ? reason : ''
       step.value = 0
+      void loadWorkflowState(projectId)
       return
     }
 
@@ -150,6 +185,7 @@ function onProjectCreated(project: Project) {
   reconfirmReason.value = ''
   step.value = 1
   projectStore.loadList()
+  void loadWorkflowState(project.id)
 }
 
 function onGoalResolutionUpdated(project: Project) {
@@ -159,10 +195,12 @@ function onGoalResolutionUpdated(project: Project) {
   reconfirmReason.value = ''
   step.value = -1
   router.replace('/project')
+  void loadWorkflowState(project.id)
 }
 
 function onProfileCompleted() {
   step.value = 2
+  void loadWorkflowState()
 }
 
 function onWizardProjectCreated(project: Project) {
@@ -176,11 +214,13 @@ function onWizardProjectCreated(project: Project) {
   step.value = 1
   projectStore.setCurrentProject(project)
   projectStore.loadList()
+  void loadWorkflowState(project.id)
 }
 
 function onWizardProfileCompleted() {
   createWizardStep.value = 2
   step.value = 2
+  void loadWorkflowState()
 }
 
 function clearCreateQuery() {
@@ -212,11 +252,30 @@ function handleCreateWizardVisibilityChange(visible: boolean) {
   }
 }
 
+function continueProfile() {
+  const projectId = workflowProjectId.value
+  if (!projectId) return
+  currentProjectId.value = projectId
+  createWizardVisible.value = false
+  step.value = 1
+}
+
+function openKnowledge() {
+  router.push('/knowledge')
+}
+
+function openPath() {
+  router.push('/path')
+}
+
 async function goToPath() {
-  if (!currentProjectId.value) return
+  const projectId = workflowProjectId.value
+  if (!projectId) return
+  currentProjectId.value = projectId
   generatingPlan.value = true
   try {
-    await planStore.generate(currentProjectId.value)
+    await planStore.generate(projectId)
+    void loadWorkflowState(projectId)
     router.push('/path')
   } catch (e: any) {
     if (e?.response?.status === 409 && e?.response?.data?.error === 'GOAL_TARGETS_REMOVED') {
@@ -224,7 +283,7 @@ async function goToPath() {
         path: '/project',
         query: {
           mode: 'reconfirm',
-          projectId: currentProjectId.value,
+          projectId,
           reason: 'goal-targets-removed',
         },
       })
@@ -269,6 +328,7 @@ async function handleDelete(row: Project) {
       trackingStore.reset()
       step.value = -1
       currentProjectId.value = ''
+      workflowState.value = null
     }
 
     ElMessage.success('项目已永久删除')

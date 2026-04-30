@@ -20,6 +20,7 @@ from app.schemas.project import (
     CreateProjectRequest,
     DeleteProjectResponse,
     ProjectResponse,
+    ProjectWorkflowStateResponse,
     UpdateProjectGoalResolutionRequest,
 )
 from app.services.project_resolution_service import (
@@ -28,6 +29,7 @@ from app.services.project_resolution_service import (
     preview_project_goal_resolution,
     update_project_goal_resolution,
 )
+from app.services.project_workflow_state_service import build_project_workflow_state
 
 router = APIRouter()
 
@@ -111,6 +113,14 @@ async def list_projects_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     return await list_projects(db)
+
+
+@router.get("/projects/{project_id}/workflow-state", response_model=ProjectWorkflowStateResponse)
+async def get_project_workflow_state_endpoint(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    return await build_project_workflow_state(db, project_id)
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
