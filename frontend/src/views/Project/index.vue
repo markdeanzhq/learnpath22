@@ -76,7 +76,7 @@ import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useTrackingStore } from '@/stores/tracking'
-import { projectApi, type Project, type ProjectWorkflowState } from '@/api/modules/project'
+import { projectApi, type Project, type ProjectWorkflowAction, type ProjectWorkflowState } from '@/api/modules/project'
 import ProjectCreateWizardDialog from './components/ProjectCreateWizardDialog.vue'
 import ProjectListPanel from './components/ProjectListPanel.vue'
 import ProjectWorkflowPanel from './components/ProjectWorkflowPanel.vue'
@@ -260,11 +260,18 @@ function continueProfile() {
   step.value = 1
 }
 
-function openKnowledge() {
-  router.push('/knowledge')
+function openKnowledge(action?: ProjectWorkflowAction) {
+  router.push({
+    path: '/knowledge',
+    query: action?.route_query && Object.keys(action.route_query).length ? action.route_query : { scope: 'project' },
+  })
 }
 
-function openPath() {
+function openPath(action?: ProjectWorkflowAction) {
+  if (action?.route_query && Object.keys(action.route_query).length) {
+    router.push({ path: '/path', query: action.route_query })
+    return
+  }
   router.push('/path')
 }
 

@@ -575,6 +575,11 @@ async def test_clarification_answer_continues_same_session_when_still_ambiguous(
     assert clarification.status == "active"
     assert clarification.turn_count == 1
     assert clarification.raw_text == "机器学习基础"
+    decision_history = json.loads(clarification.decision_history_json)
+    review_samples = [event for event in decision_history if event.get("event") == "clarification_review_sample"]
+    assert review_samples[-1]["sample_type"] == "still_ambiguous"
+    assert review_samples[-1]["answers"][0]["selected_option_id"] == "machine_learning_foundation"
+    assert review_samples[-1]["next_questions"]
 
 
 async def test_clarification_answer_rejects_invalid_option_without_resolving(client, db_session):

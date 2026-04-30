@@ -528,12 +528,14 @@ describe('Knowledge overlay entry', () => {
     await flushPromises()
 
     ;(wrapper.vm as any).overlaySearchQuery = '随机森林'
+    ;(wrapper.vm as any).overlayForm.constraintNote = '只补充基础视角'
     await (wrapper.vm as any).createAutoOverlayDraft()
 
     expect(graphCreateOverlayAutoDraftMock).toHaveBeenCalledWith('project-001', {
       query: '随机森林',
       max_results: 5,
       mode: 'default',
+      constraint_note: '只补充基础视角',
     })
     expect(replaceMock).toHaveBeenCalledWith({
       name: 'Knowledge',
@@ -574,6 +576,7 @@ describe('Knowledge overlay entry', () => {
         validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
         extraction_status: 'extraction_failed',
         extraction_error: 'LLM_EXTRACTION_FAILED',
+        extraction_error_hint: 'LLM 请求失败，可缩短资料、换更聚焦的来源或稍后重试。',
       },
     })
     const wrapper = mountKnowledge()
@@ -588,6 +591,7 @@ describe('Knowledge overlay entry', () => {
     })
     expect((wrapper.vm as any).overlayBridgeMessage).toContain('已保存 1 条资料')
     expect((wrapper.vm as any).overlayBridgeMessage).toContain('AI 抽取未生成候选')
+    expect((wrapper.vm as any).overlayBridgeMessage).toContain('可缩短资料')
     expect(successMock).toHaveBeenCalledWith('资料已保存，可重试抽取或手动补充候选')
   })
 
@@ -839,7 +843,9 @@ describe('Knowledge overlay entry', () => {
     const wrapper = mountKnowledge()
     await flushPromises()
 
+    ;(wrapper.vm as any).overlaySearchQuery = '逻辑回归扩展'
     ;(wrapper.vm as any).overlayForm.rawText = '逻辑回归扩展资料'
+    ;(wrapper.vm as any).overlayForm.constraintNote = '只补充分类视角'
     await (wrapper.vm as any).submitOverlayDraft()
 
     expect(graphCreateOverlaySourceMock).toHaveBeenCalledWith('project-001', {
@@ -851,6 +857,8 @@ describe('Knowledge overlay entry', () => {
     expect(graphPreviewOverlayExtractionPayloadMock).toHaveBeenCalledWith('project-001', {
       source_ids: ['src-001'],
       mode: 'default',
+      expansion_topic: '逻辑回归扩展',
+      constraint_note: '只补充分类视角',
     })
     expect(graphCreateOverlayExtractionSessionMock).toHaveBeenCalledWith('project-001', {
       source_ids: ['src-001'],
@@ -868,6 +876,8 @@ describe('Knowledge overlay entry', () => {
         filtered_by_user: true,
         pre_validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
       },
+      expansion_topic: '逻辑回归扩展',
+      constraint_note: '只补充分类视角',
     })
     expect(successMock).toHaveBeenCalled()
   })
@@ -1356,6 +1366,8 @@ describe('Knowledge overlay entry', () => {
     expect(graphPreviewOverlayExtractionPayloadMock).toHaveBeenCalledWith('project-001', {
       source_ids: ['src-saved-001'],
       mode: 'default',
+      expansion_topic: null,
+      constraint_note: null,
     })
     expect(graphCreateOverlayExtractionSessionMock).toHaveBeenCalledWith('project-001', {
       source_ids: ['src-saved-001'],
@@ -1373,6 +1385,8 @@ describe('Knowledge overlay entry', () => {
         filtered_by_user: true,
         pre_validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
       },
+      expansion_topic: null,
+      constraint_note: null,
     })
     expect(graphCreateOverlayExtractionSessionMock.mock.calls[0][1]).not.toHaveProperty('result_ids')
   })

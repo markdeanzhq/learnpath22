@@ -285,7 +285,24 @@ async def test_get_project_workflow_state_recommends_profile_collection(client, 
     assert data["profile"]["completed"] is False
     assert data["path"]["exists"] is False
     assert data["recommended_next_action"]["action"] == "complete_profile"
+    assert data["recommended_next_action"]["reason"] == "画像参数会影响补强权重、排序和时间预算提示。"
+    assert data["recommended_next_action"]["blockers"] == ["尚未完成学习者画像"]
     assert [step["key"] for step in data["steps"]] == ["goal", "profile", "overlay", "path", "tracking"]
+
+
+async def test_get_project_workflow_state_explains_extension_review(client, project, db_session):
+    stored_project = await db_session.get(LearningProject, project["id"])
+    stored_project.status = "extension_review"
+    await db_session.commit()
+
+    resp = await client.get(f"/api/v1/projects/{project['id']}/workflow-state")
+
+    assert resp.status_code == 200
+    action = resp.json()["recommended_next_action"]
+    assert action["action"] == "review_overlay"
+    assert action["reason"] == "项目创建时识别到图谱外目标，需要先审核项目级候选。"
+    assert action["blockers"] == ["项目状态为 extension_review"]
+    assert action["route_query"] == {"scope": "project"}
 
 
 async def test_get_project_workflow_state_links_generated_path(client, project, plan):

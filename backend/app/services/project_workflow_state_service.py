@@ -35,13 +35,26 @@ def _as_int(value: Any) -> int:
         return 0
 
 
-def _action(action: str, label: str, description: str, route: str, *, enabled: bool = True) -> dict[str, Any]:
+def _action(
+    action: str,
+    label: str,
+    description: str,
+    route: str,
+    *,
+    enabled: bool = True,
+    reason: str | None = None,
+    blockers: list[str] | None = None,
+    route_query: dict[str, str] | None = None,
+) -> dict[str, Any]:
     return {
         "action": action,
         "label": label,
         "description": description,
         "route": route,
         "enabled": enabled,
+        "reason": reason,
+        "blockers": blockers or [],
+        "route_query": route_query or {},
     }
 
 
@@ -81,6 +94,26 @@ def _overlay_status(preflight: dict[str, Any]) -> tuple[str, str]:
     return "completed", str(preflight.get("summary") or "扩展图谱可用于增强路径。")
 
 
+def _overlay_blockers(preflight: dict[str, Any]) -> list[str]:
+    counts = preflight.get("counts") if isinstance(preflight.get("counts"), dict) else {}
+    node_counts = counts.get("nodes") if isinstance(counts.get("nodes"), dict) else {}
+    edge_counts = counts.get("edges") if isinstance(counts.get("edges"), dict) else {}
+    blockers: list[str] = []
+    invalid = _as_int(node_counts.get("invalid")) + _as_int(edge_counts.get("invalid"))
+    pending_review = _as_int(node_counts.get("pending_review")) + _as_int(edge_counts.get("pending_review"))
+    planning_disabled = _as_int(node_counts.get("planning_disabled")) + _as_int(edge_counts.get("planning_disabled"))
+    if invalid:
+        blockers.append(f"{invalid} 个扩展候选校验失败")
+    if pending_review:
+        blockers.append(f"{pending_review} 个扩展候选等待人工审核")
+    if planning_disabled:
+        blockers.append(f"{planning_disabled} 个已确认候选尚未启用规划")
+    for item in list(preflight.get("blocking_items") or [])[:2]:
+        if isinstance(item, dict) and item.get("message"):
+            blockers.append(str(item["message"]))
+    return blockers
+
+
 def _pick_recommended_action(
     *,
     goal_confirmed: bool,
@@ -100,24 +133,77 @@ def _pick_recommended_action(
     planning_disabled = _as_int(node_counts.get("planning_disabled")) + _as_int(edge_counts.get("planning_disabled"))
 
     if not goal_confirmed:
-        return _action("reconfirm_goal", "重新确认目标", "目标解析结果不完整，先确认学习目标边界。", "/project")
+        return _action(
+            "reconfirm_goal",
+            "重新确认目标",
+            "目标解析结果不完整，先确认学习目标边界。",
+            "/project",
+            reason="正式路径必须绑定可解释的目标节点。",
+            blockers=["缺少已确认目标节点"],
+            route_query={"mode": "reconfirm"},
+        )
     if project_status == "extension_review":
-        return _action("review_overlay", "审核扩展草稿", "该项目正在等待项目级图谱扩展审核。", "/knowledge")
+        return _action(
+            "review_overlay",
+            "审核扩展草稿",
+            "该项目正在等待项目级图谱扩展审核。",
+            "/knowledge",
+            reason="项目创建时识别到图谱外目标，需要先审核项目级候选。",
+            blockers=["项目状态为 extension_review"],
+            route_query={"scope": "project"},
+        )
     if overlay_step_status == "blocked":
-        return _action("fix_overlay", "处理图谱阻塞", "增强图谱存在阻塞项，先在 Knowledge 中修复。", "/knowledge")
+        return _action(
+            "fix_overlay",
+            "处理图谱阻塞",
+            "增强图谱存在阻塞项，先在 Knowledge 中修复。",
+            "/knowledge",
+            reason="阻塞项会破坏增强图谱的可规划性。",
+            blockers=_overlay_blockers(overlay_preflight),
+            route_query={"scope": "project"},
+        )
     if pending_review or invalid or planning_disabled:
-        return _action("review_overlay", "审核扩展候选", "存在待审核、需复核或未启用规划的扩展候选。", "/knowledge")
+        return _action(
+            "review_overlay",
+            "审核扩展候选",
+            "存在待审核、需复核或未启用规划的扩展候选。",
+            "/knowledge",
+            reason="只有通过校验、已确认且启用规划的候选才会进入增强路径。",
+            blockers=_overlay_blockers(overlay_preflight),
+            route_query={"scope": "project"},
+        )
     if not profile_completed:
-        return _action("complete_profile", "继续画像采集", "补全基础、偏好和时间预算后才能生成个性化路径。", "/project")
+        return _action(
+            "complete_profile",
+            "继续画像采集",
+            "补全基础、偏好和时间预算后才能生成个性化路径。",
+            "/project",
+            reason="画像参数会影响补强权重、排序和时间预算提示。",
+            blockers=["尚未完成学习者画像"],
+        )
     if not path_exists:
-        return _action("generate_path", "生成学习路径", "目标和画像已就绪，可以生成阶段化学习路径。", "/path")
+        return _action(
+            "generate_path",
+            "生成学习路径",
+            "目标和画像已就绪，可以生成阶段化学习路径。",
+            "/path",
+            reason="目标、画像和扩展预检均已就绪。",
+            route_query={"scope": "path"},
+        )
     if _as_int(tracking_summary.get("total_nodes")) <= 0:
-        return _action("view_path", "查看学习路径", "路径已生成，先检查阶段与知识点安排。", "/path")
+        return _action("view_path", "查看学习路径", "路径已生成，先检查阶段与知识点安排。", "/path", route_query={"scope": "path"})
     if tracking_event_count <= 0:
-        return _action("start_tracking", "开始学习跟踪", "路径已生成，可以在路径页标记开始、完成或跳过。", "/path")
+        return _action(
+            "start_tracking",
+            "开始学习跟踪",
+            "路径已生成，可以在路径页标记开始、完成或跳过。",
+            "/path",
+            reason="跟踪事件会驱动进度统计和后续重规划依据。",
+            route_query={"scope": "path"},
+        )
     if float(tracking_summary.get("completion_rate") or 0.0) >= 1.0:
-        return _action("review_or_replan", "复盘或重规划", "当前路径已完成，可以复盘或根据反馈重规划。", "/path")
-    return _action("continue_tracking", "继续学习跟踪", "根据当前进度继续推进，必要时触发重规划。", "/path")
+        return _action("review_or_replan", "复盘或重规划", "当前路径已完成，可以复盘或根据反馈重规划。", "/path", route_query={"scope": "path"})
+    return _action("continue_tracking", "继续学习跟踪", "根据当前进度继续推进，必要时触发重规划。", "/path", route_query={"scope": "path"})
 
 
 async def build_project_workflow_state(db: AsyncSession, project_id: str) -> dict[str, Any]:

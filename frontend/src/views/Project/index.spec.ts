@@ -154,6 +154,9 @@ function createWorkflowState(action = 'complete_profile'): ProjectWorkflowState 
       description: '下一步建议',
       route: action === 'review_overlay' ? '/knowledge' : action === 'generate_path' ? '/path' : '/project',
       enabled: true,
+      reason: action === 'review_overlay' ? '只有通过校验、已确认且启用规划的候选才会进入增强路径。' : null,
+      blockers: action === 'review_overlay' ? ['1 个扩展候选等待人工审核'] : [],
+      route_query: action === 'review_overlay' ? { scope: 'project' } : {},
     },
     steps: [
       { key: 'goal', label: '目标确认', status: 'completed', summary: '已确认 3 个目标节点。' },
@@ -389,9 +392,11 @@ describe('Project page panels', () => {
     expect(wrapper.text()).toContain('图谱扩展')
     expect(wrapper.text()).toContain('扩展候选')
     expect(wrapper.text()).toContain('审核扩展候选')
+    expect(wrapper.text()).toContain('推荐理由')
+    expect(wrapper.text()).toContain('1 个扩展候选等待人工审核')
 
     await wrapper.findAll('button').find((button) => button.text().includes('审核扩展候选'))?.trigger('click')
-    expect(wrapper.emitted('openKnowledge')).toBeTruthy()
+    expect(wrapper.emitted('openKnowledge')?.[0]?.[0]).toEqual(expect.objectContaining({ action: 'review_overlay' }))
   })
 
   it('opens the create wizard dialog without replacing the launcher panel', async () => {

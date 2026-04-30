@@ -282,6 +282,8 @@ export interface OverlayExtractionSessionResponse {
 export interface PreviewOverlayExtractionPayloadRequest {
   source_ids: string[]
   mode?: 'default' | 'custom_extension'
+  expansion_topic?: string | null
+  constraint_note?: string | null
 }
 
 export interface OverlayExtractionPayloadPreviewResponse {
@@ -340,12 +342,15 @@ export interface CreateOverlayExtractionSessionRequest {
   mode?: 'default' | 'custom_extension'
   extraction_payload?: unknown
   session_provenance?: Record<string, unknown> | null
+  expansion_topic?: string | null
+  constraint_note?: string | null
 }
 
 export interface CreateOverlayAutoDraftRequest {
   query?: string | null
   max_results?: number
   mode?: 'default' | 'custom_extension'
+  constraint_note?: string | null
 }
 
 export type OverlayAutoDraftExtractionStatus = 'extracted' | 'empty_extraction' | 'extraction_failed'
@@ -366,6 +371,8 @@ export interface OverlayAutoDraftMetadata {
   validation_summary: Record<string, unknown>
   extraction_status?: OverlayAutoDraftExtractionStatus
   extraction_error?: string | null
+  extraction_error_hint?: string | null
+  expansion_context?: Record<string, unknown> | null
 }
 
 export interface OverlayAutoDraftResponse extends OverlayExtractionSessionResponse {

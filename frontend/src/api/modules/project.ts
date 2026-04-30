@@ -293,6 +293,9 @@ export interface ProjectWorkflowAction {
   description: string
   route: string
   enabled: boolean
+  reason?: string | null
+  blockers?: string[]
+  route_query?: Record<string, string>
 }
 
 export interface ProjectWorkflowStep {

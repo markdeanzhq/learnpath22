@@ -55,6 +55,7 @@ export function createOverlayForm() {
     title: '',
     snippet: '',
     summary: '',
+    constraintNote: '',
     mode: 'default' as OverlayExtractionMode,
   }
 }
@@ -310,6 +311,7 @@ export function useOverlayDraftInput({
         query,
         max_results: 5,
         mode: overlayForm.value.mode,
+        constraint_note: overlayForm.value.constraintNote.trim() || null,
       })
       lastOverlaySession.value = session
       overlaySearchQuery.value = session.auto_draft?.query || query
@@ -322,8 +324,8 @@ export function useOverlayDraftInput({
         overlayBridgeMessage.value = `自动草稿已基于 ${selectedCount} 条资料创建，请审核候选后再启用规划。`
         notifySuccess?.('自动扩展草稿已创建，请审核候选节点、关系和资源')
       } else {
-        const reason = session.auto_draft?.extraction_error ? `（${session.auto_draft.extraction_error}）` : ''
-        overlayBridgeMessage.value = `已保存 ${selectedCount} 条资料，但 AI 抽取未生成候选${reason}。请在已保存搜索中重试生成候选预览，或改用手动资料补充。`
+        const hint = session.auto_draft?.extraction_error_hint || session.auto_draft?.extraction_error || '可重试抽取或改用手动资料补充。'
+        overlayBridgeMessage.value = `已保存 ${selectedCount} 条资料，但 AI 抽取未生成候选。${hint}`
         notifySuccess?.('资料已保存，可重试抽取或手动补充候选')
       }
       await loadPersistedSearchResults()
@@ -348,6 +350,8 @@ export function useOverlayDraftInput({
       const preview = await graphApi.previewOverlayExtractionPayload(projectId.value, {
         source_ids: sourceIds,
         mode: overlayForm.value.mode,
+        expansion_topic: overlaySearchQuery.value.trim() || null,
+        constraint_note: overlayForm.value.constraintNote.trim() || null,
       })
       overlayExtractionPreview.value = preview
       selectAllPreviewCandidates(normalizePreviewPayload(preview.extraction_payload))
@@ -389,6 +393,8 @@ export function useOverlayDraftInput({
             filtered_by_user: true,
             pre_validation_summary: overlayCandidateValidation.value?.summary,
           },
+          expansion_topic: overlaySearchQuery.value.trim() || null,
+          constraint_note: overlayForm.value.constraintNote.trim() || null,
         })
       }
       overlayForm.value = createOverlayForm()

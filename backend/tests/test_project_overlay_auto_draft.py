@@ -27,7 +27,10 @@ def _valid_node(name: str) -> dict:
 
 
 async def test_auto_overlay_draft_endpoint_searches_persists_and_creates_session(client, project, db_session):
-    async def fake_preview(db, *, project_id, source_ids, mode="default", domain=None):
+    async def fake_preview(db, *, project_id, source_ids, mode="default", domain=None, extraction_context=None):
+        assert extraction_context["workflow"] == "project_expansion_session"
+        assert extraction_context["expansion_topic"] == "随机森林"
+        assert extraction_context["constraint_note"] == "只补充基础视角"
         payload = {
             "nodes": [_valid_node("随机森林扩展")],
             "edges": [
@@ -90,7 +93,7 @@ async def test_auto_overlay_draft_endpoint_searches_persists_and_creates_session
     ):
         resp = await client.post(
             f"/api/v1/projects/{project['id']}/graph/overlay/auto-drafts",
-            json={"query": "随机森林", "max_results": 2},
+            json={"query": "随机森林", "max_results": 2, "constraint_note": "只补充基础视角"},
         )
 
     assert resp.status_code == 200
@@ -99,6 +102,7 @@ async def test_auto_overlay_draft_endpoint_searches_persists_and_creates_session
     assert data["session"]["session_status"] == "validated"
     assert data["session"]["provenance"]["draft_origin"] == "auto_overlay_draft"
     assert data["session"]["provenance"]["draft_engine"] == "search_llm"
+    assert data["session"]["provenance"]["expansion_context"]["constraint_note"] == "只补充基础视角"
     assert data["nodes"][0]["name"] == "随机森林扩展"
     assert data["nodes"][0]["validation_status"] == "valid"
     assert data["resources"][0]["source_evidence"]["source_id"] == data["sources"][0]["source_id"]
@@ -113,6 +117,15 @@ async def test_auto_overlay_draft_endpoint_searches_persists_and_creates_session
         "validation_summary": {"has_blocking_errors": False, "needs_review": False, "invalid_count": 0, "needs_review_count": 0},
         "extraction_status": "extracted",
         "extraction_error": None,
+        "extraction_error_hint": None,
+        "expansion_context": {
+            "workflow": "project_expansion_session",
+            "expansion_topic": "随机森林",
+            "constraint_note": "只补充基础视角",
+            "requires_user_review": True,
+            "writes_formal_graph": False,
+            "writes_formal_path": False,
+        },
     }
 
     result_id = data["auto_draft"]["selected_result_ids"][0]
@@ -166,6 +179,8 @@ async def test_auto_overlay_draft_endpoint_keeps_sources_when_llm_extraction_fai
     assert data["auto_draft"]["preview_counts"] == {"nodes": 0, "edges": 0, "resources": 0}
     assert data["auto_draft"]["extraction_status"] == "extraction_failed"
     assert data["auto_draft"]["extraction_error"] == "LLM_EXTRACTION_FAILED"
+    assert data["auto_draft"]["extraction_error_hint"] == "LLM 请求失败，可缩短资料、换更聚焦的来源或稍后重试。"
+    assert data["auto_draft"]["expansion_context"]["expansion_topic"] == "随机森林"
     result_id = data["auto_draft"]["selected_result_ids"][0]
     stored_result = await db_session.get(PersistedSearchResult, result_id)
     stored_source = await db_session.get(ProjectOverlaySource, data["sources"][0]["source_id"])

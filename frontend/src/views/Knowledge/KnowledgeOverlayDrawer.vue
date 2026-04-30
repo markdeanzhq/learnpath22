@@ -81,11 +81,14 @@
       </section>
 
       <section v-if="manualOverlayMode" class="overlay-subsection overlay-search-card">
-        <h4>按扩展主题自动搜索资料</h4>
-        <p>输入现有图谱之外想补充的概念或问题，系统会保存资料并尝试抽取项目级扩展候选。</p>
-        <div class="auto-draft-action-row">
-          <el-button type="primary" :loading="overlayAutoDraftLoading" @click="emit('create-auto-draft')">搜索资料并生成草稿</el-button>
-          <span>资料保存与 AI 抽取分开处理；即使抽取失败，已保存资料仍可用于重试或手动补充。</span>
+        <h4>项目扩展会话</h4>
+        <p>先确认扩展主题与约束，再搜索或补充资料；系统只生成候选，必须人工审核后才能开启规划。</p>
+        <div class="expansion-session-flow">
+          <span>确认主题</span>
+          <span>搜索/补充资料</span>
+          <span>生成候选</span>
+          <span>人工审核</span>
+          <span>开启规划</span>
         </div>
         <div class="overlay-search-row">
           <el-input
@@ -95,6 +98,22 @@
             @keyup.enter="emit('search-overlay-results')"
           />
           <el-button type="primary" plain :loading="overlaySearchLoading" @click="emit('search-overlay-results')">搜索资料</el-button>
+        </div>
+        <div class="expansion-constraint-field">
+          <label>扩展约束（可选）</label>
+          <el-input
+            :model-value="overlayForm.constraintNote"
+            type="textarea"
+            :rows="3"
+            maxlength="1000"
+            show-word-limit
+            placeholder="例如：只补充机器学习基础视角下的随机森林；暂不展开深度学习或工程部署。"
+            @update:model-value="updateTextField('constraintNote', $event)"
+          />
+        </div>
+        <div class="auto-draft-action-row">
+          <el-button type="primary" :loading="overlayAutoDraftLoading" @click="emit('create-auto-draft')">搜索资料并生成草稿</el-button>
+          <span>资料保存与 AI 抽取分开处理；即使抽取失败，已保存资料仍可用于重试或手动补充。</span>
         </div>
         <el-alert
           v-if="overlaySearchError"
@@ -480,7 +499,7 @@ function updateOverlayFormField<K extends keyof OverlayFormState>(field: K, valu
   emit('update-overlay-form', { ...props.overlayForm, [field]: value })
 }
 
-function updateTextField(field: 'rawText' | 'summary' | 'url' | 'title' | 'snippet', value: unknown) {
+function updateTextField(field: 'rawText' | 'summary' | 'url' | 'title' | 'snippet' | 'constraintNote', value: unknown) {
   updateOverlayFormField(field, typeof value === 'string' ? value : String(value ?? ''))
 }
 
@@ -545,7 +564,8 @@ function updateSelectedResultIds(value: unknown) {
 }
 
 .auto-draft-action-row,
-.overlay-search-row {
+.overlay-search-row,
+.expansion-session-flow {
   display: flex;
   gap: 8px;
   margin-top: 10px;
@@ -553,6 +573,30 @@ function updateSelectedResultIds(value: unknown) {
 
 .auto-draft-action-row {
   align-items: center;
+}
+
+.expansion-session-flow {
+  flex-wrap: wrap;
+}
+
+.expansion-session-flow span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #ecf5ff;
+  color: #409eff;
+  font-size: 12px;
+}
+
+.expansion-constraint-field {
+  margin-top: 10px;
+}
+
+.expansion-constraint-field label {
+  display: block;
+  margin-bottom: 6px;
+  color: #606266;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .auto-draft-action-row span {

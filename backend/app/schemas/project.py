@@ -74,6 +74,9 @@ class ProjectWorkflowAction(BaseModel):
     description: str
     route: str
     enabled: bool = True
+    reason: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    route_query: dict[str, str] = Field(default_factory=dict)
 
 
 class ProjectWorkflowStep(BaseModel):

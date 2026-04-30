@@ -38,6 +38,10 @@
         <div>
           <strong>{{ recommendedAction.label }}</strong>
           <p>{{ recommendedAction.description }}</p>
+          <p v-if="recommendedAction.reason" class="workflow-action-reason">推荐理由：{{ recommendedAction.reason }}</p>
+          <ul v-if="recommendedAction.blockers?.length" class="workflow-action-blockers">
+            <li v-for="blocker in recommendedAction.blockers" :key="blocker">{{ blocker }}</li>
+          </ul>
         </div>
         <el-button type="primary" :disabled="recommendedAction.enabled === false" @click="handleRecommendedAction">
           {{ recommendedAction.label }}
@@ -111,7 +115,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Document } from '@element-plus/icons-vue'
-import type { GoalTypeSelection, Project, ProjectWorkflowState, ProjectWorkflowStepStatus } from '@/api/modules/project'
+import type { GoalTypeSelection, Project, ProjectWorkflowAction, ProjectWorkflowState, ProjectWorkflowStepStatus } from '@/api/modules/project'
 import GoalForm from './GoalForm.vue'
 import ProfileQuestionnaire from './ProfileQuestionnaire.vue'
 
@@ -134,8 +138,8 @@ const emit = defineEmits<{
   startCreate: []
   createFormDirtyChanged: [dirty: boolean]
   continueProfile: []
-  openKnowledge: []
-  openPath: []
+  openKnowledge: [action: ProjectWorkflowAction]
+  openPath: [action: ProjectWorkflowAction]
 }>()
 
 const currentProjectGoalType = computed<GoalTypeSelection>(() => {
@@ -179,14 +183,15 @@ function statusTagType(status: ProjectWorkflowStepStatus) {
 }
 
 function handleRecommendedAction() {
-  const action = recommendedAction.value?.action
-  if (!action || recommendedAction.value?.enabled === false) return
+  const actionPayload = recommendedAction.value
+  const action = actionPayload?.action
+  if (!action || !actionPayload || actionPayload.enabled === false) return
   if (action === 'complete_profile') {
     emit('continueProfile')
     return
   }
   if (action === 'review_overlay' || action === 'fix_overlay') {
-    emit('openKnowledge')
+    emit('openKnowledge', actionPayload)
     return
   }
   if (action === 'generate_path') {
@@ -197,7 +202,7 @@ function handleRecommendedAction() {
     emit('startCreate')
     return
   }
-  emit('openPath')
+  emit('openPath', actionPayload)
 }
 </script>
 
@@ -297,6 +302,18 @@ function handleRecommendedAction() {
   margin: 4px 0 0;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+
+.workflow-action-reason {
+  color: var(--el-text-color-regular) !important;
+}
+
+.workflow-action-blockers {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--el-color-warning-dark-2);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .complete-section {

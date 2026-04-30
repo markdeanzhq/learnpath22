@@ -22,6 +22,12 @@ RECOVERABLE_EXTRACTION_ERRORS = {
     "INVALID_LLM_EXTRACTION_JSON",
     "AUTO_DRAFT_EMPTY_EXTRACTION",
 }
+EXTRACTION_ERROR_HINTS = {
+    "LLM_NOT_READY": "LLM 服务未配置或暂不可用，可先保留资料，稍后重试抽取。",
+    "LLM_EXTRACTION_FAILED": "LLM 请求失败，可缩短资料、换更聚焦的来源或稍后重试。",
+    "INVALID_LLM_EXTRACTION_JSON": "模型返回格式不符合候选 schema，可重试或改用手动资料补充。",
+    "AUTO_DRAFT_EMPTY_EXTRACTION": "资料证据不足，未形成候选；建议补充定义、前置知识和案例。",
+}
 
 
 def _normalize_query(query: str | None, fallback_goal_text: str | None) -> str:
@@ -57,7 +63,24 @@ def _normalize_search_result(result: dict[str, Any], *, index: int, query: str) 
     }
 
 
-def _empty_extraction_preview(*, source_ids: list[str], mode: str, warning: str) -> dict[str, Any]:
+def _extraction_error_hint(error: str | None) -> str | None:
+    if not error:
+        return None
+    return EXTRACTION_ERROR_HINTS.get(error, "AI 抽取未完成，资料已保留，可调整来源后重试。")
+
+
+def _expansion_context(*, topic: str, constraint_note: str | None) -> dict[str, Any]:
+    return {
+        "workflow": "project_expansion_session",
+        "expansion_topic": topic,
+        "constraint_note": (constraint_note or "").strip() or None,
+        "requires_user_review": True,
+        "writes_formal_graph": False,
+        "writes_formal_path": False,
+    }
+
+
+def _empty_extraction_preview(*, source_ids: list[str], mode: str, warning: str, expansion_context: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = {"nodes": [], "edges": [], "resources": [], "warnings": [warning]}
     return {
         "source_ids": source_ids,
@@ -69,7 +92,10 @@ def _empty_extraction_preview(*, source_ids: list[str], mode: str, warning: str)
             "schema_version": "v1",
             "draft_origin": "auto_overlay_draft",
             "draft_engine": "search_sources_only",
+            "workflow": "project_expansion_session",
+            "expansion_context": expansion_context or {},
             "extraction_error": warning,
+            "extraction_error_hint": _extraction_error_hint(warning),
             "writes_formal_graph": False,
             "writes_formal_path": False,
         },
@@ -85,8 +111,10 @@ async def create_project_overlay_auto_draft(
     domain: str | None,
     max_results: int = 5,
     mode: str = "default",
+    constraint_note: str | None = None,
 ) -> dict[str, Any]:
     effective_query = _normalize_query(query, fallback_goal_text)
+    expansion_context = _expansion_context(topic=effective_query, constraint_note=constraint_note)
     search_results = await search(effective_query, max_results=max_results)
     if not search_results:
         raise AppError(code=422, message="AUTO_DRAFT_NO_SEARCH_RESULTS")
@@ -123,23 +151,24 @@ async def create_project_overlay_auto_draft(
             source_ids=source_ids,
             mode=mode,
             domain=domain,
+            extraction_context=expansion_context,
         )
         preview_counts = preview.get("counts") or {}
         extracted_count = sum(int(preview_counts.get(key) or 0) for key in ("nodes", "edges", "resources"))
         if extracted_count <= 0:
             extraction_status = "empty_extraction"
             extraction_error = "AUTO_DRAFT_EMPTY_EXTRACTION"
-            preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=extraction_error)
+            preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=extraction_error, expansion_context=expansion_context)
     except AppError as exc:
         if exc.message not in RECOVERABLE_EXTRACTION_ERRORS:
             raise
         extraction_status = "extraction_failed"
         extraction_error = exc.message
-        preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=exc.message)
+        preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=exc.message, expansion_context=expansion_context)
     except ValueError as exc:
         extraction_status = "extraction_failed"
         extraction_error = str(exc) or "INVALID_LLM_EXTRACTION_JSON"
-        preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=extraction_error)
+        preview = _empty_extraction_preview(source_ids=source_ids, mode=mode, warning=extraction_error, expansion_context=expansion_context)
 
     preview_counts = preview.get("counts") or {}
     validation = await validate_extraction_payload_for_sources(
@@ -161,6 +190,8 @@ async def create_project_overlay_auto_draft(
             **preview.get("provenance", {}),
             "draft_origin": "auto_overlay_draft",
             "draft_engine": "search_llm" if extraction_status == "extracted" else "search_sources_only",
+            "workflow": "project_expansion_session",
+            "expansion_context": expansion_context,
             "query": effective_query,
             "selected_result_ids": [result.result_id for result in persisted_results],
             "source_ids": source_ids,
@@ -168,6 +199,7 @@ async def create_project_overlay_auto_draft(
             "pre_validation_summary": validation.get("summary"),
             "extraction_status": extraction_status,
             "extraction_error": extraction_error,
+            "extraction_error_hint": _extraction_error_hint(extraction_error),
             "writes_formal_graph": False,
             "writes_formal_path": False,
         },
@@ -181,6 +213,8 @@ async def create_project_overlay_auto_draft(
         "persisted_results": persisted_results,
         "bridged_results": bridged,
         "source_ids": source_ids,
+        "expansion_context": expansion_context,
         "extraction_status": extraction_status,
         "extraction_error": extraction_error,
+        "extraction_error_hint": _extraction_error_hint(extraction_error),
     }

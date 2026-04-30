@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, patch
 
+import httpx
 from sqlalchemy import select
 
 from app.core.config import replace_runtime_settings
@@ -95,6 +96,17 @@ class _MockAsyncLLMClient:
         if self.captured is not None:
             self.captured.update({"url": url, "headers": headers, "json": json})
         return _MockLLMResponse(self.content)
+
+
+class _FailingAsyncLLMClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def post(self, url, *, headers=None, json=None):
+        raise httpx.TransportError("temporary network failure")
 
 
 def _llm_payload(source_id: str) -> str:
@@ -559,7 +571,11 @@ async def test_preview_overlay_extraction_payload_uses_llm_without_creating_sess
     ):
         resp = await client.post(
             f"/api/v1/projects/{project['id']}/graph/overlay/extraction-payload/preview",
-            json={"source_ids": [source["source_id"]]},
+            json={
+                "source_ids": [source["source_id"]],
+                "expansion_topic": "随机森林",
+                "constraint_note": "只抽取基础前置知识",
+            },
         )
 
     assert resp.status_code == 200
@@ -568,12 +584,34 @@ async def test_preview_overlay_extraction_payload_uses_llm_without_creating_sess
     assert payload["warnings"] == ["llm_generated"]
     assert payload["provenance"]["draft_origin"] == "llm_overlay_extraction"
     assert payload["provenance"]["writes_formal_graph"] is False
+    assert payload["provenance"]["expansion_context"]["constraint_note"] == "只抽取基础前置知识"
     assert payload["extraction_payload"]["nodes"][0]["name"] == "随机森林扩展"
     assert captured["url"] == "https://llm.example.com/v1/chat/completions"
     assert captured["json"]["model"] == "test-model"
+    llm_request = json.loads(captured["json"]["messages"][1]["content"])
+    assert llm_request["expansion_context"]["expansion_topic"] == "随机森林"
+    assert llm_request["expansion_context"]["constraint_note"] == "只抽取基础前置知识"
 
     sessions = (await db_session.execute(select(ProjectOverlayExtractionSession))).scalars().all()
     assert sessions == []
+
+
+async def test_preview_overlay_extraction_payload_retries_transient_llm_failure(client, project):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    replace_runtime_settings({"llm_api_key": "sk-test"})
+
+    with patch(
+        "app.services.project_overlay_llm_extraction_service.httpx.AsyncClient",
+        side_effect=[_FailingAsyncLLMClient(), _MockAsyncLLMClient(_llm_payload(source["source_id"]))],
+    ) as client_factory:
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/graph/overlay/extraction-payload/preview",
+            json={"source_ids": [source["source_id"]]},
+        )
+
+    assert resp.status_code == 200
+    assert client_factory.call_count == 2
+    assert resp.json()["counts"] == {"nodes": 1, "edges": 1, "resources": 1}
 
 
 async def test_preview_overlay_extraction_payload_accepts_text_wrapped_llm_json(client, project, db_session):

@@ -632,6 +632,36 @@ def _append_decision_history(session: ClarificationSession, event: dict[str, Any
     session.decision_history_json = _json_dumps(history)
 
 
+def _has_free_text_answer(answers: list[dict[str, Any]]) -> bool:
+    return any(str(answer.get("free_text") or "").strip() for answer in answers)
+
+
+def _append_clarification_review_sample(
+    session: ClarificationSession,
+    *,
+    sample_type: str,
+    questions: list[dict[str, Any]],
+    answers: list[dict[str, Any]],
+    clarified_goal_text: str,
+    preview: dict[str, Any],
+    next_questions: list[dict[str, Any]] | None = None,
+) -> None:
+    _append_decision_history(session, {
+        "event": "clarification_review_sample",
+        "sample_type": sample_type,
+        "turn_count": session.turn_count,
+        "raw_text": session.raw_text,
+        "clarified_goal_text": clarified_goal_text,
+        "questions": questions,
+        "answers": answers,
+        "next_questions": next_questions or [],
+        "coverage_status": preview.get("coverage_status"),
+        "result_type": preview.get("result_type"),
+        "goal_understanding": preview.get("goal_understanding"),
+        "limit_reached": session.turn_count >= session.max_turns,
+    })
+
+
 def _extract_clarified_goal_text(
     *,
     raw_text: str,
@@ -747,6 +777,15 @@ async def answer_clarification_session(
         "answers": normalized_answers,
         "clarified_goal_text": clarified_goal_text,
     })
+    if _has_free_text_answer(normalized_answers):
+        _append_clarification_review_sample(
+            session,
+            sample_type="free_text_answer",
+            questions=questions,
+            answers=normalized_answers,
+            clarified_goal_text=clarified_goal_text,
+            preview=preview,
+        )
 
     if preview.get("result_type") == "answer_clarification" and session.turn_count < session.max_turns:
         child_session_id = str(preview.get("clarification_session_id") or "")
@@ -766,6 +805,15 @@ async def answer_clarification_session(
             "coverage_status": preview.get("coverage_status"),
             "result_type": preview.get("result_type"),
         })
+        _append_clarification_review_sample(
+            session,
+            sample_type="still_ambiguous",
+            questions=questions,
+            answers=normalized_answers,
+            clarified_goal_text=clarified_goal_text,
+            preview=preview,
+            next_questions=next_questions,
+        )
         await db.commit()
         await db.refresh(session)
         return {
@@ -784,12 +832,22 @@ async def answer_clarification_session(
     session.status = "resolved"
     session.completed_at = _naive_utc_now()
     session.coverage_response_json = _json_dumps(preview)
+    limit_reached = session.turn_count >= session.max_turns
     _append_decision_history(session, {
         "event": "clarification_resolved",
         "coverage_status": preview.get("coverage_status"),
         "result_type": preview.get("result_type"),
-        "limit_reached": session.turn_count >= session.max_turns,
+        "limit_reached": limit_reached,
     })
+    if limit_reached or preview.get("result_type") == "boundary_reject":
+        _append_clarification_review_sample(
+            session,
+            sample_type="limit_reached" if limit_reached else "boundary_resolution",
+            questions=questions,
+            answers=normalized_answers,
+            clarified_goal_text=clarified_goal_text,
+            preview=preview,
+        )
     await db.commit()
     await db.refresh(session)
     return {

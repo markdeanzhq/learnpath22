@@ -154,6 +154,42 @@ def _validate_edge_exists(edge_id: str, domain: str | None = None) -> None:
         raise AppError(code=404, message="边不存在")
 
 
+def _overlay_expansion_context(*, expansion_topic: str | None, constraint_note: str | None) -> dict[str, Any] | None:
+    topic = (expansion_topic or "").strip()
+    note = (constraint_note or "").strip()
+    if not topic and not note:
+        return None
+    return {
+        "workflow": "project_expansion_session",
+        "expansion_topic": topic or None,
+        "constraint_note": note or None,
+        "requires_user_review": True,
+        "writes_formal_graph": False,
+        "writes_formal_path": False,
+    }
+
+
+def _merge_overlay_expansion_provenance(
+    provenance: dict[str, Any] | None,
+    expansion_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not expansion_context:
+        return provenance
+
+    merged = dict(provenance or {})
+    existing_context = merged.get("expansion_context")
+    if isinstance(existing_context, dict):
+        expansion_context = {**existing_context, **expansion_context}
+    merged.update({
+        "workflow": "project_expansion_session",
+        "expansion_context": expansion_context,
+        "requires_user_review": True,
+        "writes_formal_graph": False,
+        "writes_formal_path": False,
+    })
+    return merged
+
+
 class ReviewStatusRequest(BaseModel):
     status: str = Field(pattern="^(confirmed|removed|pending)$")
 
@@ -204,6 +240,8 @@ class OverlayExtractionPayloadPreviewRequest(BaseModel):
 
     source_ids: list[str] = Field(min_length=1)
     mode: Literal["default", "custom_extension"] = "default"
+    expansion_topic: str | None = Field(default=None, max_length=200)
+    constraint_note: str | None = Field(default=None, max_length=1000)
 
 
 class OverlayExtractionSessionRequest(BaseModel):
@@ -213,6 +251,8 @@ class OverlayExtractionSessionRequest(BaseModel):
     mode: Literal["default", "custom_extension"] = "default"
     extraction_payload: Any | None = None
     session_provenance: dict[str, Any] | None = None
+    expansion_topic: str | None = Field(default=None, max_length=200)
+    constraint_note: str | None = Field(default=None, max_length=1000)
 
 
 class OverlayExtractionPayloadValidationRequest(BaseModel):
@@ -229,6 +269,7 @@ class OverlayAutoDraftRequest(BaseModel):
     query: str | None = Field(default=None, max_length=200)
     max_results: int = Field(default=5, ge=1, le=10)
     mode: Literal["default", "custom_extension"] = "default"
+    constraint_note: str | None = Field(default=None, max_length=1000)
 
 
 class OverlayNodeCandidatePatchRequest(BaseModel):
@@ -1059,6 +1100,10 @@ async def preview_overlay_extraction_payload(
             source_ids=req.source_ids,
             mode=req.mode,
             domain=project.domain,
+            extraction_context=_overlay_expansion_context(
+                expansion_topic=req.expansion_topic,
+                constraint_note=req.constraint_note,
+            ),
         )
     except ValueError as exc:
         raise AppError(code=422, message=str(exc)) from exc
@@ -1097,6 +1142,10 @@ async def create_overlay_extraction_session(
     if not project:
         raise NotFoundError("项目不存在")
 
+    expansion_context = _overlay_expansion_context(
+        expansion_topic=req.expansion_topic,
+        constraint_note=req.constraint_note,
+    )
     try:
         created = await create_extraction_session_from_sources(
             db,
@@ -1105,7 +1154,7 @@ async def create_overlay_extraction_session(
             mode=req.mode,
             extraction_payload=req.extraction_payload,
             domain=project.domain,
-            session_provenance=req.session_provenance,
+            session_provenance=_merge_overlay_expansion_provenance(req.session_provenance, expansion_context),
         )
     except ValueError as exc:
         raise AppError(code=422, message=str(exc)) from exc
@@ -1140,6 +1189,7 @@ async def create_overlay_auto_draft(
             domain=project.domain,
             max_results=req.max_results,
             mode=req.mode,
+            constraint_note=req.constraint_note,
         )
     except ValueError as exc:
         raise AppError(code=422, message=str(exc)) from exc
@@ -1165,6 +1215,8 @@ async def create_overlay_auto_draft(
         "validation_summary": auto_draft["validation"].get("summary", {}),
         "extraction_status": auto_draft.get("extraction_status", "extracted"),
         "extraction_error": auto_draft.get("extraction_error"),
+        "extraction_error_hint": auto_draft.get("extraction_error_hint"),
+        "expansion_context": auto_draft.get("expansion_context"),
     }
     return response
 
