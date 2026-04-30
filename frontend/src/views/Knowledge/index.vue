@@ -23,9 +23,9 @@
         @refresh="onRefresh"
         @sync="onSync"
         @layout-change="onLayoutChange"
-        @zoom-in="graphRef?.zoomIn()"
-        @zoom-out="graphRef?.zoomOut()"
-        @fit-view="graphRef?.fitView()"
+        @zoom-in="onZoomIn"
+        @zoom-out="onZoomOut"
+        @fit-view="onFitView"
         @search="onSearch"
         @show-entities="onShowEntities"
         @create-overlay="openOverlayDrawer"
@@ -816,13 +816,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
-import { useRoute, useRouter } from 'vue-router'
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
 import { useGraphCacheDiagnostics } from './composables/useGraphCacheDiagnostics'
+import { useEntityMetadataDrawer } from './composables/useEntityMetadataDrawer'
+import { useGraphRouteSync } from './composables/useGraphRouteSync'
+import { useGraphToolbarActions, type GraphCanvasActionHandle, type GraphLayout } from './composables/useGraphToolbarActions'
+import { useGraphWorkspaceOrchestration } from './composables/useGraphWorkspaceOrchestration'
 import { useGraphWorkspaceLoader, type GraphWorkspaceLoadOptions } from './composables/useGraphWorkspaceLoader'
 import { useGraphReviewActions } from './composables/useGraphReviewActions'
 import { useOverlayCandidateEditor } from './composables/useOverlayCandidateEditor'
@@ -836,15 +839,10 @@ import {
 } from './composables/useOverlayCandidateWorkflow'
 import { useOverlayDraftInput } from './composables/useOverlayDraftInput'
 import {
-  buildGraphQuery,
   graphApi,
-  normalizeGraphPathId,
-  normalizeGraphScope,
   type GraphEdgeData,
   type GraphElement,
-  type GraphEntityMetadata,
   type GraphNodeData,
-  type GraphScope,
 } from '@/api/modules/graph'
 import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph/graphMeta'
 import {
@@ -854,8 +852,6 @@ import {
   sessionStatusMeta,
   validationStatusMeta,
 } from '@/utils/displayLabels'
-
-type GraphLayout = 'cose' | 'breadthfirst'
 
 type SelectedAdjacentEdge = GraphEdgeData & {
   direction: 'incoming' | 'outgoing'
@@ -877,44 +873,27 @@ const GraphCanvas = defineAsyncComponent(() => import('@/components/Graph/GraphC
 const NodeDetail = defineAsyncComponent(() => import('@/components/Graph/NodeDetail.vue'))
 const EntityMetadataDrawer = defineAsyncComponent(() => import('@/components/Graph/EntityMetadataDrawer.vue'))
 
-type GraphCanvasHandle = {
-  zoomIn: () => void
-  zoomOut: () => void
-  fitView: () => void
+type GraphCanvasHandle = GraphCanvasActionHandle & {
   focusNode: (nodeId: string) => boolean
-  highlightBySearch: (keyword: string) => void
   setNodeReviewStatus: (nodeId: string, status: string) => void
   setEdgeReviewStatus: (edgeId: string, status: string) => void
 }
 
-function firstQueryValue(value: unknown): unknown {
-  return Array.isArray(value) ? value[0] : value
-}
-
-
-function normalizeRouteSessionId(value: unknown): string | null {
-  const nextValue = firstQueryValue(value)
-  return typeof nextValue === 'string' && nextValue.trim() ? nextValue.trim() : null
-}
-
-function normalizeRouteNodeId(value: unknown): string | null {
-  const nextValue = firstQueryValue(value)
-  return typeof nextValue === 'string' && nextValue.trim() ? nextValue.trim() : null
-}
-
-function normalizeGoalDraftFlag(value: unknown): boolean {
-  const nextValue = firstQueryValue(value)
-  return nextValue === '1' || nextValue === 'true'
-}
-
-const route = useRoute()
-const router = useRouter()
 const projectStore = useProjectStore()
 const { displayMode, showAuditDetails, showTechnicalDetails } = useDisplayMode()
 const projectId = computed(() => projectStore.currentProject?.id)
 const currentProject = computed(() => projectStore.currentProject)
 const layout = ref<GraphLayout>('cose')
-const scope = ref<GraphScope>(normalizeGraphScope(route.query.scope))
+const {
+  scope,
+  requestedScope,
+  requestedPathId,
+  requestedNodeId,
+  requestedSessionId,
+  goalDraftResolutionSessionId,
+  graphQuery,
+  replaceGraphRoute,
+} = useGraphRouteSync()
 const syncing = ref(false)
 const selectedNodeId = ref<string | null>(null)
 const graphRef = ref<GraphCanvasHandle>()
@@ -927,9 +906,12 @@ const {
   refreshGraphCacheStats,
 } = useGraphCacheDiagnostics(() => graphApi.getGraphCacheStats())
 const reviewMode = ref(false)
-const entityDrawerVisible = ref(false)
-const entityLoading = ref(false)
-const entityMetadata = ref<GraphEntityMetadata | null>(null)
+const {
+  entityDrawerVisible,
+  entityLoading,
+  entityMetadata,
+  onShowEntities,
+} = useEntityMetadataDrawer(projectId)
 const overlayDrawerVisible = ref(false)
 const overlayError = ref('')
 const lastOverlaySession = ref<OverlaySessionView | null>(null)
@@ -937,13 +919,6 @@ const overlayCandidateFilter = ref<CandidateIssueFilter>('all')
 let graphWorkspaceLoader: ReturnType<typeof useGraphWorkspaceLoader> | null = null
 const categoryLegend = GRAPH_CATEGORY_LEGEND
 const relationLegend = GRAPH_RELATION_LEGEND
-const requestedScope = computed<GraphScope>(() => normalizeGraphScope(route.query.scope))
-const requestedPathId = computed<string | undefined>(() => normalizeGraphPathId(requestedScope.value, route.query.path_id))
-const requestedNodeId = computed<string | null>(() => normalizeRouteNodeId(route.query.nodeId))
-const requestedSessionId = computed<string | null>(() => normalizeRouteSessionId(route.query.sessionId))
-const goalDraftResolutionSessionId = computed<string | null>(() => (
-  normalizeGoalDraftFlag(route.query.goalDraft) ? normalizeRouteSessionId(route.query.resolutionSessionId) : null
-))
 const emptyDescription = computed(() =>
   emptyReason.value === PROJECT_LATEST_PLAN_MISSING
     ? '当前项目尚未生成学习路径，暂时无法展示路径子图；项目图谱仍可显示领域基线与项目扩展草稿。'
@@ -956,12 +931,6 @@ const projectionStatusTitle = computed(() => {
   const reason = formatServiceReason(projectionStatus.value.reason)
   return reason ? `${status}：${reason}` : status
 })
-const graphQuery = computed(() => buildGraphQuery({
-  scope: scope.value,
-  path_id: requestedPathId.value,
-  nodeId: requestedNodeId.value || undefined,
-}))
-
 function isNodeElement(element: GraphElement): element is Extract<GraphElement, { group: 'nodes' }> {
   return element.group === 'nodes'
 }
@@ -1055,6 +1024,34 @@ const {
   overlayPreflight,
   persistedSearchResults,
 } = workspaceLoader
+const {
+  onLayoutChange,
+  onNodeClick,
+  onSearch,
+  onZoomIn,
+  onZoomOut,
+  onFitView,
+  onScopeChange,
+  onRefresh,
+  onSync,
+} = useGraphToolbarActions({
+  projectId,
+  scope,
+  layout,
+  elements,
+  selectedNodeId,
+  syncing,
+  errorMessage,
+  lastRefreshError,
+  emptyReason,
+  graphState,
+  graphRef,
+  resetOverlayState,
+  replaceGraphRoute,
+  loadGraphWorkspace,
+  notifySuccess: (message) => ElMessage.success(message),
+  notifyError: (message) => ElMessage.error(message),
+})
 const nodes = computed(() => elements.value.filter(isNodeElement).map((element) => element.data))
 const edges = computed(() => elements.value.filter(isEdgeElement).map((element) => element.data))
 const {
@@ -1180,12 +1177,6 @@ const selectedNode = computed<SelectedNodeContext | null>(() => {
   }
 })
 
-watch(nodes, (nextNodes) => {
-  if (selectedNodeId.value && !nextNodes.some((node) => node.id === selectedNodeId.value)) {
-    selectedNodeId.value = null
-  }
-})
-
 function resetGraphState() {
   requireGraphWorkspaceLoader().resetGraphState()
 }
@@ -1207,26 +1198,6 @@ function requireGraphWorkspaceLoader() {
 
 function abortGraphLoad() {
   requireGraphWorkspaceLoader().abortGraphLoad()
-}
-
-function graphRouteQuery(nextScope: GraphScope, nodeId?: string | null, sessionId?: string | null) {
-  return {
-    ...buildGraphQuery({
-      scope: nextScope,
-      path_id: nextScope === 'path' ? requestedPathId.value : undefined,
-      nodeId: nodeId || undefined,
-    }),
-    ...(sessionId ? { sessionId } : {}),
-  }
-}
-
-async function replaceGraphRoute(nextScope: GraphScope, nodeId?: string | null, sessionId: string | null = requestedSessionId.value) {
-  await router.replace({
-    name: 'Knowledge',
-    query: Object.fromEntries(
-      Object.entries(graphRouteQuery(nextScope, nodeId, sessionId)).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-    ),
-  })
 }
 
 async function loadPersistedSearchResults() {
@@ -1262,123 +1233,31 @@ async function loadGraphWorkspace(options: GraphWorkspaceLoadOptions = {}) {
   await requireGraphWorkspaceLoader().loadGraphWorkspace(options)
 }
 
-watch(
+const graphWorkspaceOrchestration = useGraphWorkspaceOrchestration({
   projectId,
-  async (nextProjectId, previousProjectId) => {
-    if (!nextProjectId) {
-      abortGraphLoad()
-      manualGoalDraftResolutionSessionId.value = null
-      resetGraphState()
-      resetOverlayState()
-      return
-    }
-
-    if (nextProjectId !== previousProjectId) {
-      manualGoalDraftResolutionSessionId.value = null
-      resetGraphState()
-      resetOverlayState()
-    }
-
-    scope.value = requestedScope.value
-    await loadGraphWorkspace({
-      includePersistedSearchResults: true,
-      includeRequestedOverlaySession: true,
-      includeGoalDraftEntry: true,
-    })
-  },
-  { immediate: true },
-)
-
-watch([requestedScope, requestedPathId], async ([nextScope, nextPathId], [previousScope, previousPathId]) => {
-  if (!projectId.value || (scope.value === nextScope && nextScope === previousScope && nextPathId === previousPathId)) {
-    return
-  }
-
-  scope.value = nextScope
-  selectedNodeId.value = null
-  resetOverlayState()
-  await loadGraphWorkspace()
-})
-
-watch([requestedPathId, requestedNodeId, graphState], async () => {
-  await focusRequestedNode()
+  nodes,
+  scope,
+  requestedScope,
+  requestedPathId,
+  requestedNodeId,
+  requestedSessionId,
+  activeGoalDraftResolutionSessionId,
+  manualGoalDraftResolutionSessionId,
+  graphState,
+  selectedNodeId,
+  abortGraphLoad,
+  resetGraphState,
+  resetOverlayState,
+  loadRequestedOverlaySession,
+  loadGraphWorkspace,
+  focusRequestedNode,
+  openGoalDraftEntry,
 })
 
 async function syncRequestedOverlaySession(nextSessionId: string | null) {
-  if (!nextSessionId) {
-    resetOverlayState()
-    return
-  }
-  await loadRequestedOverlaySession()
+  await graphWorkspaceOrchestration.syncRequestedOverlaySession(nextSessionId)
 }
-
-watch(requestedSessionId, syncRequestedOverlaySession)
-watch(activeGoalDraftResolutionSessionId, async (nextSessionId) => {
-  if (!nextSessionId) return
-  resetOverlayState()
-  await openGoalDraftEntry()
-})
-
-function onLayoutChange(newLayout: string) {
-  layout.value = newLayout as GraphLayout
-}
-
-function onNodeClick(data: GraphNodeData) {
-  selectedNodeId.value = data.id
-  void replaceGraphRoute(scope.value, data.id)
-}
-
-function onSearch(keyword: string) {
-  graphRef.value?.highlightBySearch(keyword)
-}
-
-async function onScopeChange(nextScope: GraphScope) {
-  if (scope.value === nextScope) return
-  scope.value = nextScope
-  selectedNodeId.value = null
-  resetOverlayState()
-  await replaceGraphRoute(nextScope)
-  await loadGraphWorkspace()
-}
-
-async function onRefresh() {
-  await loadGraphWorkspace()
-}
-
-async function onSync() {
-  if (!projectId.value) return
-
-  const hasExistingGraph = elements.value.length > 0
-
-  syncing.value = true
-  errorMessage.value = ''
-
-  try {
-    await graphApi.syncGraph(projectId.value)
-    ElMessage.success('知识图谱同步成功')
-    await loadGraphWorkspace()
-  } catch (e: any) {
-    const message = e?.response?.data?.error || e?.message || '知识图谱同步失败，请稍后重试'
-    errorMessage.value = message
-
-    if (hasExistingGraph) {
-      lastRefreshError.value = message
-      ElMessage.error(message)
-      return
-    }
-
-    lastRefreshError.value = ''
-
-    if (graphState.value !== 'empty') {
-      emptyReason.value = undefined
-      graphState.value = 'error'
-    }
-
-    ElMessage.error(message)
-  } finally {
-    syncing.value = false
-  }
-}
+void syncRequestedOverlaySession
 
 function openOverlayRepairTarget(target: OverlayRepairTarget) {
   if (target.kind === 'node') {
@@ -1401,21 +1280,6 @@ function getOverlayErrorMessage(error: any) {
     return '搜索服务尚未就绪，自定义扩展暂不可用；领域基线图谱浏览不受影响。'
   }
   return formatServiceReason(code) || code || error?.message || '扩展草稿创建失败'
-}
-
-async function onShowEntities() {
-  if (!projectId.value) return
-
-  entityDrawerVisible.value = true
-  entityLoading.value = true
-
-  try {
-    entityMetadata.value = await graphApi.getGraphEntities(projectId.value)
-  } catch {
-    entityDrawerVisible.value = false
-  } finally {
-    entityLoading.value = false
-  }
 }
 
 function toggleFullscreen() {
