@@ -5,11 +5,7 @@
       class="graph-card"
       :body-style="{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 160px)' }"
     >
-      <template v-if="!projectId">
-        <div class="empty-project-wrap">
-          <el-empty description="请先在项目页选择一个项目后再查看知识图谱" />
-        </div>
-      </template>
+      <GraphStatePanel v-if="!projectId" state="no-project" />
 
       <GraphToolbar
         v-if="projectId"
@@ -92,110 +88,32 @@
           @review-edge="onReviewEdge"
         />
 
-        <div v-else-if="graphState === 'loading'" class="graph-state-wrap graph-loading-state" data-testid="graph-loading-skeleton">
-          <div class="graph-skeleton-panel">
-            <div class="graph-skeleton-header"></div>
-            <div class="graph-skeleton-body">
-              <span v-for="index in 8" :key="index" class="graph-skeleton-node"></span>
-            </div>
-            <p>正在整理知识节点、审核状态与扩展候选，请稍候。</p>
-          </div>
-        </div>
-
-        <el-empty
-          v-else-if="graphState === 'empty'"
-          class="graph-state-wrap"
-          :description="emptyDescription"
-        >
-          <el-button type="primary" @click="onRefresh">刷新</el-button>
-          <el-button :loading="syncing" @click="onSync">同步图谱</el-button>
-        </el-empty>
-
-        <div v-else class="graph-state-wrap">
-          <el-result
-            icon="error"
-            title="知识图谱加载失败"
-            :sub-title="errorMessage || '请稍后重试或重新同步图谱'"
-          >
-            <template #extra>
-              <el-space wrap>
-                <el-button type="primary" @click="onRefresh">重新加载</el-button>
-                <el-button :loading="syncing" @click="onSync">同步图谱</el-button>
-              </el-space>
-            </template>
-          </el-result>
-        </div>
+        <GraphStatePanel
+          v-else
+          :state="graphState"
+          :empty-description="emptyDescription"
+          :error-message="errorMessage"
+          :syncing="syncing"
+          @refresh="onRefresh"
+          @sync="onSync"
+        />
       </div>
     </el-card>
 
-    <NodeDetail
-      v-if="selectedNode"
-      :node="selectedNode"
+    <KnowledgeSidePanels
+      :selected-node="selectedNode"
+      :entity-drawer-visible="entityDrawerVisible"
+      :entity-loading="entityLoading"
+      :entity-metadata="entityMetadata"
+      :overlay-drawer-props="overlayDrawerProps"
+      :candidate-editor-dialog-props="candidateEditorDialogProps"
       @review-edge="onReviewEdge"
       @set-overlay-planning="onSetOverlayPlanning"
-    />
-    <EntityMetadataDrawer
-      v-if="entityDrawerVisible || entityLoading || entityMetadata"
-      v-model="entityDrawerVisible"
-      :loading="entityLoading"
-      :metadata="entityMetadata"
-    />
-
-    <KnowledgeOverlayDrawer
-      v-model:visible="overlayDrawerVisible"
-      v-model:display-mode="displayMode"
-      v-model:overlay-draft-mode="overlayDraftMode"
-      v-model:overlay-candidate-filter="overlayCandidateFilter"
-      :overlay-submitting="overlaySubmitting"
-      :overlay-extraction-preview-loading="overlayExtractionPreviewLoading"
-      :active-goal-draft-resolution-session-id="activeGoalDraftResolutionSessionId"
-      :manual-goal-draft-loading="manualGoalDraftLoading"
-      :goal-draft-proposal-loading="goalDraftProposalLoading"
-      :goal-draft-inbox-proposal="goalDraftInboxProposal"
-      :goal-draft-proposal-dismissed="goalDraftProposalDismissed"
-      :goal-draft-inbox-missing-concepts="goalDraftInboxMissingConcepts"
-      :goal-draft-inbox-counts="goalDraftInboxCounts"
-      :goal-draft-inbox-nodes="goalDraftInboxNodes"
-      :goal-draft-inbox-edges="goalDraftInboxEdges"
-      :goal-draft-inbox-resources="goalDraftInboxResources"
-      :overlay-form="overlayForm"
-      :manual-overlay-mode="manualOverlayMode"
-      :persisted-search-results="persistedSearchResults"
-      :overlay-bridge-message="overlayBridgeMessage"
-      :overlay-extraction-preview="overlayExtractionPreview"
-      :normalized-preview-payload="normalizedPreviewPayload"
-      :selected-preview-counts="selectedPreviewCounts"
-      :overlay-candidate-validation="overlayCandidateValidation"
-      :is-preview-candidate-selected="isPreviewCandidateSelected"
-      :candidate-title="candidateTitle"
-      :edge-candidate-summary="edgeCandidateSummary"
-      :overlay-error="overlayError"
-      :last-overlay-session="lastOverlaySession"
-      :show-technical-details="showTechnicalDetails"
-      :show-audit-details="showAuditDetails"
-      :overlay-session-guide="overlaySessionGuide"
-      :overlay-session-stats="overlaySessionStats"
-      :overlay-workflow-steps="overlayWorkflowSteps"
-      :overlay-workflow-current-step="overlayWorkflowCurrentStep"
-      :overlay-candidate-filter-counts="overlayCandidateFilterCounts"
-      :filtered-overlay-candidate-count="filteredOverlayCandidateCount"
-      :has-overlay-candidate-repair-target="Boolean(overlayCandidateRepairTarget)"
-      :overlay-candidate-repair-target-label="overlayCandidateRepairTargetLabel"
-      :filtered-overlay-nodes="filteredOverlayNodes"
-      :filtered-overlay-edges="filteredOverlayEdges"
-      :filtered-overlay-resources="filteredOverlayResources"
-      :goal-extension-draft-details="goalExtensionDraftDetails"
-      :goal-draft-missing-concepts="goalDraftMissingConcepts"
-      :goal-draft-review-notes="goalDraftReviewNotes"
-      :goal-draft-review-focus="goalDraftReviewFocus"
-      :validation-error-message="validationErrorMessage"
-      :resource-binding="resourceBinding"
-      :resource-target-options="resourceTargetOptions"
-      :promotion-preview="promotionPreview"
-      :promotion-result="promotionResult"
-      :promotion-secret="promotionSecret"
-      :promotion-loading="promotionLoading"
-      :promotion-status-message="promotionStatusMessage"
+      @update:entity-drawer-visible="entityDrawerVisible = $event"
+      @update-overlay-drawer-visible="overlayDrawerVisible = $event"
+      @update-display-mode="displayMode = $event"
+      @update-overlay-draft-mode="overlayDraftMode = $event"
+      @update-overlay-candidate-filter="overlayCandidateFilter = $event"
       @update-overlay-form="updateOverlayForm"
       @prepare-goal-draft="prepareGoalDraftFromCurrentProject"
       @load-goal-draft-proposal="loadGoalDraftProposal"
@@ -207,23 +125,14 @@
       @edit-edge="openEdgeCandidateEditor"
       @edit-resource="openResourceCandidateEditor"
       @update-resource-binding="updateResourceBindingField"
-      @update:promotion-secret="promotionSecret = $event"
+      @update-promotion-secret="promotionSecret = $event"
       @bind-resource="bindOverlayResource"
       @preview-promotion="previewPromotion"
       @commit-promotion="commitPromotion"
       @submit-overlay-draft="submitOverlayDraft"
-    />
-
-    <OverlayCandidateEditorDialog
-      v-model:visible="candidateEditor.visible"
-      :candidate-editor="candidateEditor"
-      :candidate-editor-issue-summary="candidateEditorIssueSummary"
-      :candidate-editor-quick-fix-errors="candidateEditorQuickFixErrors"
-      :overlay-endpoint-options="overlayEndpointOptions"
-      :candidate-editor-field-issue="candidateEditorFieldIssue"
-      :quick-fix-label="quickFixLabel"
+      @update-candidate-editor-visible="candidateEditor.visible = $event"
       @quick-fix="applyCandidateQuickFix"
-      @save="saveCandidateEditor"
+      @save-candidate-editor="saveCandidateEditor"
     />
   </div>
 </template>
@@ -234,6 +143,7 @@ import { ElMessage } from 'element-plus/es/components/message/index'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
 import GraphLegendPanel from './GraphLegendPanel.vue'
+import GraphStatePanel from './GraphStatePanel.vue'
 import GraphStatusPanel from './GraphStatusPanel.vue'
 import OverlayPreflightPanel from './OverlayPreflightPanel.vue'
 import { useFullscreenToggle } from './composables/useFullscreenToggle'
@@ -264,10 +174,7 @@ import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph
 
 const GraphToolbar = defineAsyncComponent(() => import('@/components/Graph/GraphToolbar.vue'))
 const GraphCanvas = defineAsyncComponent(() => import('@/components/Graph/GraphCanvas.vue'))
-const NodeDetail = defineAsyncComponent(() => import('@/components/Graph/NodeDetail.vue'))
-const EntityMetadataDrawer = defineAsyncComponent(() => import('@/components/Graph/EntityMetadataDrawer.vue'))
-const KnowledgeOverlayDrawer = defineAsyncComponent(() => import('./KnowledgeOverlayDrawer.vue'))
-const OverlayCandidateEditorDialog = defineAsyncComponent(() => import('./OverlayCandidateEditorDialog.vue'))
+const KnowledgeSidePanels = defineAsyncComponent(() => import('./KnowledgeSidePanels.vue'))
 
 type GraphCanvasHandle = GraphCanvasActionHandle & {
   focusNode: (nodeId: string) => boolean
@@ -560,6 +467,71 @@ const { selectedNode } = useSelectedNodeContext({
   edges,
   selectedNodeId,
 })
+const overlayDrawerProps = computed(() => ({
+  visible: overlayDrawerVisible.value,
+  displayMode: displayMode.value,
+  overlaySubmitting: overlaySubmitting.value,
+  overlayExtractionPreviewLoading: overlayExtractionPreviewLoading.value,
+  activeGoalDraftResolutionSessionId: activeGoalDraftResolutionSessionId.value,
+  manualGoalDraftLoading: manualGoalDraftLoading.value,
+  goalDraftProposalLoading: goalDraftProposalLoading.value,
+  goalDraftInboxProposal: goalDraftInboxProposal.value,
+  goalDraftProposalDismissed: goalDraftProposalDismissed.value,
+  goalDraftInboxMissingConcepts: goalDraftInboxMissingConcepts.value,
+  goalDraftInboxCounts: goalDraftInboxCounts.value,
+  goalDraftInboxNodes: goalDraftInboxNodes.value,
+  goalDraftInboxEdges: goalDraftInboxEdges.value,
+  goalDraftInboxResources: goalDraftInboxResources.value,
+  overlayDraftMode: overlayDraftMode.value,
+  overlayForm: overlayForm.value,
+  manualOverlayMode: manualOverlayMode.value,
+  persistedSearchResults: persistedSearchResults.value,
+  overlayBridgeMessage: overlayBridgeMessage.value,
+  overlayExtractionPreview: overlayExtractionPreview.value,
+  normalizedPreviewPayload: normalizedPreviewPayload.value,
+  selectedPreviewCounts: selectedPreviewCounts.value,
+  overlayCandidateValidation: overlayCandidateValidation.value,
+  isPreviewCandidateSelected,
+  candidateTitle,
+  edgeCandidateSummary,
+  overlayError: overlayError.value,
+  lastOverlaySession: lastOverlaySession.value,
+  showTechnicalDetails: showTechnicalDetails.value,
+  showAuditDetails: showAuditDetails.value,
+  overlaySessionGuide: overlaySessionGuide.value,
+  overlaySessionStats: overlaySessionStats.value,
+  overlayWorkflowSteps: overlayWorkflowSteps.value,
+  overlayWorkflowCurrentStep: overlayWorkflowCurrentStep.value,
+  overlayCandidateFilter: overlayCandidateFilter.value,
+  overlayCandidateFilterCounts: overlayCandidateFilterCounts.value,
+  filteredOverlayCandidateCount: filteredOverlayCandidateCount.value,
+  hasOverlayCandidateRepairTarget: Boolean(overlayCandidateRepairTarget.value),
+  overlayCandidateRepairTargetLabel: overlayCandidateRepairTargetLabel.value,
+  filteredOverlayNodes: filteredOverlayNodes.value,
+  filteredOverlayEdges: filteredOverlayEdges.value,
+  filteredOverlayResources: filteredOverlayResources.value,
+  goalExtensionDraftDetails: goalExtensionDraftDetails.value,
+  goalDraftMissingConcepts: goalDraftMissingConcepts.value,
+  goalDraftReviewNotes: goalDraftReviewNotes.value,
+  goalDraftReviewFocus: goalDraftReviewFocus.value,
+  validationErrorMessage,
+  resourceBinding: resourceBinding.value,
+  resourceTargetOptions: resourceTargetOptions.value,
+  promotionPreview: promotionPreview.value,
+  promotionResult: promotionResult.value,
+  promotionSecret: promotionSecret.value,
+  promotionLoading: promotionLoading.value,
+  promotionStatusMessage: promotionStatusMessage.value,
+}))
+const candidateEditorDialogProps = computed(() => ({
+  visible: candidateEditor.value.visible,
+  candidateEditor: candidateEditor.value,
+  candidateEditorIssueSummary: candidateEditorIssueSummary.value,
+  candidateEditorQuickFixErrors: candidateEditorQuickFixErrors.value,
+  overlayEndpointOptions: overlayEndpointOptions.value,
+  candidateEditorFieldIssue,
+  quickFixLabel,
+}))
 
 function resetGraphState() {
   requireGraphWorkspaceLoader().resetGraphState()
@@ -663,59 +635,6 @@ void syncRequestedOverlaySession
 
 .graph-alert {
   margin: 12px 12px 0;
-}
-
-.graph-state-wrap,
-.empty-project-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  min-height: 360px;
-}
-
-.graph-loading-state {
-  padding: 24px;
-}
-
-.graph-skeleton-panel {
-  width: min(520px, 80%);
-  padding: 24px;
-  border: 1px solid #ebeef5;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 12px 32px rgb(31 45 61 / 8%);
-}
-
-.graph-skeleton-header {
-  width: 42%;
-  height: 14px;
-  margin: 0 auto 24px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #ebeef5 25%, #f5f7fa 50%, #ebeef5 75%);
-}
-
-.graph-skeleton-body {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
-  padding: 12px 32px;
-}
-
-.graph-skeleton-node {
-  width: 42px;
-  height: 42px;
-  margin: 0 auto;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #d9ecff, #ecf5ff);
-}
-
-.graph-skeleton-panel p {
-  margin: 22px 0 0;
-  color: #909399;
-  font-size: 13px;
-  text-align: center;
 }
 
 @media (max-width: 768px) {
