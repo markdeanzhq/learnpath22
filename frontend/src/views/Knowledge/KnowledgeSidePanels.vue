@@ -26,6 +26,7 @@
     @dismiss-goal-draft-proposal="emit('dismiss-goal-draft-proposal')"
     @search-overlay-results="emit('search-overlay-results')"
     @add-search-result-to-overlay="(result, index) => emit('add-search-result-to-overlay', result, index)"
+    @create-auto-draft="emit('create-auto-draft')"
     @preview-overlay-extraction-payload="emit('preview-overlay-extraction-payload')"
     @toggle-preview-candidate="(group, index, checked) => emit('toggle-preview-candidate', group, index, checked)"
     @open-first-repairable="emit('open-first-repairable')"
@@ -100,6 +101,7 @@ const emit = defineEmits<{
   'dismiss-goal-draft-proposal': []
   'search-overlay-results': []
   'add-search-result-to-overlay': [result: SearchResultItem, index: number]
+  'create-auto-draft': []
   'preview-overlay-extraction-payload': []
   'toggle-preview-candidate': [group: OverlayPreviewGroup, index: number, checked: boolean]
   'open-first-repairable': []

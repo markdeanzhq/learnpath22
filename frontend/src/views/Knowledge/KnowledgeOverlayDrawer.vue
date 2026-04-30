@@ -1,6 +1,6 @@
 <template>
   <el-drawer v-model="visibleModel" title="创建扩展草稿" :size="520" direction="rtl">
-    <div class="overlay-drawer" v-loading="overlaySubmitting || overlayExtractionPreviewLoading">
+    <div class="overlay-drawer" v-loading="overlaySubmitting || overlayExtractionPreviewLoading || overlayAutoDraftLoading">
       <DisplayModeSwitch v-model="displayModeModel" />
       <el-alert
         class="overlay-alert"
@@ -83,6 +83,10 @@
       <section v-if="manualOverlayMode" class="overlay-subsection overlay-search-card">
         <h4>自动搜索资料并加入草稿</h4>
         <p>输入具体概念或问题，系统会搜索资料并保存为项目扩展来源；加入后可直接生成候选预览。</p>
+        <div class="auto-draft-action-row">
+          <el-button type="primary" :loading="overlayAutoDraftLoading" @click="emit('create-auto-draft')">一键自动生成草稿</el-button>
+          <span>自动搜索、保存资料、AI 抽取并创建待审核草稿；不会直接写入正式图谱或路径。</span>
+        </div>
         <div class="overlay-search-row">
           <el-input
             :model-value="overlaySearchQuery"
@@ -99,6 +103,14 @@
           :closable="false"
           show-icon
           :title="overlaySearchError"
+        />
+        <el-alert
+          v-if="overlayBridgeMessage"
+          class="overlay-alert"
+          type="success"
+          :closable="false"
+          show-icon
+          :title="overlayBridgeMessage"
         />
         <div v-if="overlaySearchResults.length" class="overlay-search-results">
           <article v-for="(result, index) in overlaySearchResults" :key="result.url" class="overlay-search-result-card">
@@ -195,14 +207,6 @@
               />
             </el-select>
           </el-form-item>
-          <el-alert
-            v-if="overlayBridgeMessage"
-            class="overlay-alert"
-            type="success"
-            :closable="false"
-            show-icon
-            :title="overlayBridgeMessage"
-          />
         </template>
 
         <el-form-item label="抽取模式">
@@ -345,6 +349,7 @@ const props = defineProps<{
   displayMode: DisplayMode
   overlaySubmitting: boolean
   overlayExtractionPreviewLoading: boolean
+  overlayAutoDraftLoading: boolean
   activeGoalDraftResolutionSessionId: string | null
   manualGoalDraftLoading: boolean
   goalDraftProposalLoading: boolean
@@ -414,6 +419,7 @@ const emit = defineEmits<{
   'dismiss-goal-draft-proposal': []
   'search-overlay-results': []
   'add-search-result-to-overlay': [result: SearchResultItem, index: number]
+  'create-auto-draft': []
   'preview-overlay-extraction-payload': []
   'toggle-preview-candidate': [group: OverlayPreviewGroup, index: number, checked: boolean]
   'open-first-repairable': []
@@ -520,10 +526,21 @@ function updateSelectedResultIds(value: unknown) {
   line-height: 1.7;
 }
 
+.auto-draft-action-row,
 .overlay-search-row {
   display: flex;
   gap: 8px;
   margin-top: 10px;
+}
+
+.auto-draft-action-row {
+  align-items: center;
+}
+
+.auto-draft-action-row span {
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .overlay-search-results {

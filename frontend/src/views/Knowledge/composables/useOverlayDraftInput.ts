@@ -73,6 +73,7 @@ export function useOverlayDraftInput({
 }: UseOverlayDraftInputOptions) {
   const overlaySubmitting = ref(false)
   const overlayExtractionPreviewLoading = ref(false)
+  const overlayAutoDraftLoading = ref(false)
   const overlayBridgeMessage = ref('')
   const overlaySearchQuery = ref('')
   const overlaySearchResults = ref<SearchResultItem[]>([])
@@ -293,6 +294,43 @@ export function useOverlayDraftInput({
     }
   }
 
+  async function createAutoOverlayDraft() {
+    const currentProjectId = projectId.value
+    if (!currentProjectId) return
+
+    const fallbackQuery = typeof currentProject.value?.goal_text === 'string' ? currentProject.value.goal_text.trim() : ''
+    const query = overlaySearchQuery.value.trim() || fallbackQuery
+    if (!query) {
+      overlaySearchError.value = '请输入搜索关键词，或先为项目设置学习目标。'
+      return
+    }
+
+    overlayAutoDraftLoading.value = true
+    overlayError.value = ''
+    overlaySearchError.value = ''
+    overlayBridgeMessage.value = ''
+    try {
+      const session = await graphApi.createOverlayAutoDraft(currentProjectId, {
+        query,
+        max_results: 5,
+        mode: overlayForm.value.mode,
+      })
+      lastOverlaySession.value = session
+      overlaySearchQuery.value = session.auto_draft?.query || query
+      overlayDraftMode.value = 'manual'
+      overlayForm.value = createOverlayForm()
+      clearPreviewSelection()
+      overlayBridgeMessage.value = `自动草稿已基于 ${session.auto_draft?.selected_result_count || 0} 条资料创建，请审核候选后再启用规划。`
+      await loadPersistedSearchResults()
+      notifySuccess?.('自动扩展草稿已创建，请审核候选节点、关系和资源')
+      await onDraftCreated(session)
+    } catch (error: unknown) {
+      overlayError.value = getErrorMessage(error)
+    } finally {
+      overlayAutoDraftLoading.value = false
+    }
+  }
+
   async function previewOverlayExtractionPayload() {
     if (!projectId.value || !manualOverlayMode.value) return null
 
@@ -368,6 +406,7 @@ export function useOverlayDraftInput({
     overlayDrawerVisible.value = false
     overlaySubmitting.value = false
     overlayExtractionPreviewLoading.value = false
+    overlayAutoDraftLoading.value = false
     overlayError.value = ''
     overlayBridgeMessage.value = ''
     overlaySearchError.value = ''
@@ -502,6 +541,7 @@ export function useOverlayDraftInput({
   return {
     overlaySubmitting,
     overlayExtractionPreviewLoading,
+    overlayAutoDraftLoading,
     overlayBridgeMessage,
     overlaySearchQuery,
     overlaySearchResults,
@@ -541,6 +581,7 @@ export function useOverlayDraftInput({
     isPreviewCandidateSelected,
     searchOverlayResults,
     addSearchResultToOverlay,
+    createAutoOverlayDraft,
     previewOverlayExtractionPayload,
     submitOverlayDraft,
     resetOverlayDraftInput,

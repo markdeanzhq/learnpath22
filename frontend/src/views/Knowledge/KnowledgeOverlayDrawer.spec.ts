@@ -130,6 +130,7 @@ function mountDrawer() {
       displayMode: 'simple',
       overlaySubmitting: false,
       overlayExtractionPreviewLoading: false,
+      overlayAutoDraftLoading: false,
       activeGoalDraftResolutionSessionId: null,
       manualGoalDraftLoading: false,
       goalDraftProposalLoading: false,
@@ -253,9 +254,11 @@ describe('KnowledgeOverlayDrawer', () => {
     expect(wrapper.text()).toContain('手动资料补充指南')
     expect(wrapper.text()).toContain('随机森林入门')
 
+    await wrapper.findAll('button').find((button) => button.text() === '一键自动生成草稿')?.trigger('click')
     await wrapper.findAll('button').find((button) => button.text() === '搜索资料')?.trigger('click')
     await wrapper.findAll('button').find((button) => button.text() === '加入草稿来源')?.trigger('click')
 
+    expect(wrapper.emitted('create-auto-draft')).toHaveLength(1)
     expect(wrapper.emitted('search-overlay-results')).toHaveLength(1)
     expect(wrapper.emitted('add-search-result-to-overlay')).toEqual([[
       { title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林是基于决策树的集成学习方法', score: 0.92, provider: 'tavily' },

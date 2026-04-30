@@ -32,6 +32,7 @@ const knowledgeOverlayDrawerStub = defineComponent({
     'prepare-goal-draft',
     'search-overlay-results',
     'add-search-result-to-overlay',
+    'create-auto-draft',
     'preview-overlay-extraction-payload',
     'toggle-preview-candidate',
     'edit-node',
@@ -51,6 +52,7 @@ const knowledgeOverlayDrawerStub = defineComponent({
       <button data-testid="prepare-draft" @click="$emit('prepare-goal-draft')">prepare</button>
       <button data-testid="search-overlay" @click="$emit('search-overlay-results')">search</button>
       <button data-testid="add-search" @click="$emit('add-search-result-to-overlay', { title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林资料', score: 0.9 }, 0)">add</button>
+      <button data-testid="auto-draft" @click="$emit('create-auto-draft')">auto</button>
       <button data-testid="preview-payload" @click="$emit('preview-overlay-extraction-payload')">preview</button>
       <button data-testid="toggle-candidate" @click="$emit('toggle-preview-candidate', 'nodes', 1, true)">toggle</button>
       <button data-testid="edit-node" @click="$emit('edit-node', { node_id: 'node-001' })">edit</button>
@@ -137,6 +139,7 @@ describe('KnowledgeSidePanels', () => {
     await click(wrapper, 'prepare-draft')
     await click(wrapper, 'search-overlay')
     await click(wrapper, 'add-search')
+    await click(wrapper, 'auto-draft')
     await click(wrapper, 'preview-payload')
     await click(wrapper, 'toggle-candidate')
     await click(wrapper, 'edit-node')
@@ -154,6 +157,7 @@ describe('KnowledgeSidePanels', () => {
     expect(wrapper.emitted('prepare-goal-draft')).toHaveLength(1)
     expect(wrapper.emitted('search-overlay-results')).toHaveLength(1)
     expect(wrapper.emitted('add-search-result-to-overlay')).toEqual([[{ title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林资料', score: 0.9 }, 0]])
+    expect(wrapper.emitted('create-auto-draft')).toHaveLength(1)
     expect(wrapper.emitted('preview-overlay-extraction-payload')).toHaveLength(1)
     expect(wrapper.emitted('toggle-preview-candidate')).toEqual([['nodes', 1, true]])
     expect(wrapper.emitted('edit-node')).toEqual([[{ node_id: 'node-001' }]])

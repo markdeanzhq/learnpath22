@@ -342,6 +342,32 @@ export interface CreateOverlayExtractionSessionRequest {
   session_provenance?: Record<string, unknown> | null
 }
 
+export interface CreateOverlayAutoDraftRequest {
+  query?: string | null
+  max_results?: number
+  mode?: 'default' | 'custom_extension'
+}
+
+export interface OverlayAutoDraftMetadata {
+  query: string
+  search_result_count: number
+  selected_result_count: number
+  selected_result_ids: string[]
+  source_ids: string[]
+  reused_source_count: number
+  preview_counts: {
+    nodes?: number
+    edges?: number
+    resources?: number
+    [key: string]: unknown
+  }
+  validation_summary: Record<string, unknown>
+}
+
+export interface OverlayAutoDraftResponse extends OverlayExtractionSessionResponse {
+  auto_draft: OverlayAutoDraftMetadata
+}
+
 export interface OverlayNodeCandidatePatchRequest {
   name?: string | null
   group?: string | null
@@ -682,6 +708,11 @@ export const graphApi = {
     payload: CreateOverlayExtractionSessionRequest,
   ): Promise<OverlayExtractionSessionResponse> =>
     request.post(`/projects/${projectId}/graph/overlay/extraction-sessions`, payload),
+  createOverlayAutoDraft: (
+    projectId: string,
+    payload: CreateOverlayAutoDraftRequest,
+  ): Promise<OverlayAutoDraftResponse> =>
+    request.post(`/projects/${projectId}/graph/overlay/auto-drafts`, payload),
   getGoalExtensionDraftProposal: (
     projectId: string,
     resolutionSessionId: string,

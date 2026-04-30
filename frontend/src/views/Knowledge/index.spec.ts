@@ -9,6 +9,7 @@ const {
   graphGetGraphCacheStatsMock,
   graphCreateOverlaySourceMock,
   graphCreateOverlayExtractionSessionMock,
+  graphCreateOverlayAutoDraftMock,
   graphPreviewOverlayExtractionPayloadMock,
   graphValidateOverlayExtractionPayloadMock,
   graphUpdateOverlayNodeCandidateMock,
@@ -40,6 +41,7 @@ const {
   graphGetGraphCacheStatsMock: vi.fn(),
   graphCreateOverlaySourceMock: vi.fn(),
   graphCreateOverlayExtractionSessionMock: vi.fn(),
+  graphCreateOverlayAutoDraftMock: vi.fn(),
   graphPreviewOverlayExtractionPayloadMock: vi.fn(),
   graphValidateOverlayExtractionPayloadMock: vi.fn(),
   graphUpdateOverlayNodeCandidateMock: vi.fn(),
@@ -141,6 +143,7 @@ vi.mock('@/api/modules/graph', () => {
     previewOverlayExtractionPayload: graphPreviewOverlayExtractionPayloadMock,
     validateOverlayExtractionPayload: graphValidateOverlayExtractionPayloadMock,
     createOverlayExtractionSession: graphCreateOverlayExtractionSessionMock,
+    createOverlayAutoDraft: graphCreateOverlayAutoDraftMock,
     getGoalExtensionDraftProposal: graphGetGoalExtensionDraftProposalMock,
     createGoalExtensionDraft: graphCreateGoalExtensionDraftMock,
     setOverlayPlanning: graphSetOverlayPlanningMock,
@@ -311,6 +314,20 @@ describe('Knowledge overlay entry', () => {
       warnings: [],
     }
     graphCreateOverlayExtractionSessionMock.mockResolvedValue(sessionResponse)
+    graphCreateOverlayAutoDraftMock.mockResolvedValue({
+      ...sessionResponse,
+      session: { ...sessionResponse.session, session_id: 'sess-auto-001' },
+      auto_draft: {
+        query: '随机森林',
+        search_result_count: 1,
+        selected_result_count: 1,
+        selected_result_ids: ['result-auto-001'],
+        source_ids: ['src-auto-001'],
+        reused_source_count: 0,
+        preview_counts: { nodes: 1, edges: 1, resources: 1 },
+        validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
+      },
+    })
     graphUpdateOverlayNodeCandidateMock.mockResolvedValue(sessionResponse)
     graphUpdateOverlayEdgeCandidateMock.mockResolvedValue(sessionResponse)
     graphUpdateOverlayResourceCandidateMock.mockResolvedValue(sessionResponse)
@@ -485,6 +502,29 @@ describe('Knowledge overlay entry', () => {
     expect((wrapper.vm as any).overlayForm.sourceType).toBe('saved_search')
     expect((wrapper.vm as any).overlayForm.selectedResultIds).toEqual(['result-001'])
     expect((wrapper.vm as any).overlayBridgeMessage).toContain('项目扩展来源')
+  })
+
+  it('creates a one-click automatic overlay draft and opens the returned session', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).overlaySearchQuery = '随机森林'
+    await (wrapper.vm as any).createAutoOverlayDraft()
+
+    expect(graphCreateOverlayAutoDraftMock).toHaveBeenCalledWith('project-001', {
+      query: '随机森林',
+      max_results: 5,
+      mode: 'default',
+    })
+    expect(replaceMock).toHaveBeenCalledWith({
+      name: 'Knowledge',
+      query: expect.objectContaining({ scope: 'project', sessionId: 'sess-auto-001' }),
+    })
+    expectLastWorkspaceCalledWith({
+      scope: 'project',
+    })
+    expect((wrapper.vm as any).overlayBridgeMessage).toContain('自动草稿已基于 1 条资料创建')
+    expect(successMock).toHaveBeenCalledWith('自动扩展草稿已创建，请审核候选节点、关系和资源')
   })
 
   it('creates pasted text source before extraction session', async () => {

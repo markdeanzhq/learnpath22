@@ -121,6 +121,7 @@
       @dismiss-goal-draft-proposal="dismissGoalDraftProposal"
       @search-overlay-results="searchOverlayResults"
       @add-search-result-to-overlay="addSearchResultToOverlay"
+      @create-auto-draft="createAutoOverlayDraft"
       @preview-overlay-extraction-payload="previewOverlayExtractionPayload"
       @toggle-preview-candidate="togglePreviewCandidate"
       @open-first-repairable="openFirstRepairableCandidate"
@@ -236,6 +237,7 @@ function isEdgeElement(element: GraphElement): element is Extract<GraphElement, 
 const {
   overlaySubmitting,
   overlayExtractionPreviewLoading,
+  overlayAutoDraftLoading,
   overlayBridgeMessage,
   overlaySearchQuery,
   overlaySearchResults,
@@ -273,6 +275,7 @@ const {
   isPreviewCandidateSelected,
   searchOverlayResults,
   addSearchResultToOverlay,
+  createAutoOverlayDraft,
   previewOverlayExtractionPayload,
   submitOverlayDraft,
   resetOverlayDraftInput,
@@ -482,6 +485,7 @@ const overlayDrawerProps = computed(() => ({
   displayMode: displayMode.value,
   overlaySubmitting: overlaySubmitting.value,
   overlayExtractionPreviewLoading: overlayExtractionPreviewLoading.value,
+  overlayAutoDraftLoading: overlayAutoDraftLoading.value,
   activeGoalDraftResolutionSessionId: activeGoalDraftResolutionSessionId.value,
   manualGoalDraftLoading: manualGoalDraftLoading.value,
   goalDraftProposalLoading: goalDraftProposalLoading.value,

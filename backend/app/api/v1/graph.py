@@ -65,6 +65,7 @@ from app.services.project_overlay_extraction_service import (
     update_overlay_resource_candidate,
     validate_extraction_payload_for_sources,
 )
+from app.services.project_overlay_auto_draft_service import create_project_overlay_auto_draft
 from app.services.project_overlay_llm_extraction_service import preview_overlay_extraction_payload_from_sources
 from app.services.project_overlay_preflight_service import build_project_overlay_preflight
 from app.services.project_overlay_projection_service import (
@@ -219,6 +220,14 @@ class OverlayExtractionPayloadValidationRequest(BaseModel):
     source_ids: list[str] = Field(min_length=1)
     mode: Literal["default", "custom_extension"] = "default"
     extraction_payload: Any | None = None
+
+
+class OverlayAutoDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str | None = Field(default=None, max_length=200)
+    max_results: int = Field(default=5, ge=1, le=10)
+    mode: Literal["default", "custom_extension"] = "default"
 
 
 class OverlayNodeCandidatePatchRequest(BaseModel):
@@ -1100,6 +1109,52 @@ async def create_overlay_extraction_session(
         bindings=[],
         warnings=created["warnings"],
     )
+
+
+@router.post("/projects/{project_id}/graph/overlay/auto-drafts")
+async def create_overlay_auto_draft(
+    project_id: str,
+    req: OverlayAutoDraftRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    project = await get_project(db, project_id)
+    if not project:
+        raise NotFoundError("项目不存在")
+
+    try:
+        auto_draft = await create_project_overlay_auto_draft(
+            db,
+            project_id=project_id,
+            query=req.query,
+            fallback_goal_text=project.goal_text,
+            domain=project.domain,
+            max_results=req.max_results,
+            mode=req.mode,
+        )
+    except ValueError as exc:
+        raise AppError(code=422, message=str(exc)) from exc
+
+    created = auto_draft["created"]
+    response = _overlay_session_response(
+        session=created["session"],
+        sources=created["sources"],
+        nodes=created["nodes"],
+        edges=created["edges"],
+        resources=created["resources"],
+        bindings=[],
+        warnings=created["warnings"],
+    )
+    response["auto_draft"] = {
+        "query": auto_draft["query"],
+        "search_result_count": len(auto_draft["search_results"]),
+        "selected_result_count": len(auto_draft["persisted_results"]),
+        "selected_result_ids": [result.result_id for result in auto_draft["persisted_results"]],
+        "source_ids": auto_draft["source_ids"],
+        "reused_source_count": sum(1 for item in auto_draft["bridged_results"] if item["reused"]),
+        "preview_counts": auto_draft["preview"].get("counts", {}),
+        "validation_summary": auto_draft["validation"].get("summary", {}),
+    }
+    return response
 
 
 @router.get("/projects/{project_id}/goal-resolution/extension-drafts/{resolution_session_id}/proposal")
