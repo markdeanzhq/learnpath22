@@ -143,6 +143,13 @@ function mountDrawer() {
       overlayDraftMode: 'manual',
       overlayForm: createOverlayForm(),
       manualOverlayMode: true,
+      overlaySearchQuery: '随机森林',
+      overlaySearchResults: [
+        { title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林是基于决策树的集成学习方法', score: 0.92, provider: 'tavily' },
+      ],
+      overlaySearchLoading: false,
+      overlaySearchError: '',
+      overlayAddingSearchUrl: '',
       persistedSearchResults: [],
       overlayBridgeMessage: '',
       overlayExtractionPreview: preview,
@@ -225,15 +232,34 @@ describe('KnowledgeOverlayDrawer', () => {
     expect(wrapper.emitted('update:promotionSecret')).toEqual([['secret-002']])
   })
 
-  it('updates display mode, candidate filter and overlay form through explicit events', async () => {
+  it('updates display mode, candidate filter, search query and overlay form through explicit events', async () => {
     const wrapper = mountDrawer()
 
     await wrapper.find('.display-mode-update').trigger('click')
     await wrapper.findAll('.radio-update')[2].trigger('click')
     await wrapper.findAll('.input-update')[0].trigger('click')
+    await wrapper.findAll('.input-update')[1].trigger('click')
 
     expect(wrapper.emitted('update:displayMode')).toEqual([['debug']])
     expect(wrapper.emitted('update:overlayCandidateFilter')).toEqual([['blocking']])
+    expect(wrapper.emitted('update:overlaySearchQuery')).toEqual([['secret-002']])
     expect(wrapper.emitted('update-overlay-form')?.[0][0]).toEqual(expect.objectContaining({ rawText: 'secret-002' }))
+  })
+
+  it('shows guidance and forwards embedded search actions', async () => {
+    const wrapper = mountDrawer()
+
+    expect(wrapper.text()).toContain('推荐流程')
+    expect(wrapper.text()).toContain('手动资料补充指南')
+    expect(wrapper.text()).toContain('随机森林入门')
+
+    await wrapper.findAll('button').find((button) => button.text() === '搜索资料')?.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === '加入草稿来源')?.trigger('click')
+
+    expect(wrapper.emitted('search-overlay-results')).toHaveLength(1)
+    expect(wrapper.emitted('add-search-result-to-overlay')).toEqual([[
+      { title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林是基于决策树的集成学习方法', score: 0.92, provider: 'tavily' },
+      0,
+    ]])
   })
 })

@@ -25,6 +25,8 @@ const {
   graphGetOverlayProjectionStatusMock,
   graphGetOverlayPreflightMock,
   searchListPersistedResultsMock,
+  searchSearchMock,
+  searchPersistResultMock,
   searchBridgeOverlaySourcesMock,
   resourceBindProjectResourceMock,
   projectPreviewForProjectMock,
@@ -54,6 +56,8 @@ const {
   graphGetOverlayProjectionStatusMock: vi.fn(),
   graphGetOverlayPreflightMock: vi.fn(),
   searchListPersistedResultsMock: vi.fn(),
+  searchSearchMock: vi.fn(),
+  searchPersistResultMock: vi.fn(),
   searchBridgeOverlaySourcesMock: vi.fn(),
   resourceBindProjectResourceMock: vi.fn(),
   projectPreviewForProjectMock: vi.fn(),
@@ -155,6 +159,8 @@ vi.mock('@/api/modules/graph', () => {
 
 vi.mock('@/api/modules/search', () => ({
   searchApi: {
+    search: searchSearchMock,
+    persistResult: searchPersistResultMock,
     listPersistedResults: searchListPersistedResultsMock,
     bridgeOverlaySources: searchBridgeOverlaySourcesMock,
   },
@@ -415,6 +421,28 @@ describe('Knowledge overlay entry', () => {
       goal_draft_error: null,
     }))
     searchListPersistedResultsMock.mockResolvedValue([])
+    searchSearchMock.mockResolvedValue({
+      query: '随机森林',
+      results: [{ title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林资料', score: 0.9, provider: 'tavily' }],
+      count: 1,
+      source: 'tavily',
+    })
+    searchPersistResultMock.mockResolvedValue({
+      result_id: 'result-001',
+      source_id: null,
+      query: '随机森林',
+      provider: 'tavily',
+      url: 'https://example.com/random-forest',
+      title: '随机森林入门',
+      snippet: '随机森林资料',
+      result_rank: 1,
+      retrieved_at: null,
+      summary: null,
+      quality_status: null,
+      is_selected: true,
+      binding_count: 0,
+      created_at: '2026-04-22T09:00:00Z',
+    })
     searchBridgeOverlaySourcesMock.mockResolvedValue({
       source_ids: ['src-saved-001'],
       results: [
@@ -428,6 +456,35 @@ describe('Knowledge overlay entry', () => {
       ],
     })
     resourceBindProjectResourceMock.mockResolvedValue({ id: 'binding-001' })
+  })
+
+  it('searches and adds overlay sources inside the drawer workflow', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).overlaySearchQuery = '随机森林'
+    await (wrapper.vm as any).searchOverlayResults()
+
+    expect(searchSearchMock).toHaveBeenCalledWith('project-001', '随机森林', 6)
+    expect((wrapper.vm as any).overlaySearchResults).toEqual([
+      { title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林资料', score: 0.9, provider: 'tavily' },
+    ])
+
+    await (wrapper.vm as any).addSearchResultToOverlay((wrapper.vm as any).overlaySearchResults[0], 0)
+
+    expect(searchPersistResultMock).toHaveBeenCalledWith('project-001', {
+      query: '随机森林',
+      provider: 'tavily',
+      url: 'https://example.com/random-forest',
+      title: '随机森林入门',
+      snippet: '随机森林资料',
+      result_rank: 1,
+      is_selected: true,
+    })
+    expect(searchBridgeOverlaySourcesMock).toHaveBeenCalledWith('project-001', ['result-001'])
+    expect((wrapper.vm as any).overlayForm.sourceType).toBe('saved_search')
+    expect((wrapper.vm as any).overlayForm.selectedResultIds).toEqual(['result-001'])
+    expect((wrapper.vm as any).overlayBridgeMessage).toContain('项目扩展来源')
   })
 
   it('creates pasted text source before extraction session', async () => {

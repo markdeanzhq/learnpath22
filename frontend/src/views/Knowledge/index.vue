@@ -114,10 +114,13 @@
       @update-display-mode="displayMode = $event"
       @update-overlay-draft-mode="overlayDraftMode = $event"
       @update-overlay-candidate-filter="overlayCandidateFilter = $event"
+      @update-overlay-search-query="overlaySearchQuery = $event"
       @update-overlay-form="updateOverlayForm"
       @prepare-goal-draft="prepareGoalDraftFromCurrentProject"
       @load-goal-draft-proposal="loadGoalDraftProposal"
       @dismiss-goal-draft-proposal="dismissGoalDraftProposal"
+      @search-overlay-results="searchOverlayResults"
+      @add-search-result-to-overlay="addSearchResultToOverlay"
       @preview-overlay-extraction-payload="previewOverlayExtractionPayload"
       @toggle-preview-candidate="togglePreviewCandidate"
       @open-first-repairable="openFirstRepairableCandidate"
@@ -234,6 +237,11 @@ const {
   overlaySubmitting,
   overlayExtractionPreviewLoading,
   overlayBridgeMessage,
+  overlaySearchQuery,
+  overlaySearchResults,
+  overlaySearchLoading,
+  overlaySearchError,
+  overlayAddingSearchUrl,
   overlayForm,
   overlayDraftMode,
   overlayExtractionPreview,
@@ -263,6 +271,8 @@ const {
   dismissGoalDraftProposal,
   togglePreviewCandidate,
   isPreviewCandidateSelected,
+  searchOverlayResults,
+  addSearchResultToOverlay,
   previewOverlayExtractionPayload,
   submitOverlayDraft,
   resetOverlayDraftInput,
@@ -485,6 +495,11 @@ const overlayDrawerProps = computed(() => ({
   overlayDraftMode: overlayDraftMode.value,
   overlayForm: overlayForm.value,
   manualOverlayMode: manualOverlayMode.value,
+  overlaySearchQuery: overlaySearchQuery.value,
+  overlaySearchResults: overlaySearchResults.value,
+  overlaySearchLoading: overlaySearchLoading.value,
+  overlaySearchError: overlaySearchError.value,
+  overlayAddingSearchUrl: overlayAddingSearchUrl.value,
   persistedSearchResults: persistedSearchResults.value,
   overlayBridgeMessage: overlayBridgeMessage.value,
   overlayExtractionPreview: overlayExtractionPreview.value,

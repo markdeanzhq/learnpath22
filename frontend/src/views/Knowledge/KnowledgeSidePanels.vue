@@ -19,10 +19,13 @@
     @update:display-mode="emit('update-display-mode', $event)"
     @update:overlay-draft-mode="emit('update-overlay-draft-mode', $event)"
     @update:overlay-candidate-filter="emit('update-overlay-candidate-filter', $event)"
+    @update:overlay-search-query="emit('update-overlay-search-query', $event)"
     @update-overlay-form="emit('update-overlay-form', $event)"
     @prepare-goal-draft="emit('prepare-goal-draft')"
     @load-goal-draft-proposal="emit('load-goal-draft-proposal')"
     @dismiss-goal-draft-proposal="emit('dismiss-goal-draft-proposal')"
+    @search-overlay-results="emit('search-overlay-results')"
+    @add-search-result-to-overlay="(result, index) => emit('add-search-result-to-overlay', result, index)"
     @preview-overlay-extraction-payload="emit('preview-overlay-extraction-payload')"
     @toggle-preview-candidate="(group, index, checked) => emit('toggle-preview-candidate', group, index, checked)"
     @open-first-repairable="emit('open-first-repairable')"
@@ -56,6 +59,7 @@ import type {
   OverlayResourceCandidate,
   ReviewStatus,
 } from '@/api/modules/graph'
+import type { SearchResultItem } from '@/api/modules/search'
 import type { DisplayMode } from '@/composables/useDisplayMode'
 import type { SelectedNodeContext } from './composables/useSelectedNodeContext'
 import type { CandidateIssueFilter } from './composables/useOverlayCandidateWorkflow'
@@ -89,10 +93,13 @@ const emit = defineEmits<{
   'update-display-mode': [mode: DisplayMode]
   'update-overlay-draft-mode': [mode: OverlayDraftMode]
   'update-overlay-candidate-filter': [filter: CandidateIssueFilter]
+  'update-overlay-search-query': [query: string]
   'update-overlay-form': [form: OverlayFormState]
   'prepare-goal-draft': []
   'load-goal-draft-proposal': []
   'dismiss-goal-draft-proposal': []
+  'search-overlay-results': []
+  'add-search-result-to-overlay': [result: SearchResultItem, index: number]
   'preview-overlay-extraction-payload': []
   'toggle-preview-candidate': [group: OverlayPreviewGroup, index: number, checked: boolean]
   'open-first-repairable': []

@@ -17,9 +17,18 @@
         show-icon
         title="来自目标理解的领域内未覆盖概念。页面打开只展示草稿收件箱；点击创建后才会生成 overlay 草稿。"
       />
-      <section v-else class="overlay-subsection goal-draft-entry manual-goal-draft-entry">
+      <section class="overlay-guide-card">
+        <h4>推荐流程</h4>
+        <ol>
+          <li>优先点击“分析当前目标并生成推荐草稿”，确认系统是否识别到未覆盖概念。</li>
+          <li>若需要外部资料，直接在抽屉内搜索并加入草稿来源，避免手动跳转资料页。</li>
+          <li>生成候选预览后，只保留可信节点、关系与资源，再创建草稿并进入人工审核。</li>
+        </ol>
+        <p>抽取成功更依赖资料质量：内容应包含概念定义、适用场景、前置知识、实践案例或资源摘要；只给一个关键词或裸 URL 往往证据不足。</p>
+      </section>
+      <section v-if="!activeGoalDraftResolutionSessionId" class="overlay-subsection goal-draft-entry manual-goal-draft-entry">
         <h4>智能草稿建议</h4>
-        <p>手动触发当前项目目标的覆盖分析；只有识别为领域内未覆盖概念时，才会生成待审核 overlay 草稿收件箱。</p>
+        <p>适合当前目标属于机器学习范围、但现有图谱未覆盖的情况，例如随机森林、SVM、集成学习或深度学习。若目标已覆盖，系统会建议直接生成路径；您仍可在下方手动或自动搜索资料补充项目图谱。</p>
         <el-button size="small" type="primary" plain :loading="manualGoalDraftLoading" @click="emit('prepare-goal-draft')">
           分析当前目标并生成推荐草稿
         </el-button>
@@ -71,7 +80,45 @@
         </div>
       </section>
 
+      <section v-if="manualOverlayMode" class="overlay-subsection overlay-search-card">
+        <h4>自动搜索资料并加入草稿</h4>
+        <p>输入具体概念或问题，系统会搜索资料并保存为项目扩展来源；加入后可直接生成候选预览。</p>
+        <div class="overlay-search-row">
+          <el-input
+            :model-value="overlaySearchQuery"
+            placeholder="例如：随机森林 机器学习 入门 前置知识"
+            @update:model-value="emit('update:overlaySearchQuery', normalizeInput($event))"
+            @keyup.enter="emit('search-overlay-results')"
+          />
+          <el-button type="primary" plain :loading="overlaySearchLoading" @click="emit('search-overlay-results')">搜索资料</el-button>
+        </div>
+        <el-alert
+          v-if="overlaySearchError"
+          class="overlay-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="overlaySearchError"
+        />
+        <div v-if="overlaySearchResults.length" class="overlay-search-results">
+          <article v-for="(result, index) in overlaySearchResults" :key="result.url" class="overlay-search-result-card">
+            <strong>{{ result.title }}</strong>
+            <p>{{ result.snippet || '该结果没有摘要，建议打开确认后再加入草稿来源。' }}</p>
+            <div class="search-result-footer">
+              <span>{{ result.provider || 'search' }} · 相关度 {{ Math.round((result.score || 0) * 100) }}%</span>
+              <el-button size="small" type="primary" plain :loading="overlayAddingSearchUrl === result.url" @click="emit('add-search-result-to-overlay', result, index)">
+                加入草稿来源
+              </el-button>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <el-form v-if="manualOverlayMode" label-position="top">
+        <section class="overlay-subsection manual-source-guide">
+          <h4>手动资料补充指南</h4>
+          <p>推荐使用“自动搜索资料”或“已保存搜索”。如果手动输入，请提供足够上下文，系统才能抽取节点、关系和资源。</p>
+        </section>
         <el-form-item label="来源类型">
           <el-radio-group :model-value="overlayForm.sourceType" @update:model-value="updateSourceType">
             <el-radio-button value="pasted_text">粘贴文本</el-radio-button>
@@ -81,6 +128,13 @@
         </el-form-item>
 
         <template v-if="overlayForm.sourceType === 'pasted_text'">
+          <el-alert
+            class="overlay-alert"
+            type="info"
+            :closable="false"
+            show-icon
+            title="适合粘贴教程片段、课程介绍或教材摘要，建议 300~3000 字，并包含定义、前置知识、适用场景或案例。"
+          />
           <el-form-item label="资料文本">
             <el-input
               :model-value="overlayForm.rawText"
@@ -88,7 +142,7 @@
               :rows="8"
               maxlength="12000"
               show-word-limit
-              placeholder="粘贴希望抽取为项目图谱扩展的资料内容"
+              placeholder="例如：随机森林是一种基于多棵决策树的集成学习方法，通常通过 Bagging 训练多个弱学习器……"
               @update:model-value="updateTextField('rawText', $event)"
             />
           </el-form-item>
@@ -98,6 +152,13 @@
         </template>
 
         <template v-else-if="overlayForm.sourceType === 'search_url'">
+          <el-alert
+            class="overlay-alert"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="当前不会自动读取网页正文，只会使用 URL、标题和摘要片段作为证据；建议填写标题和摘要，或改用自动搜索/粘贴文本。"
+          />
           <el-form-item label="URL">
             <el-input :model-value="overlayForm.url" placeholder="https://example.com/article" @update:model-value="updateTextField('url', $event)" />
           </el-form-item>
@@ -110,6 +171,13 @@
         </template>
 
         <template v-else>
+          <el-alert
+            class="overlay-alert"
+            type="info"
+            :closable="false"
+            show-icon
+            title="已保存搜索来自资料搜索页或上方自动搜索。选择 1~6 条高相关资料后生成候选预览，通常比裸 URL 更稳定。"
+          />
           <el-form-item label="已保存搜索结果">
             <el-select
               :model-value="overlayForm.selectedResultIds"
@@ -238,7 +306,7 @@ import type {
   OverlayPromotionResponse,
   OverlayResourceCandidate,
 } from '@/api/modules/graph'
-import type { PersistedSearchResult } from '@/api/modules/search'
+import type { PersistedSearchResult, SearchResultItem } from '@/api/modules/search'
 import OverlayExtractionPreviewPanel from './OverlayExtractionPreviewPanel.vue'
 import OverlaySessionResultPanel from './OverlaySessionResultPanel.vue'
 import type {
@@ -290,6 +358,11 @@ const props = defineProps<{
   overlayDraftMode: OverlayDraftMode
   overlayForm: OverlayFormState
   manualOverlayMode: boolean
+  overlaySearchQuery: string
+  overlaySearchResults: SearchResultItem[]
+  overlaySearchLoading: boolean
+  overlaySearchError: string
+  overlayAddingSearchUrl: string
   persistedSearchResults: PersistedSearchResult[]
   overlayBridgeMessage: string
   overlayExtractionPreview: OverlayExtractionPayloadPreviewResponse | null
@@ -334,10 +407,13 @@ const emit = defineEmits<{
   'update:displayMode': [mode: DisplayMode]
   'update:overlayDraftMode': [mode: OverlayDraftMode]
   'update:overlayCandidateFilter': [filter: CandidateIssueFilter]
+  'update:overlaySearchQuery': [query: string]
   'update-overlay-form': [form: OverlayFormState]
   'prepare-goal-draft': []
   'load-goal-draft-proposal': []
   'dismiss-goal-draft-proposal': []
+  'search-overlay-results': []
+  'add-search-result-to-overlay': [result: SearchResultItem, index: number]
   'preview-overlay-extraction-payload': []
   'toggle-preview-candidate': [group: OverlayPreviewGroup, index: number, checked: boolean]
   'open-first-repairable': []
@@ -372,6 +448,10 @@ const candidateFilterModel = computed({
   set: (filter) => emit('update:overlayCandidateFilter', filter),
 })
 
+function normalizeInput(value: unknown) {
+  return typeof value === 'string' ? value : String(value ?? '')
+}
+
 function updateOverlayFormField<K extends keyof OverlayFormState>(field: K, value: OverlayFormState[K]) {
   emit('update-overlay-form', { ...props.overlayForm, [field]: value })
 }
@@ -405,18 +485,72 @@ function updateSelectedResultIds(value: unknown) {
   margin-bottom: 4px;
 }
 
-.goal-draft-entry {
+.goal-draft-entry,
+.overlay-guide-card,
+.overlay-search-card,
+.manual-source-guide {
   padding: 12px;
   border: 1px solid #f3d19e;
   border-radius: 10px;
   background: #fdf6ec;
 }
 
-.goal-draft-entry p {
+.overlay-guide-card,
+.overlay-search-card,
+.manual-source-guide {
+  border-color: #d9ecff;
+  background: #f4faff;
+}
+
+.goal-draft-entry p,
+.overlay-guide-card p,
+.overlay-search-card p,
+.manual-source-guide p {
   margin: 0;
   color: #606266;
   font-size: 13px;
   line-height: 1.7;
+}
+
+.overlay-guide-card ol {
+  margin: 8px 0;
+  padding-left: 18px;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.overlay-search-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.overlay-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.overlay-search-result-card {
+  padding: 10px;
+  border: 1px solid #d9ecff;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.overlay-search-result-card p {
+  margin: 6px 0;
+}
+
+.search-result-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #909399;
+  font-size: 12px;
 }
 
 .draft-mode-switch,
@@ -472,7 +606,9 @@ function updateSelectedResultIds(value: unknown) {
   margin-top: 14px;
 }
 
-.overlay-subsection h4 {
+.overlay-subsection h4,
+.overlay-guide-card h4,
+.manual-source-guide h4 {
   margin: 0 0 8px;
   color: #303133;
   font-size: 14px;

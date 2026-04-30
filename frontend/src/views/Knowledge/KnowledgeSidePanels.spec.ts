@@ -27,8 +27,11 @@ const knowledgeOverlayDrawerStub = defineComponent({
     'update:displayMode',
     'update:overlayDraftMode',
     'update:overlayCandidateFilter',
+    'update:overlaySearchQuery',
     'update-overlay-form',
     'prepare-goal-draft',
+    'search-overlay-results',
+    'add-search-result-to-overlay',
     'preview-overlay-extraction-payload',
     'toggle-preview-candidate',
     'edit-node',
@@ -43,8 +46,11 @@ const knowledgeOverlayDrawerStub = defineComponent({
       <button data-testid="display-mode" @click="$emit('update:displayMode', 'technical')">mode</button>
       <button data-testid="draft-mode" @click="$emit('update:overlayDraftMode', 'goal_draft')">draft</button>
       <button data-testid="candidate-filter" @click="$emit('update:overlayCandidateFilter', 'ready')">filter</button>
+      <button data-testid="search-query" @click="$emit('update:overlaySearchQuery', '随机森林')">query</button>
       <button data-testid="overlay-form" @click="$emit('update-overlay-form', { sourceType: 'search_url' })">form</button>
       <button data-testid="prepare-draft" @click="$emit('prepare-goal-draft')">prepare</button>
+      <button data-testid="search-overlay" @click="$emit('search-overlay-results')">search</button>
+      <button data-testid="add-search" @click="$emit('add-search-result-to-overlay', { title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林资料', score: 0.9 }, 0)">add</button>
       <button data-testid="preview-payload" @click="$emit('preview-overlay-extraction-payload')">preview</button>
       <button data-testid="toggle-candidate" @click="$emit('toggle-preview-candidate', 'nodes', 1, true)">toggle</button>
       <button data-testid="edit-node" @click="$emit('edit-node', { node_id: 'node-001' })">edit</button>
@@ -126,8 +132,11 @@ describe('KnowledgeSidePanels', () => {
     await click(wrapper, 'display-mode')
     await click(wrapper, 'draft-mode')
     await click(wrapper, 'candidate-filter')
+    await click(wrapper, 'search-query')
     await click(wrapper, 'overlay-form')
     await click(wrapper, 'prepare-draft')
+    await click(wrapper, 'search-overlay')
+    await click(wrapper, 'add-search')
     await click(wrapper, 'preview-payload')
     await click(wrapper, 'toggle-candidate')
     await click(wrapper, 'edit-node')
@@ -140,8 +149,11 @@ describe('KnowledgeSidePanels', () => {
     expect(wrapper.emitted('update-display-mode')).toEqual([['technical']])
     expect(wrapper.emitted('update-overlay-draft-mode')).toEqual([['goal_draft']])
     expect(wrapper.emitted('update-overlay-candidate-filter')).toEqual([['ready']])
+    expect(wrapper.emitted('update-overlay-search-query')).toEqual([['随机森林']])
     expect(wrapper.emitted('update-overlay-form')).toEqual([[{ sourceType: 'search_url' }]])
     expect(wrapper.emitted('prepare-goal-draft')).toHaveLength(1)
+    expect(wrapper.emitted('search-overlay-results')).toHaveLength(1)
+    expect(wrapper.emitted('add-search-result-to-overlay')).toEqual([[{ title: '随机森林入门', url: 'https://example.com/random-forest', snippet: '随机森林资料', score: 0.9 }, 0]])
     expect(wrapper.emitted('preview-overlay-extraction-payload')).toHaveLength(1)
     expect(wrapper.emitted('toggle-preview-candidate')).toEqual([['nodes', 1, true]])
     expect(wrapper.emitted('edit-node')).toEqual([[{ node_id: 'node-001' }]])

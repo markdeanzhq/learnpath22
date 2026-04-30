@@ -10,7 +10,7 @@ import {
   type OverlaySourceRequest,
 } from '@/api/modules/graph'
 import { projectApi, type GoalResolutionPreviewResponse, type ReviewExtensionDraftCoverageResponse } from '@/api/modules/project'
-import { searchApi } from '@/api/modules/search'
+import { searchApi, type SearchResultItem } from '@/api/modules/search'
 import type { OverlaySessionView } from './useOverlayCandidateWorkflow'
 
 export type OverlaySourceType = 'pasted_text' | 'search_url' | 'saved_search'
@@ -74,6 +74,11 @@ export function useOverlayDraftInput({
   const overlaySubmitting = ref(false)
   const overlayExtractionPreviewLoading = ref(false)
   const overlayBridgeMessage = ref('')
+  const overlaySearchQuery = ref('')
+  const overlaySearchResults = ref<SearchResultItem[]>([])
+  const overlaySearchLoading = ref(false)
+  const overlaySearchError = ref('')
+  const overlayAddingSearchUrl = ref('')
   const overlayForm = ref(createOverlayForm())
   const overlayDraftMode = ref<OverlayDraftMode>('manual')
   const overlayExtractionPreview = ref<OverlayExtractionPayloadPreviewResponse | null>(null)
@@ -130,6 +135,10 @@ export function useOverlayDraftInput({
     overlayDraftMode.value = activeGoalDraftResolutionSessionId.value ? overlayDraftMode.value : 'manual'
     overlayError.value = ''
     overlayBridgeMessage.value = ''
+    overlaySearchError.value = ''
+    if (!overlaySearchQuery.value.trim() && currentProject.value?.goal_text) {
+      overlaySearchQuery.value = currentProject.value.goal_text
+    }
     await loadPersistedSearchResults()
   }
 
@@ -226,6 +235,64 @@ export function useOverlayDraftInput({
     return selectedPreviewCandidates.value[group].includes(index)
   }
 
+  async function searchOverlayResults() {
+    const currentProjectId = projectId.value
+    const query = overlaySearchQuery.value.trim()
+    if (!currentProjectId) return
+    if (!query) {
+      overlaySearchError.value = '请输入搜索关键词，例如“随机森林 机器学习 入门”。'
+      return
+    }
+
+    overlaySearchLoading.value = true
+    overlaySearchError.value = ''
+    try {
+      const response = await searchApi.search(currentProjectId, query, 6)
+      overlaySearchResults.value = response.results || []
+      if (!overlaySearchResults.value.length) {
+        overlaySearchError.value = '未找到可用资料，请换用更具体的关键词，或改用粘贴文本。'
+      }
+    } catch (error: any) {
+      overlaySearchError.value = error?.response?.data?.error || '资料搜索失败，请检查搜索配置或稍后重试。'
+    } finally {
+      overlaySearchLoading.value = false
+    }
+  }
+
+  async function addSearchResultToOverlay(result: SearchResultItem, index: number) {
+    const currentProjectId = projectId.value
+    if (!currentProjectId) return
+
+    overlayAddingSearchUrl.value = result.url
+    overlaySearchError.value = ''
+    try {
+      const saved = await searchApi.persistResult(currentProjectId, {
+        query: overlaySearchQuery.value.trim() || currentProject.value?.goal_text || '项目扩展资料',
+        provider: result.provider || 'tavily',
+        url: result.url,
+        title: result.title,
+        snippet: result.snippet,
+        result_rank: index + 1,
+        is_selected: true,
+      })
+      const nextSelectedIds = new Set(overlayForm.value.selectedResultIds)
+      nextSelectedIds.add(saved.result_id)
+      overlayForm.value = {
+        ...overlayForm.value,
+        sourceType: 'saved_search',
+        selectedResultIds: [...nextSelectedIds],
+      }
+      const bridged = await searchApi.bridgeOverlaySources(currentProjectId, [saved.result_id])
+      overlayBridgeMessage.value = bridged.results[0]?.reused ? '已复用该资料作为项目扩展来源，可生成候选预览。' : '已加入项目扩展来源，可生成候选预览。'
+      await loadPersistedSearchResults()
+      notifySuccess?.('资料已加入扩展草稿来源')
+    } catch (error: any) {
+      overlaySearchError.value = error?.response?.data?.error || '资料加入扩展草稿失败'
+    } finally {
+      overlayAddingSearchUrl.value = ''
+    }
+  }
+
   async function previewOverlayExtractionPayload() {
     if (!projectId.value || !manualOverlayMode.value) return null
 
@@ -303,6 +370,9 @@ export function useOverlayDraftInput({
     overlayExtractionPreviewLoading.value = false
     overlayError.value = ''
     overlayBridgeMessage.value = ''
+    overlaySearchError.value = ''
+    overlaySearchResults.value = []
+    overlayAddingSearchUrl.value = ''
     overlayForm.value = createOverlayForm()
     overlayDraftMode.value = nextMode
     clearPreviewSelection()
@@ -321,6 +391,10 @@ export function useOverlayDraftInput({
     overlayError.value = ''
     overlayBridgeMessage.value = ''
     overlayForm.value = createOverlayForm()
+    overlaySearchError.value = ''
+    if (!overlaySearchQuery.value.trim() && currentProject.value?.goal_text) {
+      overlaySearchQuery.value = currentProject.value.goal_text
+    }
     goalDraftProposalLoading.value = true
   }
 
@@ -429,6 +503,11 @@ export function useOverlayDraftInput({
     overlaySubmitting,
     overlayExtractionPreviewLoading,
     overlayBridgeMessage,
+    overlaySearchQuery,
+    overlaySearchResults,
+    overlaySearchLoading,
+    overlaySearchError,
+    overlayAddingSearchUrl,
     overlayForm,
     overlayDraftMode,
     overlayExtractionPreview,
@@ -460,6 +539,8 @@ export function useOverlayDraftInput({
     dismissGoalDraftProposal,
     togglePreviewCandidate,
     isPreviewCandidateSelected,
+    searchOverlayResults,
+    addSearchResultToOverlay,
     previewOverlayExtractionPayload,
     submitOverlayDraft,
     resetOverlayDraftInput,
