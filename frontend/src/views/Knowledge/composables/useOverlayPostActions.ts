@@ -11,7 +11,7 @@ import {
 } from '@/utils/displayLabels'
 import type { OverlaySessionView } from './useOverlayCandidateWorkflow'
 
-type ResourceBindingForm = {
+export type ResourceBindingForm = {
   resourceId: string
   targetType: 'project_node' | 'path_stage'
   targetId: string

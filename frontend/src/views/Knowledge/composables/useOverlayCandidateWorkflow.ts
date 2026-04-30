@@ -11,9 +11,9 @@ import type {
 
 export type OverlaySessionView = OverlayExtractionSessionResponse & Partial<GoalExtensionDraftResponse>
 export type CandidateIssueFilter = 'all' | 'blocking' | 'review' | 'pending' | 'ready'
-type OverlayWorkflowStepState = 'done' | 'current' | 'pending'
+export type OverlayWorkflowStepState = 'done' | 'current' | 'pending'
 
-type OverlayWorkflowStep = {
+export type OverlayWorkflowStep = {
   key: string
   title: string
   description: string

@@ -341,69 +341,17 @@
           </el-form-item>
         </el-form>
 
-        <section v-if="overlayExtractionPreview" class="overlay-preview">
-          <h4>AI 抽取预览</h4>
-          <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="节点候选">{{ selectedPreviewCounts.nodes }} / {{ overlayExtractionPreview.counts.nodes }}</el-descriptions-item>
-            <el-descriptions-item label="关系候选">{{ selectedPreviewCounts.edges }} / {{ overlayExtractionPreview.counts.edges }}</el-descriptions-item>
-            <el-descriptions-item label="资源候选">{{ selectedPreviewCounts.resources }} / {{ overlayExtractionPreview.counts.resources }}</el-descriptions-item>
-            <el-descriptions-item label="来源数">{{ overlayExtractionPreview.source_ids.length }}</el-descriptions-item>
-          </el-descriptions>
-          <div class="candidate-card-list">
-            <article v-for="(node, index) in normalizedPreviewPayload.nodes" :key="`preview-node-${index}`" class="preview-candidate-card">
-              <label class="candidate-checkbox-row">
-                <input
-                  type="checkbox"
-                  :checked="isPreviewCandidateSelected('nodes', index)"
-                  @change="togglePreviewCandidate('nodes', index, ($event.target as HTMLInputElement).checked)"
-                />
-                <strong>{{ candidateTitle(node, `节点候选 ${index + 1}`) }}</strong>
-              </label>
-              <p>{{ node.summary || node.legality_rationale || '暂无摘要' }}</p>
-              <el-tag v-if="node.confidence !== undefined" size="small" type="info">置信度 {{ node.confidence }}</el-tag>
-            </article>
-            <article v-for="(edge, index) in normalizedPreviewPayload.edges" :key="`preview-edge-${index}`" class="preview-candidate-card">
-              <label class="candidate-checkbox-row">
-                <input
-                  type="checkbox"
-                  :checked="isPreviewCandidateSelected('edges', index)"
-                  @change="togglePreviewCandidate('edges', index, ($event.target as HTMLInputElement).checked)"
-                />
-                <strong>{{ edgeCandidateSummary(edge) }}</strong>
-              </label>
-              <p>{{ edge.legality_rationale || '暂无合法性说明' }}</p>
-              <el-tag size="small" type="info">{{ edge.relation_type || 'RELATED_TO' }}</el-tag>
-            </article>
-            <article v-for="(resource, index) in normalizedPreviewPayload.resources" :key="`preview-resource-${index}`" class="preview-candidate-card">
-              <label class="candidate-checkbox-row">
-                <input
-                  type="checkbox"
-                  :checked="isPreviewCandidateSelected('resources', index)"
-                  @change="togglePreviewCandidate('resources', index, ($event.target as HTMLInputElement).checked)"
-                />
-                <strong>{{ candidateTitle(resource, `资源候选 ${index + 1}`) }}</strong>
-              </label>
-              <p>{{ resource.summary || resource.url || '暂无摘要' }}</p>
-              <el-tag v-if="resource.resource_type" size="small" type="success">{{ resource.resource_type }}</el-tag>
-            </article>
-          </div>
-          <el-alert
-            v-if="overlayExtractionPreview.warnings.length"
-            class="overlay-alert"
-            type="warning"
-            :closable="false"
-            show-icon
-            :title="overlayExtractionPreview.warnings.join('；')"
-          />
-          <el-alert
-            v-if="overlayCandidateValidation"
-            class="overlay-alert"
-            :type="overlayCandidateValidation.summary.has_blocking_errors ? 'warning' : 'success'"
-            :closable="false"
-            show-icon
-            :title="`预校验：通过 ${overlayCandidateValidation.counts.nodes.valid + overlayCandidateValidation.counts.edges.valid + overlayCandidateValidation.counts.resources.valid}，失败 ${overlayCandidateValidation.summary.invalid_count}，待复核 ${overlayCandidateValidation.summary.needs_review_count}`"
-          />
-        </section>
+        <OverlayExtractionPreviewPanel
+          v-if="overlayExtractionPreview"
+          :preview="overlayExtractionPreview"
+          :normalized-preview-payload="normalizedPreviewPayload"
+          :selected-preview-counts="selectedPreviewCounts"
+          :validation="overlayCandidateValidation"
+          :is-preview-candidate-selected="isPreviewCandidateSelected"
+          :candidate-title="candidateTitle"
+          :edge-candidate-summary="edgeCandidateSummary"
+          @toggle-candidate="togglePreviewCandidate"
+        />
 
         <el-alert
           v-if="overlayError"
@@ -414,243 +362,46 @@
           :title="overlayError"
         />
 
-        <section v-if="lastOverlaySession" class="overlay-result">
-          <div class="section-header">
-            <div>
-              <h3>抽取结果</h3>
-              <p v-if="showTechnicalDetails">追溯编号：{{ lastOverlaySession.session.session_id }}</p>
-              <p v-else>{{ overlaySessionGuide }}</p>
-            </div>
-            <el-tag :type="sessionStatusMeta(lastOverlaySession.session.session_status).tagType" :title="lastOverlaySession.session.session_status">
-              {{ sessionStatusMeta(lastOverlaySession.session.session_status).label }}
-            </el-tag>
-          </div>
-          <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="节点候选">{{ lastOverlaySession.nodes?.length || 0 }}</el-descriptions-item>
-            <el-descriptions-item label="关系候选">{{ lastOverlaySession.edges?.length || 0 }}</el-descriptions-item>
-            <el-descriptions-item label="资源候选">{{ lastOverlaySession.resources?.length || 0 }}</el-descriptions-item>
-            <el-descriptions-item label="校验概览">
-              通过 {{ overlaySessionStats.valid }}，失败 {{ overlaySessionStats.invalid }}，待复核 {{ overlaySessionStats.needsReview }}，待审核 {{ overlaySessionStats.pendingReview }}
-            </el-descriptions-item>
-            <el-descriptions-item label="来源数">{{ lastOverlaySession.sources?.length || 0 }}</el-descriptions-item>
-          </el-descriptions>
-          <el-alert
-            class="overlay-alert"
-            :type="overlaySessionStats.invalid ? 'warning' : 'info'"
-            :closable="false"
-            show-icon
-            :title="overlaySessionGuide"
-          />
-
-          <section class="overlay-workflow" data-testid="overlay-workflow">
-            <div class="overlay-workflow-header">
-              <strong>草稿处理流程</strong>
-              <span v-if="overlayWorkflowCurrentStep">当前阶段：{{ overlayWorkflowCurrentStep.title }}</span>
-            </div>
-            <ol class="overlay-workflow-steps">
-              <li
-                v-for="(step, index) in overlayWorkflowSteps"
-                :key="step.key"
-                class="overlay-workflow-step"
-                :class="`is-${step.state}`"
-              >
-                <span class="overlay-workflow-index">{{ index + 1 }}</span>
-                <div>
-                  <div class="overlay-workflow-step-title">
-                    <strong>{{ step.title }}</strong>
-                    <el-tag size="small" :type="step.tagType" effect="plain">{{ step.statusLabel }}</el-tag>
-                  </div>
-                  <p>{{ step.description }}</p>
-                </div>
-              </li>
-            </ol>
-          </section>
-
-          <div v-if="overlayCandidateFilterCounts.all" class="overlay-candidate-toolbar">
-            <div class="overlay-candidate-toolbar-title">
-              <strong>候选处理队列</strong>
-              <p>建议顺序：先修复失败候选，再处理重复复核，最后确认可规划候选。</p>
-            </div>
-            <el-radio-group v-model="overlayCandidateFilter" size="small">
-              <el-radio-button
-                v-for="option in OVERLAY_CANDIDATE_FILTER_OPTIONS"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }} {{ overlayCandidateFilterCounts[option.value] }}
-              </el-radio-button>
-            </el-radio-group>
-            <el-button size="small" type="primary" plain :disabled="!overlayCandidateRepairTarget" @click="openFirstRepairableCandidate">
-              {{ overlayCandidateRepairTargetLabel }}
-            </el-button>
-          </div>
-
-          <p v-if="overlayCandidateFilterCounts.all && !filteredOverlayCandidateCount" class="overlay-empty-filter">
-            当前筛选下暂无候选，切换到“全部”可查看完整草稿。
-          </p>
-
-          <section v-if="filteredOverlayNodes.length || filteredOverlayEdges.length" class="overlay-subsection">
-            <h4>候选校验明细</h4>
-            <div class="candidate-card-list compact">
-              <article v-for="node in filteredOverlayNodes" :key="node.node_id" class="preview-candidate-card">
-                <div class="candidate-card-header">
-                  <strong>{{ node.name || node.node_id }}</strong>
-                  <el-button size="small" text type="primary" @click="openNodeCandidateEditor(node)">编辑修复</el-button>
-                </div>
-                <p>{{ node.summary || node.legality_rationale || '暂无摘要' }}</p>
-                <el-tag size="small" :type="validationStatusMeta(node.validation_status).tagType">{{ validationStatusMeta(node.validation_status).label }}</el-tag>
-                <ul v-if="node.validation_errors?.length" class="validation-errors">
-                  <li v-for="error in node.validation_errors" :key="`${node.node_id}-${error}`">{{ validationErrorMessage(error) }}</li>
-                </ul>
-              </article>
-              <article v-for="edge in filteredOverlayEdges" :key="edge.edge_id" class="preview-candidate-card">
-                <div class="candidate-card-header">
-                  <strong>{{ edge.source_node_id || edge.source_name_or_id }} → {{ edge.target_node_id || edge.target_name_or_id }}</strong>
-                  <el-button size="small" text type="primary" @click="openEdgeCandidateEditor(edge)">编辑修复</el-button>
-                </div>
-                <p>{{ edge.legality_rationale || '暂无合法性说明' }}</p>
-                <el-tag size="small" :type="validationStatusMeta(edge.validation_status).tagType">{{ validationStatusMeta(edge.validation_status).label }}</el-tag>
-                <el-tag size="small" type="info">{{ edge.relation_type }}</el-tag>
-                <ul v-if="edge.validation_errors?.length" class="validation-errors">
-                  <li v-for="error in edge.validation_errors" :key="`${edge.edge_id}-${error}`">{{ validationErrorMessage(error) }}</li>
-                </ul>
-              </article>
-            </div>
-          </section>
-
-          <section v-if="goalExtensionDraftDetails" class="overlay-subsection goal-draft-summary">
-            <h4>目标缺口分析</h4>
-            <el-alert
-              class="overlay-alert"
-              type="warning"
-              :closable="false"
-              show-icon
-              title="扩展草稿只作为审核候选；未确认审核并开启规划前，不会进入正式路径。"
-            />
-            <el-descriptions :column="1" border size="small">
-              <el-descriptions-item v-if="goalExtensionDraftDetails.gap_analysis?.user_goal" label="用户目标">
-                {{ goalExtensionDraftDetails.gap_analysis.user_goal }}
-              </el-descriptions-item>
-              <el-descriptions-item label="缺失概念">
-                {{ goalDraftMissingConcepts.join('、') || '暂无' }}
-              </el-descriptions-item>
-              <el-descriptions-item v-if="goalExtensionDraftDetails.gap_analysis?.why_current_graph_is_insufficient" label="缺口原因">
-                {{ goalExtensionDraftDetails.gap_analysis.why_current_graph_is_insufficient }}
-              </el-descriptions-item>
-              <el-descriptions-item v-if="showAuditDetails" label="草稿来源">
-                {{ goalExtensionDraftDetails.draft_metadata?.draft_engine || 'rules' }} / {{ goalExtensionDraftDetails.draft_metadata?.prompt_version || 'unknown' }}
-              </el-descriptions-item>
-              <el-descriptions-item v-if="showAuditDetails" label="安全边界">
-                需人工审核：{{ goalExtensionDraftDetails.draft_metadata?.requires_user_review ? '是' : '否' }}；可直接规划：{{ goalExtensionDraftDetails.draft_metadata?.can_directly_plan ? '是' : '否' }}
-              </el-descriptions-item>
-            </el-descriptions>
-            <ul v-if="goalDraftReviewNotes.length" class="review-notes">
-              <li v-for="note in goalDraftReviewNotes" :key="note">{{ note }}</li>
-            </ul>
-            <div v-if="showAuditDetails && goalDraftReviewFocus.length" class="review-focus-list">
-              <el-tag v-for="item in goalDraftReviewFocus" :key="item" type="info" effect="plain">{{ item }}</el-tag>
-            </div>
-          </section>
-
-          <section v-if="filteredOverlayResources.length" class="overlay-subsection">
-            <h4>资源候选</h4>
-            <article v-for="resource in filteredOverlayResources" :key="resource.resource_id" class="resource-candidate">
-              <div class="candidate-card-header">
-                <div class="resource-title">{{ resource.title }}</div>
-                <el-button size="small" text type="primary" @click="openResourceCandidateEditor(resource)">编辑修复</el-button>
-              </div>
-              <p>{{ resource.summary || '暂无摘要' }}</p>
-              <el-tag size="small" :type="resourceTypeMeta(resource.resource_type || 'resource').tagType" :title="resource.resource_type || 'resource'">
-                {{ resourceTypeMeta(resource.resource_type || 'resource').label }}
-              </el-tag>
-              <el-tag size="small" :type="validationStatusMeta(resource.validation_status).tagType">{{ validationStatusMeta(resource.validation_status).label }}</el-tag>
-              <el-tag size="small" type="success">绑定 {{ resource.binding_summary?.count || 0 }}</el-tag>
-              <ul v-if="resource.validation_errors?.length" class="validation-errors">
-                <li v-for="error in resource.validation_errors" :key="`${resource.resource_id}-${error}`">{{ validationErrorMessage(error) }}</li>
-              </ul>
-            </article>
-          </section>
-
-          <section v-if="showAuditDetails && lastOverlaySession.resources?.length" class="overlay-subsection">
-            <h4>资源绑定</h4>
-            <el-form label-position="top">
-              <el-form-item label="资源">
-                <el-select v-model="resourceBinding.resourceId" placeholder="选择资源候选" style="width: 100%">
-                  <el-option
-                    v-for="resource in lastOverlaySession.resources || []"
-                    :key="resource.resource_id"
-                    :label="resource.title"
-                    :value="resource.resource_id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="绑定目标类型">
-                <el-radio-group v-model="resourceBinding.targetType">
-                  <el-radio-button value="project_node">项目节点</el-radio-button>
-                </el-radio-group>
-              </el-form-item>
-              <el-form-item label="绑定目标">
-                <el-select v-model="resourceBinding.targetId" filterable placeholder="选择知识点或阶段" style="width: 100%">
-                  <el-option
-                    v-for="option in resourceTargetOptions"
-                    :key="option.id"
-                    :label="option.label"
-                    :value="option.id"
-                  >
-                    <span>{{ option.label }}</span>
-                    <span class="option-trace-id">{{ option.id }}</span>
-                  </el-option>
-                </el-select>
-              </el-form-item>
-              <el-button size="small" type="primary" plain @click="bindOverlayResource">绑定资源</el-button>
-            </el-form>
-          </section>
-
-          <section v-if="showTechnicalDetails" class="overlay-subsection">
-            <h4>高级操作：推广到领域包</h4>
-            <el-button size="small" :loading="promotionLoading" @click="previewPromotion">预览推广结果（不写入）</el-button>
-            <el-descriptions v-if="promotionPreview" class="promotion-summary" :column="1" border size="small">
-              <el-descriptions-item label="状态">
-                <el-tag
-                  size="small"
-                  :type="promotionPreviewStatusMeta(promotionPreview.status).tagType"
-                  :title="promotionPreviewStatusMeta(promotionPreview.status).detail || promotionPreview.status"
-                >
-                  {{ promotionPreviewStatusMeta(promotionPreview.status).label }}
-                </el-tag>
-              </el-descriptions-item>
-              <el-descriptions-item label="候选数">{{ promotionPreview.candidate_count }}</el-descriptions-item>
-              <el-descriptions-item label="原领域包指纹">{{ promotionPreview.baseline_pack_hash }}</el-descriptions-item>
-              <el-descriptions-item label="推广后指纹">{{ promotionPreview.resulting_pack_hash }}</el-descriptions-item>
-              <el-descriptions-item label="资源明细">{{ promotionPreview.resources?.length || 0 }}</el-descriptions-item>
-              <el-descriptions-item label="写入说明">预览只校验，不写入领域包、Neo4j 或候选状态。</el-descriptions-item>
-            </el-descriptions>
-            <el-alert
-              v-if="promotionPreview?.errors?.length"
-              class="overlay-alert"
-              type="warning"
-              :closable="false"
-              show-icon
-              :title="promotionPreview.errors.join('; ')"
-            />
-            <el-input
-              v-model="promotionSecret"
-              class="promotion-secret"
-              type="password"
-              show-password
-              placeholder="输入管理员密钥后确认推广"
-            />
-            <el-button size="small" type="danger" :loading="promotionLoading" @click="commitPromotion">确认推广</el-button>
-            <el-alert
-              v-if="promotionResult"
-              class="overlay-alert"
-              :type="promotionResult.status === 'promoted' || promotionResult.reason === 'promoted' ? 'success' : 'info'"
-              :closable="false"
-              show-icon
-              :title="promotionStatusMessage"
-            />
-          </section>
-        </section>
+        <OverlaySessionResultPanel
+          v-if="lastOverlaySession"
+          v-model:overlay-candidate-filter="overlayCandidateFilter"
+          :session="lastOverlaySession"
+          :show-technical-details="showTechnicalDetails"
+          :show-audit-details="showAuditDetails"
+          :overlay-session-guide="overlaySessionGuide"
+          :overlay-session-stats="overlaySessionStats"
+          :overlay-workflow-steps="overlayWorkflowSteps"
+          :overlay-workflow-current-step="overlayWorkflowCurrentStep"
+          :overlay-candidate-filter-options="OVERLAY_CANDIDATE_FILTER_OPTIONS"
+          :overlay-candidate-filter-counts="overlayCandidateFilterCounts"
+          :filtered-overlay-candidate-count="filteredOverlayCandidateCount"
+          :has-overlay-candidate-repair-target="Boolean(overlayCandidateRepairTarget)"
+          :overlay-candidate-repair-target-label="overlayCandidateRepairTargetLabel"
+          :filtered-overlay-nodes="filteredOverlayNodes"
+          :filtered-overlay-edges="filteredOverlayEdges"
+          :filtered-overlay-resources="filteredOverlayResources"
+          :goal-extension-draft-details="goalExtensionDraftDetails"
+          :goal-draft-missing-concepts="goalDraftMissingConcepts"
+          :goal-draft-review-notes="goalDraftReviewNotes"
+          :goal-draft-review-focus="goalDraftReviewFocus"
+          :validation-error-message="validationErrorMessage"
+          :resource-binding="resourceBinding"
+          :resource-target-options="resourceTargetOptions"
+          :promotion-preview="promotionPreview"
+          :promotion-result="promotionResult"
+          :promotion-secret="promotionSecret"
+          :promotion-loading="promotionLoading"
+          :promotion-status-message="promotionStatusMessage"
+          @open-first-repairable="openFirstRepairableCandidate"
+          @edit-node="openNodeCandidateEditor"
+          @edit-edge="openEdgeCandidateEditor"
+          @edit-resource="openResourceCandidateEditor"
+          @update-resource-binding="updateResourceBindingField"
+          @update:promotion-secret="promotionSecret = $event"
+          @bind-resource="bindOverlayResource"
+          @preview-promotion="previewPromotion"
+          @commit-promotion="commitPromotion"
+        />
 
         <div class="drawer-actions">
           <el-button @click="overlayDrawerVisible = false">关闭</el-button>
@@ -661,157 +412,17 @@
       </div>
     </el-drawer>
 
-    <el-dialog v-model="candidateEditor.visible" :title="candidateEditor.title" width="620px">
-      <div v-if="candidateEditor.errors.length" class="candidate-editor-issue-panel">
-        <strong>当前问题</strong>
-        <p>{{ candidateEditorIssueSummary }}</p>
-        <div v-if="candidateEditorQuickFixErrors.length" class="candidate-editor-quick-actions">
-          <el-button
-            v-for="error in candidateEditorQuickFixErrors"
-            :key="`quick-${error}`"
-            size="small"
-            type="warning"
-            plain
-            @click="applyCandidateQuickFix(error)"
-          >
-            {{ quickFixLabel(error) }}
-          </el-button>
-        </div>
-      </div>
-      <el-form label-position="top">
-        <template v-if="candidateEditor.kind === 'node'">
-          <el-form-item label="名称"><el-input v-model="candidateEditor.form.name" /></el-form-item>
-          <el-form-item label="摘要">
-            <el-input v-model="candidateEditor.form.summary" type="textarea" :rows="3" />
-            <p v-if="candidateEditorFieldIssue('summary')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('summary') }}</p>
-          </el-form-item>
-          <el-form-item label="合法性说明">
-            <el-input v-model="candidateEditor.form.legality_rationale" type="textarea" :rows="2" />
-            <p v-if="candidateEditorFieldIssue('legality_rationale')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('legality_rationale') }}</p>
-          </el-form-item>
-          <el-form-item label="分组 / 分类">
-            <el-input v-model="candidateEditor.form.group" placeholder="group" />
-            <el-input v-model="candidateEditor.form.category" class="candidate-editor-inline" placeholder="category" />
-          </el-form-item>
-          <el-form-item label="规划评分">
-            <div class="candidate-editor-grid">
-              <el-input-number v-model="candidateEditor.form.difficulty_final" :min="1" :max="5" controls-position="right" />
-              <el-input-number v-model="candidateEditor.form.importance_final" :min="1" :max="5" controls-position="right" />
-              <el-input-number v-model="candidateEditor.form.estimated_hours" :min="0.5" :step="0.5" controls-position="right" />
-            </div>
-            <p v-if="candidateEditorFieldIssue('difficulty_final') || candidateEditorFieldIssue('importance_final') || candidateEditorFieldIssue('estimated_hours')" class="candidate-editor-field-hint">
-              {{ candidateEditorFieldIssue('difficulty_final') || candidateEditorFieldIssue('importance_final') || candidateEditorFieldIssue('estimated_hours') }}
-            </p>
-          </el-form-item>
-          <el-form-item label="画像需求 req_math / req_coding / req_ml">
-            <div class="candidate-editor-grid">
-              <el-input-number v-model="candidateEditor.form.req_math" :min="1" :max="5" controls-position="right" />
-              <el-input-number v-model="candidateEditor.form.req_coding" :min="1" :max="5" controls-position="right" />
-              <el-input-number v-model="candidateEditor.form.req_ml" :min="1" :max="5" controls-position="right" />
-            </div>
-            <p v-if="candidateEditorFieldIssue('req_math') || candidateEditorFieldIssue('req_coding') || candidateEditorFieldIssue('req_ml')" class="candidate-editor-field-hint">
-              {{ candidateEditorFieldIssue('req_math') || candidateEditorFieldIssue('req_coding') || candidateEditorFieldIssue('req_ml') }}
-            </p>
-          </el-form-item>
-          <el-form-item label="理论 / 实践权重">
-            <div class="candidate-editor-grid">
-              <el-input-number v-model="candidateEditor.form.theory_weight" :min="0" :max="1" :step="0.1" controls-position="right" />
-              <el-input-number v-model="candidateEditor.form.practice_weight" :min="0" :max="1" :step="0.1" controls-position="right" />
-            </div>
-            <p v-if="candidateEditorFieldIssue('theory_weight') || candidateEditorFieldIssue('practice_weight')" class="candidate-editor-field-hint">
-              {{ candidateEditorFieldIssue('theory_weight') || candidateEditorFieldIssue('practice_weight') }}
-            </p>
-          </el-form-item>
-        </template>
-        <template v-else-if="candidateEditor.kind === 'edge'">
-          <el-form-item label="来源节点 ID 或名称">
-            <el-select
-              v-model="candidateEditor.form.source_node_id"
-              filterable
-              allow-create
-              default-first-option
-              placeholder="搜索当前图谱或本次草稿节点，也可手动输入 ID/名称"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="option in overlayEndpointOptions"
-                :key="`source-${option.id}`"
-                :label="option.label"
-                :value="option.id"
-                :disabled="option.disabled"
-              >
-                <span>{{ option.label }}</span>
-                <span class="endpoint-option-hint">{{ option.hint }}</span>
-              </el-option>
-            </el-select>
-            <p v-if="candidateEditorFieldIssue('source_node_id')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('source_node_id') }}</p>
-          </el-form-item>
-          <el-form-item label="目标节点 ID 或名称">
-            <el-select
-              v-model="candidateEditor.form.target_node_id"
-              filterable
-              allow-create
-              default-first-option
-              placeholder="搜索当前图谱或本次草稿节点，也可手动输入 ID/名称"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="option in overlayEndpointOptions"
-                :key="`target-${option.id}`"
-                :label="option.label"
-                :value="option.id"
-                :disabled="option.disabled"
-              >
-                <span>{{ option.label }}</span>
-                <span class="endpoint-option-hint">{{ option.hint }}</span>
-              </el-option>
-            </el-select>
-            <p v-if="candidateEditorFieldIssue('target_node_id')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('target_node_id') }}</p>
-          </el-form-item>
-          <el-form-item label="关系类型">
-            <el-select v-model="candidateEditor.form.relation_type" style="width: 100%">
-              <el-option label="REQUIRES" value="REQUIRES" />
-              <el-option label="RELATED_TO" value="RELATED_TO" />
-            </el-select>
-            <p v-if="candidateEditorFieldIssue('relation_type')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('relation_type') }}</p>
-          </el-form-item>
-          <el-form-item label="合法性说明">
-            <el-input v-model="candidateEditor.form.legality_rationale" type="textarea" :rows="3" />
-            <p v-if="candidateEditorFieldIssue('legality_rationale')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('legality_rationale') }}</p>
-          </el-form-item>
-        </template>
-        <template v-else>
-          <el-form-item label="标题">
-            <el-input v-model="candidateEditor.form.title" />
-            <p v-if="candidateEditorFieldIssue('title')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('title') }}</p>
-          </el-form-item>
-          <el-form-item label="URL">
-            <el-input v-model="candidateEditor.form.url" />
-            <p v-if="candidateEditorFieldIssue('url')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('url') }}</p>
-          </el-form-item>
-          <el-form-item label="资源类型">
-            <el-input v-model="candidateEditor.form.resource_type" />
-            <p v-if="candidateEditorFieldIssue('resource_type')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('resource_type') }}</p>
-          </el-form-item>
-          <el-form-item label="摘要">
-            <el-input v-model="candidateEditor.form.summary" type="textarea" :rows="3" />
-            <p v-if="candidateEditorFieldIssue('summary')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('summary') }}</p>
-          </el-form-item>
-          <el-form-item label="证据来源 ID">
-            <el-input v-model="candidateEditor.form.evidence_source_id" />
-            <p v-if="candidateEditorFieldIssue('evidence_source_id')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('evidence_source_id') }}</p>
-          </el-form-item>
-          <el-form-item label="质量分">
-            <el-input-number v-model="candidateEditor.form.quality_score" :min="0" :max="1" :step="0.1" controls-position="right" />
-            <p v-if="candidateEditorFieldIssue('quality_score')" class="candidate-editor-field-hint">{{ candidateEditorFieldIssue('quality_score') }}</p>
-          </el-form-item>
-        </template>
-      </el-form>
-      <template #footer>
-        <el-button @click="candidateEditor.visible = false">取消</el-button>
-        <el-button type="primary" :loading="candidateEditor.saving" @click="saveCandidateEditor">保存并重新校验</el-button>
-      </template>
-    </el-dialog>
+    <OverlayCandidateEditorDialog
+      v-model:visible="candidateEditor.visible"
+      :candidate-editor="candidateEditor"
+      :candidate-editor-issue-summary="candidateEditorIssueSummary"
+      :candidate-editor-quick-fix-errors="candidateEditorQuickFixErrors"
+      :overlay-endpoint-options="overlayEndpointOptions"
+      :candidate-editor-field-issue="candidateEditorFieldIssue"
+      :quick-fix-label="quickFixLabel"
+      @quick-fix="applyCandidateQuickFix"
+      @save="saveCandidateEditor"
+    />
   </div>
 </template>
 
@@ -821,52 +432,35 @@ import { ElMessage } from 'element-plus/es/components/message/index'
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import { useProjectStore } from '@/stores/project'
+import OverlayCandidateEditorDialog from './OverlayCandidateEditorDialog.vue'
+import OverlayExtractionPreviewPanel from './OverlayExtractionPreviewPanel.vue'
+import OverlaySessionResultPanel from './OverlaySessionResultPanel.vue'
+import { useFullscreenToggle } from './composables/useFullscreenToggle'
 import { useGraphCacheDiagnostics } from './composables/useGraphCacheDiagnostics'
 import { useEntityMetadataDrawer } from './composables/useEntityMetadataDrawer'
 import { useGraphRouteSync } from './composables/useGraphRouteSync'
+import { useGraphStatusText } from './composables/useGraphStatusText'
 import { useGraphToolbarActions, type GraphCanvasActionHandle, type GraphLayout } from './composables/useGraphToolbarActions'
 import { useGraphWorkspaceOrchestration } from './composables/useGraphWorkspaceOrchestration'
 import { useGraphWorkspaceLoader, type GraphWorkspaceLoadOptions } from './composables/useGraphWorkspaceLoader'
 import { useGraphReviewActions } from './composables/useGraphReviewActions'
+import { useSelectedNodeContext } from './composables/useSelectedNodeContext'
 import { useOverlayCandidateEditor } from './composables/useOverlayCandidateEditor'
+import { getOverlayErrorMessage } from './composables/useOverlayErrorMessage'
 import { useOverlayPostActions } from './composables/useOverlayPostActions'
+import { useOverlayRepairActions } from './composables/useOverlayRepairActions'
 import {
   OVERLAY_CANDIDATE_FILTER_OPTIONS,
   useOverlayCandidateWorkflow,
   type CandidateIssueFilter,
-  type OverlayRepairTarget,
   type OverlaySessionView,
 } from './composables/useOverlayCandidateWorkflow'
 import { useOverlayDraftInput } from './composables/useOverlayDraftInput'
 import {
   graphApi,
-  type GraphEdgeData,
   type GraphElement,
-  type GraphNodeData,
 } from '@/api/modules/graph'
 import { GRAPH_CATEGORY_LEGEND, GRAPH_RELATION_LEGEND } from '@/components/Graph/graphMeta'
-import {
-  formatServiceReason,
-  promotionPreviewStatusMeta,
-  resourceTypeMeta,
-  sessionStatusMeta,
-  validationStatusMeta,
-} from '@/utils/displayLabels'
-
-type SelectedAdjacentEdge = GraphEdgeData & {
-  direction: 'incoming' | 'outgoing'
-  source_label?: string
-  target_label?: string
-}
-
-type SelectedNodeContext = GraphNodeData & {
-  adjacent_edges: SelectedAdjacentEdge[]
-  incoming_edges: SelectedAdjacentEdge[]
-  outgoing_edges: SelectedAdjacentEdge[]
-}
-
-const PROJECT_LATEST_PLAN_MISSING = 'project_latest_plan_missing'
-const SEARCH_NOT_READY = 'SEARCH_NOT_READY'
 
 const GraphToolbar = defineAsyncComponent(() => import('@/components/Graph/GraphToolbar.vue'))
 const GraphCanvas = defineAsyncComponent(() => import('@/components/Graph/GraphCanvas.vue'))
@@ -897,7 +491,7 @@ const {
 const syncing = ref(false)
 const selectedNodeId = ref<string | null>(null)
 const graphRef = ref<GraphCanvasHandle>()
-const pageRef = ref<HTMLDivElement>()
+const { pageRef, toggleFullscreen } = useFullscreenToggle<HTMLDivElement>()
 const {
   graphCacheStatsLoading,
   graphCacheStatsError,
@@ -919,18 +513,6 @@ const overlayCandidateFilter = ref<CandidateIssueFilter>('all')
 let graphWorkspaceLoader: ReturnType<typeof useGraphWorkspaceLoader> | null = null
 const categoryLegend = GRAPH_CATEGORY_LEGEND
 const relationLegend = GRAPH_RELATION_LEGEND
-const emptyDescription = computed(() =>
-  emptyReason.value === PROJECT_LATEST_PLAN_MISSING
-    ? '当前项目尚未生成学习路径，暂时无法展示路径子图；项目图谱仍可显示领域基线与项目扩展草稿。'
-    : '当前范围暂无图谱数据，可刷新或先同步领域知识包到 Neo4j',
-)
-const projectionAlertType = computed(() => projectionStatus.value?.status === 'ok' ? 'success' : 'warning')
-const projectionStatusTitle = computed(() => {
-  if (!projectionStatus.value) return ''
-  const status = projectionStatus.value.status === 'ok' ? '项目扩展投影已同步' : '项目扩展投影需关注'
-  const reason = formatServiceReason(projectionStatus.value.reason)
-  return reason ? `${status}：${reason}` : status
-})
 function isNodeElement(element: GraphElement): element is Extract<GraphElement, { group: 'nodes' }> {
   return element.group === 'nodes'
 }
@@ -1100,6 +682,12 @@ const {
   getErrorMessage: getOverlayErrorMessage,
   notifySuccess: (message) => ElMessage.success(message),
 })
+const { openFirstRepairableCandidate } = useOverlayRepairActions({
+  overlayCandidateRepairTarget,
+  openNodeCandidateEditor,
+  openEdgeCandidateEditor,
+  openResourceCandidateEditor,
+})
 const {
   promotionPreview,
   promotionResult,
@@ -1121,6 +709,15 @@ const {
   refreshGraphWorkspace: async () => { await loadGraphWorkspace() },
   notifySuccess: (message) => ElMessage.success(message),
 })
+function updateResourceBindingField(field: 'resourceId' | 'targetType' | 'targetId', value: string) {
+  const nextResourceBinding = { ...resourceBinding.value }
+  if (field === 'targetType') {
+    nextResourceBinding.targetType = value === 'path_stage' ? 'path_stage' : 'project_node'
+  } else {
+    nextResourceBinding[field] = value
+  }
+  resourceBinding.value = nextResourceBinding
+}
 const {
   onReviewNode,
   onReviewEdge,
@@ -1139,42 +736,23 @@ const {
 })
 const graphNodeCount = computed(() => nodes.value.length)
 const graphEdgeCount = computed(() => edges.value.length)
-const graphScopeLabel = computed(() => {
-  if (scope.value === 'domain') return '领域基线图'
-  if (scope.value === 'project') return '项目增强图'
-  return '学习路径子图'
+const {
+  emptyDescription,
+  projectionAlertType,
+  projectionStatusTitle,
+  graphScopeLabel,
+  graphStatusHint,
+} = useGraphStatusText({
+  scope,
+  graphState,
+  errorMessage,
+  emptyReason,
+  projectionStatus,
 })
-const graphStatusHint = computed(() => {
-  if (graphState.value === 'loading') return '正在读取本地图谱视图与审核状态。'
-  if (graphState.value === 'empty') return emptyDescription.value
-  if (graphState.value === 'error') return errorMessage.value || '图谱读取失败，请稍后重试。'
-  if (scope.value === 'path') return '仅展示最新学习路径命中的知识点和依赖关系。'
-  if (scope.value === 'project') return '展示领域基线叠加已审核且允许规划的项目扩展候选。'
-  return '展示领域知识包的稳定基线，不依赖 Neo4j 读取链路。'
-})
-const nodeLabelMap = computed(() => new Map(nodes.value.map((node) => [node.id, node.label])))
-const selectedNode = computed<SelectedNodeContext | null>(() => {
-  const nodeId = selectedNodeId.value
-  if (!nodeId) return null
-
-  const node = nodes.value.find((item) => item.id === nodeId)
-  if (!node) return null
-
-  const adjacentEdges = edges.value
-    .filter((edge) => edge.source === nodeId || edge.target === nodeId)
-    .map<SelectedAdjacentEdge>((edge) => ({
-      ...edge,
-      direction: edge.source === nodeId ? 'outgoing' : 'incoming',
-      source_label: nodeLabelMap.value.get(edge.source),
-      target_label: nodeLabelMap.value.get(edge.target),
-    }))
-
-  return {
-    ...node,
-    adjacent_edges: adjacentEdges,
-    incoming_edges: adjacentEdges.filter((edge) => edge.direction === 'incoming'),
-    outgoing_edges: adjacentEdges.filter((edge) => edge.direction === 'outgoing'),
-  }
+const { selectedNode } = useSelectedNodeContext({
+  nodes,
+  edges,
+  selectedNodeId,
 })
 
 function resetGraphState() {
@@ -1258,38 +836,6 @@ async function syncRequestedOverlaySession(nextSessionId: string | null) {
   await graphWorkspaceOrchestration.syncRequestedOverlaySession(nextSessionId)
 }
 void syncRequestedOverlaySession
-
-function openOverlayRepairTarget(target: OverlayRepairTarget) {
-  if (target.kind === 'node') {
-    openNodeCandidateEditor(target.candidate)
-  } else if (target.kind === 'edge') {
-    openEdgeCandidateEditor(target.candidate)
-  } else {
-    openResourceCandidateEditor(target.candidate)
-  }
-}
-
-function openFirstRepairableCandidate() {
-  const target = overlayCandidateRepairTarget.value
-  if (target) openOverlayRepairTarget(target)
-}
-
-function getOverlayErrorMessage(error: any) {
-  const code = error?.response?.data?.error
-  if (code === SEARCH_NOT_READY) {
-    return '搜索服务尚未就绪，自定义扩展暂不可用；领域基线图谱浏览不受影响。'
-  }
-  return formatServiceReason(code) || code || error?.message || '扩展草稿创建失败'
-}
-
-function toggleFullscreen() {
-  if (!pageRef.value) return
-  if (document.fullscreenElement) {
-    document.exitFullscreen()
-  } else {
-    pageRef.value.requestFullscreen()
-  }
-}
 </script>
 
 <style scoped>
@@ -1541,162 +1087,9 @@ function toggleFullscreen() {
   line-height: 1.6;
 }
 
-.candidate-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 .overlay-guidance {
   margin: 4px 0 0;
   color: #606266;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.overlay-workflow {
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid #d9ecff;
-  border-radius: 10px;
-  background: #f4faff;
-}
-
-.overlay-workflow-header,
-.overlay-workflow-step-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.overlay-workflow-header span {
-  color: #409eff;
-  font-size: 12px;
-}
-
-.overlay-workflow-steps {
-  display: grid;
-  gap: 8px;
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.overlay-workflow-step {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.overlay-workflow-step.is-current {
-  border-color: #f3d19e;
-  background: #fdf6ec;
-}
-
-.overlay-workflow-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  color: #fff;
-  font-size: 12px;
-  background: #909399;
-}
-
-.overlay-workflow-step.is-done .overlay-workflow-index {
-  background: #67c23a;
-}
-
-.overlay-workflow-step.is-current .overlay-workflow-index {
-  background: #e6a23c;
-}
-
-.overlay-candidate-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid #f3d19e;
-  border-radius: 10px;
-  background: #fdf6ec;
-}
-
-.overlay-candidate-toolbar-title p,
-.overlay-workflow-step p,
-.overlay-empty-filter,
-.candidate-editor-issue-panel p,
-.candidate-editor-field-hint {
-  margin: 4px 0 0;
-  color: #606266;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.overlay-empty-filter {
-  padding: 10px 12px;
-  border: 1px dashed #dcdfe6;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.candidate-editor-issue-panel {
-  margin-bottom: 12px;
-  padding: 12px;
-  border: 1px solid #f3d19e;
-  border-radius: 10px;
-  background: #fdf6ec;
-}
-
-.candidate-editor-quick-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.candidate-editor-field-hint {
-  color: #b88230;
-}
-
-.endpoint-option-hint {
-  float: right;
-  margin-left: 12px;
-  color: #909399;
-  font-size: 12px;
-}
-
-.candidate-editor-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  width: 100%;
-}
-
-.candidate-editor-inline {
-  margin-top: 8px;
-}
-
-.candidate-checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.validation-errors {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  color: #b88230;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -1707,84 +1100,20 @@ function toggleFullscreen() {
   font-size: 12px;
 }
 
-.overlay-preview {
-  padding: 12px;
-  border: 1px solid #d9ecff;
-  border-radius: 10px;
-  background: #f4faff;
-}
-
-.overlay-preview h4 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  color: #303133;
-}
-
-.overlay-result {
-  padding: 14px;
-  border: 1px solid #ebeef5;
-  border-radius: 12px;
-  background: #fafafa;
-}
-
-.overlay-result h3 {
-  margin: 0;
-  font-size: 16px;
-  color: #303133;
-}
-
-.overlay-result p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #909399;
-  word-break: break-all;
-}
 .overlay-subsection {
   margin-top: 14px;
 }
+
 .overlay-subsection h4 {
   margin: 0 0 8px;
   font-size: 14px;
   color: #303133;
 }
-.goal-draft-summary {
-  padding: 12px;
-  border: 1px solid #f3d19e;
-  border-radius: 10px;
-  background: #fdf6ec;
-}
-.review-notes {
-  margin: 10px 0 0;
-  padding-left: 18px;
-  color: #606266;
-  font-size: 12px;
-  line-height: 1.7;
-}
+
 .review-focus-list {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
-}
-.resource-candidate {
-  padding: 10px;
-  margin-bottom: 8px;
-  border: 1px solid #ebeef5;
-  border-radius: 10px;
-  background: #fff;
-}
-.resource-title {
-  font-weight: 600;
-  color: #303133;
-}
-.option-trace-id {
-  float: right;
-  margin-left: 12px;
-  color: #c0c4cc;
-  font-size: 12px;
-}
-.promotion-summary,
-.promotion-secret {
   margin-top: 10px;
 }
 

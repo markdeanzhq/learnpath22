@@ -192,6 +192,7 @@ function mountKnowledge() {
         GraphCanvas: slotStub('div'),
         NodeDetail: slotStub('div'),
         EntityMetadataDrawer: slotStub('div'),
+        OverlaySessionResultPanel: false,
         ElCard: slotStub('section'),
         ElSpace: slotStub('div'),
         ElButton: slotStub('button'),

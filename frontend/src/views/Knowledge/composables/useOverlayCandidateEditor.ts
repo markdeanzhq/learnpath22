@@ -9,7 +9,7 @@ import type { OverlaySessionView } from './useOverlayCandidateWorkflow'
 
 type EditableCandidateKind = 'node' | 'edge' | 'resource'
 
-type CandidateEditorState = {
+export type CandidateEditorState = {
   visible: boolean
   saving: boolean
   kind: EditableCandidateKind
