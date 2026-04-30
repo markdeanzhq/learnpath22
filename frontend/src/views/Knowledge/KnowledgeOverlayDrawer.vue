@@ -262,6 +262,8 @@
         :filtered-overlay-candidate-count="filteredOverlayCandidateCount"
         :overlay-batch-review-loading="overlayBatchReviewLoading"
         :overlay-batch-confirmable-count="overlayBatchConfirmableCount"
+        :overlay-batch-planning-loading="overlayBatchPlanningLoading"
+        :overlay-batch-plannable-count="overlayBatchPlannableCount"
         :has-overlay-candidate-repair-target="hasOverlayCandidateRepairTarget"
         :overlay-candidate-repair-target-label="overlayCandidateRepairTargetLabel"
         :filtered-overlay-nodes="filteredOverlayNodes"
@@ -281,6 +283,7 @@
         :promotion-status-message="promotionStatusMessage"
         @open-first-repairable="emit('open-first-repairable')"
         @confirm-valid-candidates="emit('confirm-valid-candidates')"
+        @enable-confirmed-planning="emit('enable-confirmed-planning')"
         @edit-node="emit('edit-node', $event)"
         @edit-edge="emit('edit-edge', $event)"
         @edit-resource="emit('edit-resource', $event)"
@@ -399,6 +402,8 @@ const props = defineProps<{
   filteredOverlayCandidateCount: number
   overlayBatchReviewLoading: boolean
   overlayBatchConfirmableCount: number
+  overlayBatchPlanningLoading: boolean
+  overlayBatchPlannableCount: number
   hasOverlayCandidateRepairTarget: boolean
   overlayCandidateRepairTargetLabel: string
   filteredOverlayNodes: OverlayNodeCandidate[]
@@ -435,6 +440,7 @@ const emit = defineEmits<{
   'toggle-preview-candidate': [group: OverlayPreviewGroup, index: number, checked: boolean]
   'open-first-repairable': []
   'confirm-valid-candidates': []
+  'enable-confirmed-planning': []
   'edit-node': [node: OverlayNodeCandidate]
   'edit-edge': [edge: OverlayEdgeCandidate]
   'edit-resource': [resource: OverlayResourceCandidate]

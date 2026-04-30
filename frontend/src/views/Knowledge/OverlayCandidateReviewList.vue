@@ -66,6 +66,16 @@
       >
         批量确认待审核 {{ batchConfirmableCount }}
       </el-button>
+      <el-button
+        size="small"
+        type="success"
+        plain
+        :loading="batchPlanningLoading"
+        :disabled="!batchPlannableCount"
+        @click="emit('enable-confirmed-planning')"
+      >
+        批量纳入规划 {{ batchPlannableCount }}
+      </el-button>
       <el-button size="small" type="primary" plain :disabled="!hasRepairTarget" @click="emit('open-first-repairable')">
         {{ repairTargetLabel }}
       </el-button>
@@ -155,6 +165,8 @@ const props = defineProps<{
   filteredCandidateCount: number
   batchReviewLoading: boolean
   batchConfirmableCount: number
+  batchPlanningLoading: boolean
+  batchPlannableCount: number
   hasRepairTarget: boolean
   repairTargetLabel: string
   nodes: OverlayNodeCandidate[]
@@ -167,6 +179,7 @@ const emit = defineEmits<{
   'update:filter': [filter: CandidateIssueFilter]
   'open-first-repairable': []
   'confirm-valid-candidates': []
+  'enable-confirmed-planning': []
   'edit-node': [node: OverlayNodeCandidate]
   'edit-edge': [edge: OverlayEdgeCandidate]
   'edit-resource': [resource: OverlayResourceCandidate]

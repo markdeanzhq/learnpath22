@@ -205,6 +205,8 @@ function mountDrawer() {
       filteredOverlayCandidateCount: 3,
       overlayBatchReviewLoading: false,
       overlayBatchConfirmableCount: 1,
+      overlayBatchPlanningLoading: false,
+      overlayBatchPlannableCount: 1,
       hasOverlayCandidateRepairTarget: true,
       overlayCandidateRepairTargetLabel: '打开首个需处理候选：线性回归',
       filteredOverlayNodes: [nodeCandidate],
@@ -247,6 +249,7 @@ describe('KnowledgeOverlayDrawer', () => {
     await wrapper.findAll('input[type="checkbox"]')[0].setValue(false)
     await wrapper.findAll('button').find((button) => button.text() === '编辑修复')?.trigger('click')
     await wrapper.findAll('button').find((button) => button.text() === '批量确认待审核 1')?.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === '批量纳入规划 1')?.trigger('click')
     await wrapper.findAll('.select-update')[0].trigger('click')
     await wrapper.findAll('button').find((button) => button.text() === '绑定资源')?.trigger('click')
     const inputButtons = wrapper.findAll('.input-update')
@@ -256,6 +259,7 @@ describe('KnowledgeOverlayDrawer', () => {
     expect(wrapper.emitted('toggle-preview-candidate')).toEqual([['nodes', 0, false]])
     expect(wrapper.emitted('edit-node')).toEqual([[nodeCandidate]])
     expect(wrapper.emitted('confirm-valid-candidates')).toHaveLength(1)
+    expect(wrapper.emitted('enable-confirmed-planning')).toHaveLength(1)
     expect(wrapper.emitted('update-resource-binding')).toEqual([['resourceId', 'updated-value']])
     expect(wrapper.emitted('bind-resource')).toHaveLength(1)
     expect(wrapper.emitted('update:promotionSecret')).toEqual([['secret-002']])

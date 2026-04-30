@@ -126,6 +126,7 @@
       @toggle-preview-candidate="togglePreviewCandidate"
       @open-first-repairable="openFirstRepairableCandidate"
       @confirm-valid-candidates="confirmValidPendingOverlayCandidates"
+      @enable-confirmed-planning="enableConfirmedOverlayCandidatesPlanning"
       @edit-node="openNodeCandidateEditor"
       @edit-edge="openEdgeCandidateEditor"
       @edit-resource="openResourceCandidateEditor"
@@ -161,6 +162,7 @@ import { useGraphWorkspaceOrchestration } from './composables/useGraphWorkspaceO
 import { useGraphWorkspaceLoader, type GraphWorkspaceLoadOptions } from './composables/useGraphWorkspaceLoader'
 import { useGraphReviewActions } from './composables/useGraphReviewActions'
 import { useSelectedNodeContext } from './composables/useSelectedNodeContext'
+import { useOverlayCandidateBatchPlanning } from './composables/useOverlayCandidateBatchPlanning'
 import { useOverlayCandidateBatchReview } from './composables/useOverlayCandidateBatchReview'
 import { useOverlayCandidateEditor } from './composables/useOverlayCandidateEditor'
 import { getOverlayErrorMessage } from './composables/useOverlayErrorMessage'
@@ -414,6 +416,9 @@ const { openFirstRepairableCandidate } = useOverlayRepairActions({
   openEdgeCandidateEditor,
   openResourceCandidateEditor,
 })
+const refreshOverlayBatchState = async () => {
+  await Promise.all([loadOverlayPreflight(), loadGraphWorkspace()])
+}
 const {
   overlayBatchReviewLoading,
   overlayBatchConfirmableCount,
@@ -422,9 +427,19 @@ const {
   projectId,
   lastOverlaySession,
   overlayError,
-  refreshAfterBatch: async () => {
-    await Promise.all([loadOverlayPreflight(), loadGraphWorkspace()])
-  },
+  refreshAfterBatch: refreshOverlayBatchState,
+  getErrorMessage: getOverlayErrorMessage,
+  notifySuccess: (message) => ElMessage.success(message),
+})
+const {
+  overlayBatchPlanningLoading,
+  overlayBatchPlannableCount,
+  enableConfirmedOverlayCandidatesPlanning,
+} = useOverlayCandidateBatchPlanning({
+  projectId,
+  lastOverlaySession,
+  overlayError,
+  refreshAfterBatch: refreshOverlayBatchState,
   getErrorMessage: getOverlayErrorMessage,
   notifySuccess: (message) => ElMessage.success(message),
 })
@@ -546,6 +561,8 @@ const overlayDrawerProps = computed(() => ({
   filteredOverlayCandidateCount: filteredOverlayCandidateCount.value,
   overlayBatchReviewLoading: overlayBatchReviewLoading.value,
   overlayBatchConfirmableCount: overlayBatchConfirmableCount.value,
+  overlayBatchPlanningLoading: overlayBatchPlanningLoading.value,
+  overlayBatchPlannableCount: overlayBatchPlannableCount.value,
   hasOverlayCandidateRepairTarget: Boolean(overlayCandidateRepairTarget.value),
   overlayCandidateRepairTargetLabel: overlayCandidateRepairTargetLabel.value,
   filteredOverlayNodes: filteredOverlayNodes.value,

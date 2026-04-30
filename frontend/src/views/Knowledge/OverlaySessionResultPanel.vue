@@ -21,6 +21,8 @@
       :filtered-candidate-count="filteredOverlayCandidateCount"
       :batch-review-loading="overlayBatchReviewLoading"
       :batch-confirmable-count="overlayBatchConfirmableCount"
+      :batch-planning-loading="overlayBatchPlanningLoading"
+      :batch-plannable-count="overlayBatchPlannableCount"
       :has-repair-target="hasOverlayCandidateRepairTarget"
       :repair-target-label="overlayCandidateRepairTargetLabel"
       :nodes="filteredOverlayNodes"
@@ -29,6 +31,7 @@
       :validation-error-message="validationErrorMessage"
       @open-first-repairable="emit('open-first-repairable')"
       @confirm-valid-candidates="emit('confirm-valid-candidates')"
+      @enable-confirmed-planning="emit('enable-confirmed-planning')"
       @edit-node="emit('edit-node', $event)"
       @edit-edge="emit('edit-edge', $event)"
       @edit-resource="emit('edit-resource', $event)"
@@ -112,6 +115,8 @@ const props = defineProps<{
   filteredOverlayCandidateCount: number
   overlayBatchReviewLoading: boolean
   overlayBatchConfirmableCount: number
+  overlayBatchPlanningLoading: boolean
+  overlayBatchPlannableCount: number
   hasOverlayCandidateRepairTarget: boolean
   overlayCandidateRepairTargetLabel: string
   filteredOverlayNodes: OverlayNodeCandidate[]
@@ -135,6 +140,7 @@ const emit = defineEmits<{
   'update:overlayCandidateFilter': [filter: CandidateIssueFilter]
   'open-first-repairable': []
   'confirm-valid-candidates': []
+  'enable-confirmed-planning': []
   'edit-node': [node: OverlayNodeCandidate]
   'edit-edge': [edge: OverlayEdgeCandidate]
   'edit-resource': [resource: OverlayResourceCandidate]

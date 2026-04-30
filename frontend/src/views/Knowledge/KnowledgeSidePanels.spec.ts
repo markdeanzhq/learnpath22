@@ -37,6 +37,7 @@ const knowledgeOverlayDrawerStub = defineComponent({
     'toggle-preview-candidate',
     'open-first-repairable',
     'confirm-valid-candidates',
+    'enable-confirmed-planning',
     'edit-node',
     'update-resource-binding',
     'update:promotionSecret',
@@ -59,6 +60,7 @@ const knowledgeOverlayDrawerStub = defineComponent({
       <button data-testid="toggle-candidate" @click="$emit('toggle-preview-candidate', 'nodes', 1, true)">toggle</button>
       <button data-testid="repair-first" @click="$emit('open-first-repairable')">repair</button>
       <button data-testid="batch-confirm" @click="$emit('confirm-valid-candidates')">confirm</button>
+      <button data-testid="batch-planning" @click="$emit('enable-confirmed-planning')">planning</button>
       <button data-testid="edit-node" @click="$emit('edit-node', { node_id: 'node-001' })">edit</button>
       <button data-testid="resource-binding" @click="$emit('update-resource-binding', 'targetId', 'node-001')">bind-field</button>
       <button data-testid="promotion-secret" @click="$emit('update:promotionSecret', 'secret-001')">secret</button>
@@ -148,6 +150,7 @@ describe('KnowledgeSidePanels', () => {
     await click(wrapper, 'toggle-candidate')
     await click(wrapper, 'repair-first')
     await click(wrapper, 'batch-confirm')
+    await click(wrapper, 'batch-planning')
     await click(wrapper, 'edit-node')
     await click(wrapper, 'resource-binding')
     await click(wrapper, 'promotion-secret')
@@ -168,6 +171,7 @@ describe('KnowledgeSidePanels', () => {
     expect(wrapper.emitted('toggle-preview-candidate')).toEqual([['nodes', 1, true]])
     expect(wrapper.emitted('open-first-repairable')).toHaveLength(1)
     expect(wrapper.emitted('confirm-valid-candidates')).toHaveLength(1)
+    expect(wrapper.emitted('enable-confirmed-planning')).toHaveLength(1)
     expect(wrapper.emitted('edit-node')).toEqual([[{ node_id: 'node-001' }]])
     expect(wrapper.emitted('update-resource-binding')).toEqual([['targetId', 'node-001']])
     expect(wrapper.emitted('update-promotion-secret')).toEqual([['secret-001']])

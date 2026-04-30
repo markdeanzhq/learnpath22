@@ -422,6 +422,14 @@ describe('Knowledge overlay entry', () => {
       planning_enabled: true,
       promotion_status: 'not_promoted',
     }))
+    graphSetOverlayPlanningMock.mockImplementation((_projectId: string, group: string, elementId: string, planningEnabled: boolean) => Promise.resolve({
+      element_id: elementId,
+      element_type: group.replace(/s$/, ''),
+      validation_status: 'valid',
+      review_status: 'confirmed',
+      planning_enabled: planningEnabled,
+      promotion_status: 'not_promoted',
+    }))
     graphGetGraphWorkspaceMock.mockImplementation((_projectId: string, params: any = {}) => Promise.resolve({
       project_id: 'project-001',
       graph: {
@@ -691,6 +699,92 @@ describe('Knowledge overlay entry', () => {
     expect((wrapper.vm as any).lastOverlaySession.resources[0].review_status).toBe('confirmed')
     expect((wrapper.vm as any).overlayBatchConfirmableCount).toBe(0)
     expect(successMock).toHaveBeenCalledWith('已批量确认 3 个候选，请继续检查规划开关和路径预检。')
+  })
+
+  it('batch enables planning for confirmed overlay candidates from the session drawer', async () => {
+    graphCreateOverlayAutoDraftMock.mockResolvedValueOnce({
+      session: {
+        session_id: 'sess-auto-planning',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-auto-001'],
+        warnings: [],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [
+        {
+          node_id: 'node-plan-001',
+          name: '随机森林扩展',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'confirmed',
+          planning_enabled: false,
+          promotion_status: 'not_promoted',
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'edge-plan-001',
+          source_name_or_id: '随机森林扩展',
+          target_node_id: 'ml_c01',
+          relation_type: 'RELATED_TO',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'confirmed',
+          planning_enabled: false,
+          promotion_status: 'not_promoted',
+        },
+      ],
+      resources: [
+        {
+          resource_id: 'resource-plan-001',
+          title: '随机森林教程',
+          resource_type: 'article',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'confirmed',
+          planning_enabled: false,
+          promotion_status: 'not_promoted',
+          binding_summary: { count: 0 },
+        },
+      ],
+      warnings: [],
+      auto_draft: {
+        query: '随机森林',
+        search_result_count: 1,
+        selected_result_count: 1,
+        selected_result_ids: ['result-auto-001'],
+        source_ids: ['src-auto-001'],
+        reused_source_count: 0,
+        preview_counts: { nodes: 1, edges: 1, resources: 1 },
+        validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
+      },
+    })
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).overlaySearchQuery = '随机森林'
+    await (wrapper.vm as any).createAutoOverlayDraft()
+    graphSetOverlayPlanningMock.mockClear()
+    confirmMock.mockClear()
+    await (wrapper.vm as any).enableConfirmedOverlayCandidatesPlanning()
+
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.stringContaining('将 3 个已确认候选纳入增强图谱规划'),
+      '批量纳入规划',
+      expect.objectContaining({ confirmButtonText: '纳入规划' }),
+    )
+    expect(graphSetOverlayPlanningMock).toHaveBeenNthCalledWith(1, 'project-001', 'nodes', 'node-plan-001', true)
+    expect(graphSetOverlayPlanningMock).toHaveBeenNthCalledWith(2, 'project-001', 'edges', 'edge-plan-001', true)
+    expect(graphSetOverlayPlanningMock).toHaveBeenNthCalledWith(3, 'project-001', 'resources', 'resource-plan-001', true)
+    expect((wrapper.vm as any).lastOverlaySession.nodes[0].planning_enabled).toBe(true)
+    expect((wrapper.vm as any).lastOverlaySession.edges[0].planning_enabled).toBe(true)
+    expect((wrapper.vm as any).lastOverlaySession.resources[0].planning_enabled).toBe(true)
+    expect((wrapper.vm as any).overlayBatchPlannableCount).toBe(0)
+    expect(successMock).toHaveBeenCalledWith('已将 3 个候选纳入规划，请查看增强图谱预检结果。')
   })
 
   it('creates pasted text source before extraction session', async () => {
