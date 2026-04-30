@@ -280,15 +280,17 @@ docker compose up --build
 1. 输入目标：`我想学习随机森林`。
 2. 展示目标解析结果中的 `review_extension_draft` / `in_domain_uncovered` 语义。
 3. 创建随机森林扩展审核项目或扩展草稿，进入 Knowledge 查看候选 source、node、edge、resource。
-4. 强调：随机森林尚不属于当前 Domain Pack 正式事实源，草稿不会直接写正式图谱或正式路径，必须经过校验、人工审核与 `planning_enabled` 开关。
+4. 在候选处理队列中展示“需修复 / 待复核 / 待审核 / 已确认”诊断，优先打开首个可修复候选。
+5. 强调：随机森林尚不属于当前 Domain Pack 正式事实源，草稿不会直接写正式图谱或正式路径，必须经过校验、人工审核与 `planning_enabled` 开关。
 
 ### 12.5 增强主线：资料到 overlay 的受控链路
 
 1. 在 Search 页保存一条机器学习资料，或在 Knowledge 页粘贴一段资料文本。
 2. 在 Knowledge 中生成 “AI 抽取预览”，检查节点、关系、资源候选数量。
 3. 使用预览 payload 创建 extraction session，展示字段校验、重复检测、DAG 校验与 warning。
-4. 人工确认候选并开启 `planning_enabled` 后，再生成 enhanced 路径。
-5. 与基础路径对比：新增内容只来自已确认的 Project Overlay，未确认候选不会进入 planner-visible graph。
+4. 对已通过机器校验的候选可批量确认；对已确认但未开启规划的候选可批量纳入 `planning_enabled`。
+5. Knowledge 预检面板出现“查看路径对比”入口后跳转到 Path 的“基础 / 增强图谱路径对比”，由用户显式点击生成对比预览。
+6. 与基础路径对比：新增内容只来自已确认且开启规划的 Project Overlay，未确认候选不会进入 planner-visible graph。
 
 ### 12.6 闭环演示：资源、进度与重规划
 

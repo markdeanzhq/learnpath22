@@ -545,6 +545,8 @@ goal preview -> branch-specific UI -> create / reconfirm / answer clarification 
 
 未审核、校验失败、关闭规划或归档 session 的 overlay 不会进入增强方案；LLM/规则生成的扩展草稿只有通过 overlay 审核管线后，才可能出现在 `enhanced`。
 
+前端交接流程为：Knowledge 预检面板确认已有可进入增强图谱的 overlay 后，显示“查看路径对比”入口并跳转到 `/path?tool=graph_options`。Path 页只打开“基础 / 增强图谱路径对比”面板，不自动调用 preview 接口；用户点击“生成图谱方案对比”后才请求本端点。
+
 **图谱方案预览响应片段:**
 ```json
 {

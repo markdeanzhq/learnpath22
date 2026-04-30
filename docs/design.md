@@ -138,7 +138,9 @@ GoalFrame 的权威边界：
 - Knowledge 草稿收件箱读取目标解析阶段生成的 `draft_proposal`，支持“使用系统推荐草稿”与“手动补充资料”切换；打开 deep link 只读 proposal，不创建 session
 - LLM extraction preview 展示 nodes / edges / resources 候选明细，用户可勾选保留项；创建 session 时只提交选中候选并记录 selected counts
 - extraction session 候选节点、边、资源的 schema 校验、去重、edge legality 与 DAG 校验，前端把常见校验错误转换为中文说明和修正建议
-- overlay review 与 planning toggle 分离，互不隐式改写
+- 候选处理队列按 `invalid`、`needs_review`、`valid+pending`、`valid+confirmed` 聚合为“需修复 / 待复核 / 待审核 / 已确认”诊断，并提供打开首个修复目标的主行动
+- overlay review 与 planning toggle 分离，互不隐式改写；已通过机器校验的 pending 候选支持批量确认，已确认但未开启 planning 的候选支持批量纳入规划
+- Knowledge 预检面板只在增强图谱已有 planner-visible overlay 时显示“查看路径对比”，跳转到 Path 的 `tool=graph_options` 面板，但不自动生成预览
 - baseline review action set 为 `pending|confirmed|removed`，overlay action set 为 `pending|confirmed|rejected|removed`；未知 origin/lifecycle 在前端显示为安全未知状态并禁用 planner-affecting 操作
 - no latest plan 但已有 overlay draft 时，项目图谱仍可展示 overlay 候选
 
@@ -259,8 +261,8 @@ Neo4j 用于图谱展示与审核视图，存储对象包含 baseline `Knowledge
 | 页面 | 路由 | 当前实现功能 |
 |------|------|-------------|
 | 项目创建 | `/project` | 目标录入、GoalFrame/coverage 理解面板、候选选择、partial acceptance、clarification、boundary rejection、extension draft deep link、选择候选后创建项目、画像问卷采集入口；stale/hash drift 会清理不安全预览状态 |
-| 知识图谱 | `/knowledge` | 图谱可视化、领域图/项目全图切换、overlay draft 入口、节点/边审核、planning toggle、按路由 `nodeId` / `sessionId` / `goalDraft` 恢复上下文；打开 deep link 不创建草稿、不改变 review/planning 状态 |
-| 学习路径 | `/path` | 阶段化路径展示、解释面板、路径 variant preview、feedback replan preview、known-node draft 二次确认、confirm 后保存正式新版本、按知识点自动补充推荐资源、路径页内搜索、搜索结果绑定到知识点、从任务卡片跳转到 Knowledge 定位节点 |
+| 知识图谱 | `/knowledge` | 图谱可视化、领域图/项目全图切换、overlay draft 入口、候选诊断、批量确认、批量纳入规划、节点/边审核、planning toggle、按路由 `nodeId` / `sessionId` / `goalDraft` 恢复上下文；打开 deep link 不创建草稿、不改变 review/planning 状态；预检通过后可跳转路径图谱对比 |
+| 学习路径 | `/path` | 阶段化路径展示、解释面板、路径 variant preview、基础/增强 graph option preview、`tool=graph_options` 路由入口、feedback replan preview、known-node draft 二次确认、confirm 后保存正式新版本、按知识点自动补充推荐资源、路径页内搜索、搜索结果绑定到知识点、从任务卡片跳转到 Knowledge 定位节点 |
 | 资料搜索 | `/search` | 独立搜索页、配置缺失提示、结果列表 |
 | 学习进度 | `/dashboard` | 进度统计、事件提交、状态概览、从进度列表跳转到 Knowledge 定位节点 |
 | 设置 | `/settings` | 运行时配置录入、配置状态查看、LLM 连通性测试、双层 readiness 预检展示 |
