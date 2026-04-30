@@ -141,6 +141,33 @@ export function useOverlayCandidateWorkflow({
   })
 
   const overlayWorkflowCurrentStep = computed(() => overlayWorkflowSteps.value.find((step) => step.state === 'current') || null)
+  const overlayPreflightTagType = computed(() => {
+    if (overlayPreflight.value?.status === 'ok') return 'success'
+    if (overlayPreflight.value?.status === 'blocked') return 'danger'
+    return 'warning'
+  })
+  const overlayPreflightStatusLabel = computed(() => {
+    if (overlayPreflight.value?.status === 'ok') return '可用'
+    if (overlayPreflight.value?.status === 'blocked') return '阻塞'
+    return '需关注'
+  })
+  const overlayPreflightIssues = computed(() => [
+    ...(overlayPreflight.value?.blocking_items || []),
+    ...(overlayPreflight.value?.warning_items || []),
+  ])
+  const overlayPreflightGuidance = computed(() => {
+    const preflight = overlayPreflight.value
+    if (!preflight) return ''
+    const counts = preflight.counts
+    const invalid = counts.nodes.invalid + counts.edges.invalid
+    const pendingReview = counts.nodes.pending_review + counts.edges.pending_review
+    const planningDisabled = counts.nodes.planning_disabled + counts.edges.planning_disabled
+    if (invalid) return '先修复校验失败候选；节点无效时，引用它的关系会暂时显示端点不存在。'
+    if (pendingReview) return '已有候选通过机器校验，请逐项确认审核；只有已确认且开启规划的候选才会进入增强图谱。'
+    if (planningDisabled) return '存在已确认但关闭规划的候选，如需参与路径，请重新开启规划开关。'
+    if (counts.visible_overlay_nodes || counts.visible_overlay_edges) return '增强图谱已可用于项目图谱和路径预检；如需写入 Neo4j 投影，再点击同步图谱。'
+    return '当前草稿尚未产生可进入增强图谱的节点或关系。'
+  })
   const overlaySessionCandidates = computed<OverlayRepairTarget[]>(() => {
     const session = lastOverlaySession.value
     if (!session) return []
@@ -197,6 +224,10 @@ export function useOverlayCandidateWorkflow({
     overlaySessionStats,
     overlayWorkflowSteps,
     overlayWorkflowCurrentStep,
+    overlayPreflightTagType,
+    overlayPreflightStatusLabel,
+    overlayPreflightIssues,
+    overlayPreflightGuidance,
     overlaySessionCandidates,
     filteredOverlayNodes,
     filteredOverlayEdges,

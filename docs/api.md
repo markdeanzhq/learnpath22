@@ -864,13 +864,19 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 {
   "status": "degraded",
   "ready": false,
-  "core_ready": true,
-  "demo_ready": true,
+  "core_ready": false,
+  "demo_ready": false,
+  "local_demo_ready": true,
   "enhanced_ready": false,
+  "capabilities": {
+    "local_graph_read": {"status": "ok", "ready": true, "reason": "local_read_model_ready"},
+    "neo4j_projection": {"status": "blocked", "ready": false, "in_sync": false, "reason": "neo4j_unavailable"},
+    "online_enhancement": {"status": "degraded", "ready": false, "reason": "online_enhancement_optional"}
+  },
   "services": {
     "sqlite": {"status": "ok", "ready": true},
-    "neo4j": {"status": "ok", "ready": true},
-    "graph_sync": {"status": "ok", "ready": true, "reason": "synced", "domain": "machine_learning"},
+    "neo4j": {"status": "error", "ready": false, "reason": "offline"},
+    "graph_sync": {"status": "blocked", "ready": false, "in_sync": false, "reason": "neo4j_unavailable"},
     "llm": {"status": "skipped", "ready": false, "reason": "LLM_API_KEY not configured"},
     "search": {"status": "skipped", "ready": false, "provider": "tavily", "reason": "搜索服务未配置"}
   }
@@ -888,7 +894,9 @@ path scope 使用 `LearningPath.latest` 中的节点集合和 `ProjectGraphSnaps
 - 清空本地保存只会移除浏览器中的快照，不会主动清空后端当前已生效的运行时配置
 - `PUT /health/config` 仅支持覆盖已提供字段，未提交的字段保持原值，不提供清空单个字段的语义
 - `POST /health/llm-test` 当前固定返回 `skipped`，不再发起自定义外部连通性请求
-- `core_ready` 表示 SQLite + Neo4j + `services.graph_sync` 是否就绪
-- `demo_ready` 表示离线答辩主链是否可演示，当前与 `core_ready` 保持一致
+- `local_demo_ready` 表示 SQLite + 本地 Domain Pack 读模型是否足以支撑本地主链演示
+- `core_ready` / `demo_ready` 保留旧语义，表示 SQLite + Neo4j + `services.graph_sync` 是否全部就绪
 - `enhanced_ready` 表示 LLM 与搜索等在线增强能力是否就绪
-- 前端为兼容旧联调实例保留 `normalizeReadiness`，若后端仍返回旧结构，会自动补齐 `core_ready/demo_ready/enhanced_ready` 与 `services.graph_sync`
+- `capabilities.local_graph_read`、`capabilities.neo4j_projection`、`capabilities.online_enhancement` 分别驱动设置页三块能力卡片
+- Neo4j 投影或在线增强未就绪时，不代表本地图谱浏览与路径规划主链不可用
+- 前端为兼容旧联调实例保留 `normalizeReadiness`，若后端仍返回旧结构，会自动补齐 `core_ready/demo_ready/enhanced_ready`、`local_demo_ready`、`capabilities` 与 `services.graph_sync`

@@ -334,6 +334,127 @@ async def test_patch_overlay_node_candidate_repairs_validation_and_dependent_edg
     assert edge["source_node_id"] == node_id
 
 
+async def test_overlay_candidate_end_to_end_review_planning_preflight_flow(client, project):
+    source = await _create_overlay_source_via_api(client, project["id"])
+    invalid_node = _valid_node("端到端扩展节点")
+    invalid_node["req_coding"] = 9
+    create_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/extraction-sessions",
+        json={
+            "source_ids": [source["source_id"]],
+            "extraction_payload": {
+                "nodes": [invalid_node],
+                "edges": [
+                    {
+                        "source_name_or_id": "端到端扩展节点",
+                        "target_name_or_id": "未知目标",
+                        "relation_type": "BAD_RELATION",
+                        "confidence": 0.8,
+                        "legality_rationale": "端到端流程里先产生非法关系，再由候选编辑修复。",
+                    }
+                ],
+                "resources": [
+                    {
+                        "title": "端到端扩展资料",
+                        "url": "https://example.com/e2e-overlay",
+                        "resource_type": "article",
+                        "summary": "用于端到端验证的扩展资料。",
+                        "quality_score": 2,
+                        "confidence": 0.8,
+                        "evidence_source_id": source["source_id"],
+                    }
+                ],
+                "warnings": [],
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    node_id = created["nodes"][0]["node_id"]
+    edge_id = created["edges"][0]["edge_id"]
+    resource_id = created["resources"][0]["resource_id"]
+    assert created["nodes"][0]["validation_status"] == "invalid"
+    assert created["edges"][0]["validation_status"] == "invalid"
+    assert created["resources"][0]["validation_status"] == "invalid"
+
+    node_patch_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node_id}/candidate",
+        json={"req_coding": 2},
+    )
+    assert node_patch_resp.status_code == 200
+    assert node_patch_resp.json()["nodes"][0]["validation_status"] == "valid"
+
+    edge_patch_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/edges/{edge_id}/candidate",
+        json={
+            "source_node_id": node_id,
+            "target_node_id": "ml_c01",
+            "relation_type": "RELATED_TO",
+        },
+    )
+    assert edge_patch_resp.status_code == 200
+    patched_edge = edge_patch_resp.json()["edges"][0]
+    assert patched_edge["validation_status"] == "valid"
+    assert patched_edge["source_node_id"] == node_id
+    assert patched_edge["target_node_id"] == "ml_c01"
+
+    resource_patch_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/resources/{resource_id}/candidate",
+        json={"quality_score": 0.85},
+    )
+    assert resource_patch_resp.status_code == 200
+    assert resource_patch_resp.json()["resources"][0]["validation_status"] == "valid"
+
+    pending_resp = await client.get(f"/api/v1/projects/{project['id']}/graph/overlay/preflight")
+    assert pending_resp.status_code == 200
+    pending = pending_resp.json()
+    assert pending["status"] == "warning"
+    assert pending["counts"]["nodes"]["pending_review"] == 1
+    assert pending["counts"]["edges"]["pending_review"] == 1
+    assert node_id not in pending["visible_overlay_node_ids"]
+    assert edge_id not in pending["visible_overlay_edge_ids"]
+
+    for group, element_id in (("nodes", node_id), ("edges", edge_id), ("resources", resource_id)):
+        review_resp = await client.patch(
+            f"/api/v1/projects/{project['id']}/graph/overlay/{group}/{element_id}/review",
+            json={"review_status": "confirmed"},
+        )
+        assert review_resp.status_code == 200
+        assert review_resp.json()["review_status"] == "confirmed"
+
+    ready_resp = await client.get(f"/api/v1/projects/{project['id']}/graph/overlay/preflight")
+    assert ready_resp.status_code == 200
+    ready = ready_resp.json()
+    assert ready["status"] == "ok"
+    assert node_id in ready["visible_overlay_node_ids"]
+    assert edge_id in ready["visible_overlay_edge_ids"]
+
+    planning_off_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node_id}/planning",
+        json={"planning_enabled": False},
+    )
+    assert planning_off_resp.status_code == 200
+    disabled_resp = await client.get(f"/api/v1/projects/{project['id']}/graph/overlay/preflight")
+    assert disabled_resp.status_code == 200
+    disabled = disabled_resp.json()
+    assert disabled["status"] == "warning"
+    assert disabled["counts"]["nodes"]["planning_disabled"] == 1
+    assert node_id not in disabled["visible_overlay_node_ids"]
+    assert edge_id not in disabled["visible_overlay_edge_ids"]
+
+    planning_on_resp = await client.patch(
+        f"/api/v1/projects/{project['id']}/graph/overlay/nodes/{node_id}/planning",
+        json={"planning_enabled": True},
+    )
+    assert planning_on_resp.status_code == 200
+    restored_resp = await client.get(f"/api/v1/projects/{project['id']}/graph/overlay/preflight")
+    assert restored_resp.status_code == 200
+    restored = restored_resp.json()
+    assert restored["status"] == "ok"
+    assert node_id in restored["visible_overlay_node_ids"]
+    assert edge_id in restored["visible_overlay_edge_ids"]
+
+
 async def test_overlay_preflight_reports_review_and_planning_readiness(client, project):
     source = await _create_overlay_source_via_api(client, project["id"])
     create_resp = await client.post(
