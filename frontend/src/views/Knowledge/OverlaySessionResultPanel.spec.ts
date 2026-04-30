@@ -149,6 +149,8 @@ function mountPanel(overrides: Partial<InstanceType<typeof OverlaySessionResultP
       ],
       overlayCandidateFilterCounts: { all: 3, blocking: 1, review: 1, pending: 1, ready: 0 },
       filteredOverlayCandidateCount: 3,
+      overlayBatchReviewLoading: false,
+      overlayBatchConfirmableCount: 1,
       hasOverlayCandidateRepairTarget: true,
       overlayCandidateRepairTargetLabel: '打开首个需处理候选：线性回归',
       filteredOverlayNodes: [nodeCandidate],
@@ -204,10 +206,12 @@ describe('OverlaySessionResultPanel', () => {
     const buttons = wrapper.findAll('button')
 
     await buttons.find((button) => button.text().includes('打开首个需处理候选'))?.trigger('click')
+    await buttons.find((button) => button.text() === '批量确认待审核 1')?.trigger('click')
     await buttons.find((button) => button.text() === '编辑修复')?.trigger('click')
     await wrapper.find('.radio-update').trigger('click')
 
     expect(wrapper.emitted('open-first-repairable')).toHaveLength(1)
+    expect(wrapper.emitted('confirm-valid-candidates')).toHaveLength(1)
     expect(wrapper.emitted('edit-node')).toEqual([[nodeCandidate]])
     expect(wrapper.emitted('update:overlayCandidateFilter')).toEqual([['blocking']])
   })

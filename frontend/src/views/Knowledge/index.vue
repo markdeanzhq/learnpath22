@@ -125,6 +125,7 @@
       @preview-overlay-extraction-payload="previewOverlayExtractionPayload"
       @toggle-preview-candidate="togglePreviewCandidate"
       @open-first-repairable="openFirstRepairableCandidate"
+      @confirm-valid-candidates="confirmValidPendingOverlayCandidates"
       @edit-node="openNodeCandidateEditor"
       @edit-edge="openEdgeCandidateEditor"
       @edit-resource="openResourceCandidateEditor"
@@ -160,6 +161,7 @@ import { useGraphWorkspaceOrchestration } from './composables/useGraphWorkspaceO
 import { useGraphWorkspaceLoader, type GraphWorkspaceLoadOptions } from './composables/useGraphWorkspaceLoader'
 import { useGraphReviewActions } from './composables/useGraphReviewActions'
 import { useSelectedNodeContext } from './composables/useSelectedNodeContext'
+import { useOverlayCandidateBatchReview } from './composables/useOverlayCandidateBatchReview'
 import { useOverlayCandidateEditor } from './composables/useOverlayCandidateEditor'
 import { getOverlayErrorMessage } from './composables/useOverlayErrorMessage'
 import { useOverlayPostActions } from './composables/useOverlayPostActions'
@@ -413,6 +415,20 @@ const { openFirstRepairableCandidate } = useOverlayRepairActions({
   openResourceCandidateEditor,
 })
 const {
+  overlayBatchReviewLoading,
+  overlayBatchConfirmableCount,
+  confirmValidPendingOverlayCandidates,
+} = useOverlayCandidateBatchReview({
+  projectId,
+  lastOverlaySession,
+  overlayError,
+  refreshAfterBatch: async () => {
+    await Promise.all([loadOverlayPreflight(), loadGraphWorkspace()])
+  },
+  getErrorMessage: getOverlayErrorMessage,
+  notifySuccess: (message) => ElMessage.success(message),
+})
+const {
   promotionPreview,
   promotionResult,
   promotionSecret,
@@ -528,6 +544,8 @@ const overlayDrawerProps = computed(() => ({
   overlayCandidateFilter: overlayCandidateFilter.value,
   overlayCandidateFilterCounts: overlayCandidateFilterCounts.value,
   filteredOverlayCandidateCount: filteredOverlayCandidateCount.value,
+  overlayBatchReviewLoading: overlayBatchReviewLoading.value,
+  overlayBatchConfirmableCount: overlayBatchConfirmableCount.value,
   hasOverlayCandidateRepairTarget: Boolean(overlayCandidateRepairTarget.value),
   overlayCandidateRepairTargetLabel: overlayCandidateRepairTargetLabel.value,
   filteredOverlayNodes: filteredOverlayNodes.value,

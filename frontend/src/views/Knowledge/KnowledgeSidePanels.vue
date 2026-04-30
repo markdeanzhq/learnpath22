@@ -30,6 +30,7 @@
     @preview-overlay-extraction-payload="emit('preview-overlay-extraction-payload')"
     @toggle-preview-candidate="(group, index, checked) => emit('toggle-preview-candidate', group, index, checked)"
     @open-first-repairable="emit('open-first-repairable')"
+    @confirm-valid-candidates="emit('confirm-valid-candidates')"
     @edit-node="emit('edit-node', $event)"
     @edit-edge="emit('edit-edge', $event)"
     @edit-resource="emit('edit-resource', $event)"
@@ -105,6 +106,7 @@ const emit = defineEmits<{
   'preview-overlay-extraction-payload': []
   'toggle-preview-candidate': [group: OverlayPreviewGroup, index: number, checked: boolean]
   'open-first-repairable': []
+  'confirm-valid-candidates': []
   'edit-node': [node: OverlayNodeCandidate]
   'edit-edge': [edge: OverlayEdgeCandidate]
   'edit-resource': [resource: OverlayResourceCandidate]

@@ -414,6 +414,14 @@ describe('Knowledge overlay entry', () => {
       project_graph_hash: 'graph-hash',
     }
     graphGetOverlayPreflightMock.mockResolvedValue(preflightResponse)
+    graphReviewOverlayElementMock.mockImplementation((_projectId: string, group: string, elementId: string, reviewStatus: string) => Promise.resolve({
+      element_id: elementId,
+      element_type: group.replace(/s$/, ''),
+      validation_status: 'valid',
+      review_status: reviewStatus,
+      planning_enabled: true,
+      promotion_status: 'not_promoted',
+    }))
     graphGetGraphWorkspaceMock.mockImplementation((_projectId: string, params: any = {}) => Promise.resolve({
       project_id: 'project-001',
       graph: {
@@ -597,6 +605,92 @@ describe('Knowledge overlay entry', () => {
     expect((wrapper.vm as any).overlayCandidateDiagnosticSummary.description).toContain('随机森林扩展')
     expect((wrapper.vm as any).overlayCandidateFilterCounts).toEqual({ all: 3, blocking: 1, review: 1, pending: 1, ready: 0 })
     expect((wrapper.vm as any).overlayDrawerProps.overlayCandidateDiagnosticSummary.title).toBe('先修复校验失败候选')
+  })
+
+  it('batch confirms valid pending overlay candidates from the session drawer', async () => {
+    graphCreateOverlayAutoDraftMock.mockResolvedValueOnce({
+      session: {
+        session_id: 'sess-auto-batch',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-auto-001'],
+        warnings: [],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [
+        {
+          node_id: 'node-auto-001',
+          name: '随机森林扩展',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'pending',
+          planning_enabled: true,
+          promotion_status: 'not_promoted',
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'edge-auto-001',
+          source_name_or_id: '随机森林扩展',
+          target_node_id: 'ml_c01',
+          relation_type: 'RELATED_TO',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'pending',
+          planning_enabled: true,
+          promotion_status: 'not_promoted',
+        },
+      ],
+      resources: [
+        {
+          resource_id: 'resource-auto-001',
+          title: '随机森林教程',
+          resource_type: 'article',
+          validation_status: 'valid',
+          validation_errors: [],
+          review_status: 'pending',
+          planning_enabled: true,
+          promotion_status: 'not_promoted',
+          binding_summary: { count: 0 },
+        },
+      ],
+      warnings: [],
+      auto_draft: {
+        query: '随机森林',
+        search_result_count: 1,
+        selected_result_count: 1,
+        selected_result_ids: ['result-auto-001'],
+        source_ids: ['src-auto-001'],
+        reused_source_count: 0,
+        preview_counts: { nodes: 1, edges: 1, resources: 1 },
+        validation_summary: { has_blocking_errors: false, needs_review: false, invalid_count: 0, needs_review_count: 0 },
+      },
+    })
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).overlaySearchQuery = '随机森林'
+    await (wrapper.vm as any).createAutoOverlayDraft()
+    graphReviewOverlayElementMock.mockClear()
+    confirmMock.mockClear()
+    await (wrapper.vm as any).confirmValidPendingOverlayCandidates()
+
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.stringContaining('批量确认 3 个已通过机器校验的候选'),
+      '批量确认待审核候选',
+      expect.objectContaining({ confirmButtonText: '批量确认' }),
+    )
+    expect(graphReviewOverlayElementMock).toHaveBeenNthCalledWith(1, 'project-001', 'nodes', 'node-auto-001', 'confirmed')
+    expect(graphReviewOverlayElementMock).toHaveBeenNthCalledWith(2, 'project-001', 'edges', 'edge-auto-001', 'confirmed')
+    expect(graphReviewOverlayElementMock).toHaveBeenNthCalledWith(3, 'project-001', 'resources', 'resource-auto-001', 'confirmed')
+    expect((wrapper.vm as any).lastOverlaySession.nodes[0].review_status).toBe('confirmed')
+    expect((wrapper.vm as any).lastOverlaySession.edges[0].review_status).toBe('confirmed')
+    expect((wrapper.vm as any).lastOverlaySession.resources[0].review_status).toBe('confirmed')
+    expect((wrapper.vm as any).overlayBatchConfirmableCount).toBe(0)
+    expect(successMock).toHaveBeenCalledWith('已批量确认 3 个候选，请继续检查规划开关和路径预检。')
   })
 
   it('creates pasted text source before extraction session', async () => {

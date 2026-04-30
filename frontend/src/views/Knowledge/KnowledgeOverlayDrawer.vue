@@ -260,6 +260,8 @@
         :overlay-candidate-filter-options="OVERLAY_CANDIDATE_FILTER_OPTIONS"
         :overlay-candidate-filter-counts="overlayCandidateFilterCounts"
         :filtered-overlay-candidate-count="filteredOverlayCandidateCount"
+        :overlay-batch-review-loading="overlayBatchReviewLoading"
+        :overlay-batch-confirmable-count="overlayBatchConfirmableCount"
         :has-overlay-candidate-repair-target="hasOverlayCandidateRepairTarget"
         :overlay-candidate-repair-target-label="overlayCandidateRepairTargetLabel"
         :filtered-overlay-nodes="filteredOverlayNodes"
@@ -278,6 +280,7 @@
         :promotion-loading="promotionLoading"
         :promotion-status-message="promotionStatusMessage"
         @open-first-repairable="emit('open-first-repairable')"
+        @confirm-valid-candidates="emit('confirm-valid-candidates')"
         @edit-node="emit('edit-node', $event)"
         @edit-edge="emit('edit-edge', $event)"
         @edit-resource="emit('edit-resource', $event)"
@@ -394,6 +397,8 @@ const props = defineProps<{
   overlayCandidateFilter: CandidateIssueFilter
   overlayCandidateFilterCounts: OverlayCandidateFilterCounts
   filteredOverlayCandidateCount: number
+  overlayBatchReviewLoading: boolean
+  overlayBatchConfirmableCount: number
   hasOverlayCandidateRepairTarget: boolean
   overlayCandidateRepairTargetLabel: string
   filteredOverlayNodes: OverlayNodeCandidate[]
@@ -429,6 +434,7 @@ const emit = defineEmits<{
   'preview-overlay-extraction-payload': []
   'toggle-preview-candidate': [group: OverlayPreviewGroup, index: number, checked: boolean]
   'open-first-repairable': []
+  'confirm-valid-candidates': []
   'edit-node': [node: OverlayNodeCandidate]
   'edit-edge': [edge: OverlayEdgeCandidate]
   'edit-resource': [resource: OverlayResourceCandidate]

@@ -35,6 +35,8 @@ const knowledgeOverlayDrawerStub = defineComponent({
     'create-auto-draft',
     'preview-overlay-extraction-payload',
     'toggle-preview-candidate',
+    'open-first-repairable',
+    'confirm-valid-candidates',
     'edit-node',
     'update-resource-binding',
     'update:promotionSecret',
@@ -55,6 +57,8 @@ const knowledgeOverlayDrawerStub = defineComponent({
       <button data-testid="auto-draft" @click="$emit('create-auto-draft')">auto</button>
       <button data-testid="preview-payload" @click="$emit('preview-overlay-extraction-payload')">preview</button>
       <button data-testid="toggle-candidate" @click="$emit('toggle-preview-candidate', 'nodes', 1, true)">toggle</button>
+      <button data-testid="repair-first" @click="$emit('open-first-repairable')">repair</button>
+      <button data-testid="batch-confirm" @click="$emit('confirm-valid-candidates')">confirm</button>
       <button data-testid="edit-node" @click="$emit('edit-node', { node_id: 'node-001' })">edit</button>
       <button data-testid="resource-binding" @click="$emit('update-resource-binding', 'targetId', 'node-001')">bind-field</button>
       <button data-testid="promotion-secret" @click="$emit('update:promotionSecret', 'secret-001')">secret</button>
@@ -142,6 +146,8 @@ describe('KnowledgeSidePanels', () => {
     await click(wrapper, 'auto-draft')
     await click(wrapper, 'preview-payload')
     await click(wrapper, 'toggle-candidate')
+    await click(wrapper, 'repair-first')
+    await click(wrapper, 'batch-confirm')
     await click(wrapper, 'edit-node')
     await click(wrapper, 'resource-binding')
     await click(wrapper, 'promotion-secret')
@@ -160,6 +166,8 @@ describe('KnowledgeSidePanels', () => {
     expect(wrapper.emitted('create-auto-draft')).toHaveLength(1)
     expect(wrapper.emitted('preview-overlay-extraction-payload')).toHaveLength(1)
     expect(wrapper.emitted('toggle-preview-candidate')).toEqual([['nodes', 1, true]])
+    expect(wrapper.emitted('open-first-repairable')).toHaveLength(1)
+    expect(wrapper.emitted('confirm-valid-candidates')).toHaveLength(1)
     expect(wrapper.emitted('edit-node')).toEqual([[{ node_id: 'node-001' }]])
     expect(wrapper.emitted('update-resource-binding')).toEqual([['targetId', 'node-001']])
     expect(wrapper.emitted('update-promotion-secret')).toEqual([['secret-001']])

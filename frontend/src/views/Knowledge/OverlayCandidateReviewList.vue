@@ -55,9 +55,21 @@
         {{ option.label }} {{ filterCounts[option.value] }}
       </el-radio-button>
     </el-radio-group>
-    <el-button size="small" type="primary" plain :disabled="!hasRepairTarget" @click="emit('open-first-repairable')">
-      {{ repairTargetLabel }}
-    </el-button>
+    <div class="overlay-candidate-toolbar-actions">
+      <el-button
+        size="small"
+        type="success"
+        plain
+        :loading="batchReviewLoading"
+        :disabled="!batchConfirmableCount"
+        @click="emit('confirm-valid-candidates')"
+      >
+        批量确认待审核 {{ batchConfirmableCount }}
+      </el-button>
+      <el-button size="small" type="primary" plain :disabled="!hasRepairTarget" @click="emit('open-first-repairable')">
+        {{ repairTargetLabel }}
+      </el-button>
+    </div>
   </div>
 
   <p v-if="filterCounts.all && !filteredCandidateCount" class="overlay-empty-filter">
@@ -141,6 +153,8 @@ const props = defineProps<{
   filterOptions: OverlayCandidateFilterOption[]
   filterCounts: OverlayCandidateFilterCounts
   filteredCandidateCount: number
+  batchReviewLoading: boolean
+  batchConfirmableCount: number
   hasRepairTarget: boolean
   repairTargetLabel: string
   nodes: OverlayNodeCandidate[]
@@ -152,6 +166,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:filter': [filter: CandidateIssueFilter]
   'open-first-repairable': []
+  'confirm-valid-candidates': []
   'edit-node': [node: OverlayNodeCandidate]
   'edit-edge': [edge: OverlayEdgeCandidate]
   'edit-resource': [resource: OverlayResourceCandidate]
@@ -227,6 +242,13 @@ const candidateFilterModel = computed({
   border: 1px solid #f3d19e;
   border-radius: 10px;
   background: #fdf6ec;
+}
+
+.overlay-candidate-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .overlay-candidate-toolbar-title p,
