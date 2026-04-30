@@ -254,6 +254,27 @@
                   :closable="false"
                   show-icon
                 />
+                <section v-if="graphOptionSummaryRows.length" class="graph-option-summary" aria-label="图谱方案影响摘要">
+                  <div class="section-header compact-header">
+                    <div>
+                      <h3>增强影响摘要</h3>
+                      <p>先看增强图谱是否真正影响最终路径，再决定是否应用为正式版本。</p>
+                    </div>
+                  </div>
+                  <div class="graph-option-summary-grid">
+                    <article v-for="row in graphOptionSummaryRows" :key="row.label">
+                      <span>{{ row.label }}</span>
+                      <strong>{{ row.value }}</strong>
+                      <small>{{ row.detail }}</small>
+                    </article>
+                  </div>
+                  <div class="graph-option-change-tags">
+                    <el-tag v-for="badge in graphOptionChangeBadges" :key="badge.label" :type="badge.type" effect="plain">
+                      {{ badge.label }}
+                    </el-tag>
+                  </div>
+                  <p class="option-impact">{{ graphOptionDefenseSummary }}</p>
+                </section>
                 <div class="variant-grid">
                   <el-card
                     v-for="variant in graphOptionPreview.variants"
@@ -891,6 +912,64 @@ const graphOptionComparisonMessage = computed(() => {
     return '当前没有已审核、校验通过且开启规划的扩展图谱，基础方案与增强方案会完全一致。'
   }
   return '增强图谱边界已变化，但当前目标下最终路径节点没有变化。'
+})
+const graphOptionSummaryRows = computed(() => {
+  const enhanced = graphOptionEnhancedVariant.value
+  if (!graphOptionPreview.value || !enhanced) return []
+  return [
+    {
+      label: '路径节点差异',
+      value: `新增 ${graphOptionAddedCount.value} / 移除 ${graphOptionRemovedCount.value}`,
+      detail: graphOptionAddedCount.value || graphOptionRemovedCount.value ? '增强方案已改变最终节点集合' : '最终节点集合与基础方案一致',
+    },
+    {
+      label: '增强图谱可见',
+      value: `${graphOptionVisibleOverlayNodeCount.value} 节点 / ${graphOptionVisibleOverlayEdgeCount.value} 关系`,
+      detail: '只统计已校验、已确认且开启规划的 overlay',
+    },
+    {
+      label: '当前路径命中',
+      value: `${graphOptionPathOverlayNodeCount.value} 节点 / ${graphOptionPathOverlayEdgeCount.value} 关系`,
+      detail: graphOptionPathOverlayNodeCount.value || graphOptionPathOverlayEdgeCount.value ? '当前目标已消费增强内容' : '当前目标暂未消费增强内容',
+    },
+    {
+      label: '增强方案状态',
+      value: graphOptionStatusLabel(enhanced.status),
+      detail: enhanced.status === 'unavailable' ? formatPreviewReason(enhanced.blocked_reason) || '需要先处理阻塞项' : '可继续选择并确认应用',
+    },
+  ]
+})
+const graphOptionChangeBadges = computed(() => {
+  const enhanced = graphOptionEnhancedVariant.value
+  if (!graphOptionPreview.value || !enhanced) return []
+  const badges: Array<{ label: string; type: 'success' | 'warning' | 'info' | 'danger' }> = []
+  if (enhanced.status === 'unavailable') badges.push({ label: '增强方案暂不可用', type: 'danger' })
+  if (graphOptionAddedCount.value) badges.push({ label: `新增 ${graphOptionAddedCount.value} 个知识点`, type: 'success' })
+  if (graphOptionRemovedCount.value) badges.push({ label: `移除 ${graphOptionRemovedCount.value} 个节点`, type: 'warning' })
+  if (graphOptionPathOverlayNodeCount.value || graphOptionPathOverlayEdgeCount.value) badges.push({ label: `路径命中 ${graphOptionPathOverlayNodeCount.value} 节点 / ${graphOptionPathOverlayEdgeCount.value} 关系`, type: 'success' })
+  if (enhanced.order_changed) badges.push({ label: '学习顺序变化', type: 'success' })
+  if (enhanced.stage_changed) badges.push({ label: '阶段划分变化', type: 'success' })
+  if (enhanced.budget_changed) badges.push({ label: '预算估算变化', type: 'success' })
+  if (!badges.length && (graphOptionVisibleOverlayNodeCount.value || graphOptionVisibleOverlayEdgeCount.value)) badges.push({ label: '增强图谱已纳入但未命中当前路径', type: 'info' })
+  if (!badges.length) badges.push({ label: '基础与增强方案一致', type: 'info' })
+  return badges
+})
+const graphOptionDefenseSummary = computed(() => {
+  const enhanced = graphOptionEnhancedVariant.value
+  if (!graphOptionPreview.value || !enhanced) return ''
+  if (enhanced.status === 'unavailable') {
+    return `答辩口径：增强方案当前不可用，原因是 ${formatPreviewReason(enhanced.blocked_reason) || '图谱状态无法规划'}，系统不会允许确认该方案。`
+  }
+  if (graphOptionAddedCount.value || graphOptionRemovedCount.value) {
+    return '答辩口径：增强图谱已经改变最终路径节点集合，说明已审核 overlay 可以影响规划，但仍需要用户确认后才保存正式版本。'
+  }
+  if (graphOptionHasPathLevelChange.value) {
+    return '答辩口径：节点集合不变时，overlay 关系仍可能改变依赖顺序、阶段划分或预算评估，因此需要单独展示路径级影响。'
+  }
+  if (graphOptionVisibleOverlayNodeCount.value || graphOptionVisibleOverlayEdgeCount.value) {
+    return '答辩口径：overlay 已进入增强图谱但当前目标没有命中，说明扩展内容不会无条件污染所有学习路径。'
+  }
+  return '答辩口径：当前没有可规划的已审核 overlay，基础方案与增强方案保持一致。'
 })
 const overlayPreflightTagType = computed(() => {
   if (overlayPreflight.value?.status === 'ok') return 'success'
@@ -1809,6 +1888,43 @@ function shortHash(value?: string | null) {
   margin-top: 8px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+.graph-option-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--el-color-success-light-7);
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--el-color-success-light-9), var(--el-fill-color-blank));
+}
+.graph-option-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.graph-option-summary-grid article {
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 76%);
+}
+.graph-option-summary-grid span,
+.graph-option-summary-grid small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.graph-option-summary-grid strong {
+  display: block;
+  margin: 4px 0;
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+}
+.graph-option-change-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .variant-title-row,
 .feedback-input-row {

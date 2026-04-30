@@ -897,6 +897,15 @@ describe('Path page goal reconfirm flow', () => {
     expect(wrapper.text()).toContain('基础 / 增强图谱路径对比')
     expect(wrapper.text()).toContain('增强图谱路径')
     expect(wrapper.text()).toContain('增强方案会新增 1 个已审核知识点')
+    expect(wrapper.text()).toContain('增强影响摘要')
+    expect(wrapper.text()).toContain('路径节点差异')
+    expect(wrapper.text()).toContain('新增 1 / 移除 0')
+    expect(wrapper.text()).toContain('增强图谱可见')
+    expect(wrapper.text()).toContain('1 节点 / 0 关系')
+    expect(wrapper.text()).toContain('路径命中 1 节点 / 0 关系')
+    expect(wrapper.text()).toContain('学习顺序变化')
+    expect(wrapper.text()).toContain('预算估算变化')
+    expect(wrapper.text()).toContain('答辩口径：增强图谱已经改变最终路径节点集合')
     expect(wrapper.text()).not.toContain('po:project-001:n:rf')
     expect(currentPlanState.value.id).toBe('plan-001')
   })
@@ -1005,6 +1014,8 @@ describe('Path page goal reconfirm flow', () => {
 
     expect(wrapper.text()).toContain('增强图谱已纳入 1 个已审核扩展知识点和 0 条关系')
     expect(wrapper.text()).toContain('最终路径节点与基础方案一致')
+    expect(wrapper.text()).toContain('增强图谱已纳入但未命中当前路径')
+    expect(wrapper.text()).toContain('扩展内容不会无条件污染所有学习路径')
     expect(wrapper.text()).not.toContain('po:project-001:n:not-hit')
   })
 
@@ -1076,6 +1087,7 @@ describe('Path page goal reconfirm flow', () => {
     expect(wrapper.text()).toContain('学习顺序变化')
     expect(wrapper.text()).toContain('预算估算变化')
     expect(wrapper.text()).toContain('即使节点集合一致')
+    expect(wrapper.text()).toContain('overlay 关系仍可能改变依赖顺序')
     expect(wrapper.text()).not.toContain('po:project-001:e:dep')
   })
 
