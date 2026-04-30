@@ -10,6 +10,7 @@
             <el-tag>v{{ planStore.currentPlan.version }}</el-tag>
             <el-tag :type="budgetTagType">{{ budgetLabel }}</el-tag>
             <el-tag type="info">{{ pathModeLabel(planStore.currentPlan.path_mode || 'standard') }}</el-tag>
+            <el-tag v-if="pathModeSourceLabel" type="success" effect="plain">来源：{{ pathModeSourceLabel }}</el-tag>
           </div>
         </div>
         <div class="path-hero-actions">
@@ -43,7 +44,10 @@
 
       <el-tabs v-model="activeTab">
         <el-tab-pane label="路径总览" name="timeline">
-          <StageTimeline :stages="planStore.currentPlan.stages" />
+          <StageTimeline
+            :stages="planStore.currentPlan.stages"
+            :practice-intensity="practiceIntensity"
+          />
         </el-tab-pane>
         <el-tab-pane label="调整路径" name="previews">
           <section class="preview-section">
@@ -108,8 +112,8 @@
                 >
                   <em>学习节奏</em>
                   <strong>调整学习方式</strong>
-                  <span>标准、压缩、理论优先或实践优先</span>
-                  <small>适合：想改变学习投入或侧重点</small>
+                  <span>标准或压缩路径控制完整度；理论/实践侧重由画像和反馈调整</span>
+                  <small>适合：想改变学习投入或路径长度</small>
                 </button>
                 <button
                   type="button"
@@ -140,7 +144,7 @@
               <div class="section-header">
                 <div>
                   <h3>路径变体预览</h3>
-                  <p>比较标准路径、压缩路径、理论优先和实践优先的学习投入与节点取舍。</p>
+                  <p>比较标准、压缩等路径模式的学习投入与节点取舍；理论/实践侧重来自画像权重和反馈预览。</p>
                 </div>
                 <el-button type="primary" :loading="variantLoading" @click="previewVariants">生成变体预览</el-button>
               </div>
@@ -195,7 +199,7 @@
               </template>
               <div v-else class="preview-empty-hint">
                 <strong>还没有生成变体预览</strong>
-                <span>点击上方按钮后，系统会比较标准、压缩、理论优先和实践优先路径。</span>
+                <span>点击上方按钮后，系统会比较标准、压缩等路径模式；理论/实践侧重会通过画像权重和反馈入口体现。</span>
               </div>
             </section>
 
@@ -460,7 +464,7 @@
                   <div class="resource-workbench-main">
                     <p class="hero-eyebrow">知识点资源工作台</p>
                     <h3>{{ selectedResourceNode?.node_name || '选择知识点查看资源' }}</h3>
-                    <p>资源默认跟随知识点展示，阶段资源只作为总览保底；搜索资料时会绑定到当前选中的知识点。</p>
+                    <p>资源默认跟随知识点展示，阶段资源只作为总览保底；搜索并绑定入口只服务当前选中的阶段与知识点。</p>
                   </div>
                   <div class="resource-stat-grid" aria-label="资源覆盖概览">
                     <article>
@@ -514,7 +518,7 @@
                     <el-empty v-if="!selectedResourceNode?.resources.length" description="该知识点暂无资源，可自动补充或搜索绑定" />
                     <el-card v-for="item in selectedResourceNode?.resources ?? []" :key="item.id" shadow="never" class="resource-card featured-resource-card">
                       <div class="resource-card__header">
-                        <a v-if="item.url" :href="item.url" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
+                        <a v-if="safeExternalUrl(item.url)" :href="safeExternalUrl(item.url)" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
                         <span v-else class="resource-title">{{ item.title }}</span>
                         <el-tag size="small" :type="resourceTagType(item.source_type)">
                           {{ resourceSourceLabel(item.source_type) }}
@@ -538,7 +542,7 @@
                       <div class="resource-group-title">阶段总览资源</div>
                       <el-card v-for="item in stage.stage_resources" :key="item.id" shadow="never" class="resource-card">
                         <div class="resource-card__header">
-                          <a v-if="item.url" :href="item.url" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
+                          <a v-if="safeExternalUrl(item.url)" :href="safeExternalUrl(item.url)" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
                           <span v-else class="resource-title">{{ item.title }}</span>
                           <el-tag size="small" :type="resourceTagType(item.source_type)">
                             {{ resourceSourceLabel(item.source_type) }}
@@ -553,7 +557,7 @@
                       <el-empty v-if="!node.resources.length" description="该知识点暂无资源" />
                       <el-card v-for="item in node.resources" :key="item.id" shadow="never" class="resource-card">
                         <div class="resource-card__header">
-                          <a v-if="item.url" :href="item.url" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
+                          <a v-if="safeExternalUrl(item.url)" :href="safeExternalUrl(item.url)" target="_blank" rel="noopener" class="search-link">{{ item.title }}</a>
                           <span v-else class="resource-title">{{ item.title }}</span>
                           <el-tag size="small" :type="resourceTagType(item.source_type)">
                             {{ resourceSourceLabel(item.source_type) }}
@@ -601,12 +605,12 @@
             </template>
           </div>
         </el-tab-pane>
-        <el-tab-pane label="搜索资料" name="search">
+        <el-tab-pane label="搜索并绑定" name="search">
           <div class="search-section">
             <div class="search-toolbar">
               <el-input
                 v-model="searchQuery"
-                placeholder="输入关键词搜索学习资料..."
+                placeholder="搜索要绑定到当前知识点的资料..."
                 @keyup.enter="doSearch"
               >
                 <template #append>
@@ -633,7 +637,8 @@
             <el-table :data="searchResults" v-if="searchResults.length" size="small" stripe>
               <el-table-column label="标题" min-width="200">
                 <template #default="{ row }">
-                  <a :href="row.url" target="_blank" rel="noopener" class="search-link">{{ row.title }}</a>
+                  <a v-if="safeExternalUrl(row.url)" :href="safeExternalUrl(row.url)" target="_blank" rel="noopener" class="search-link">{{ row.title }}</a>
+                  <span v-else>{{ row.title }}</span>
                 </template>
               </el-table-column>
               <el-table-column prop="snippet" label="摘要" min-width="300" show-overflow-tooltip />
@@ -643,15 +648,15 @@
               <el-table-column label="操作" width="130">
                 <template #default="{ row }">
                   <el-button link type="primary" :loading="bindLoading" @click="bindSearchResultToNode(row)">
-                    绑定到知识点
+                    绑定到当前知识点
                   </el-button>
                 </template>
               </el-table-column>
             </el-table>
             <el-empty v-else-if="searchDone" description="未找到相关资料" />
             <section v-else class="search-empty-guide">
-              <h3>搜索资料会绑定到当前知识点</h3>
-              <p>先选择阶段和知识点，再输入关键词搜索；绑定后的资料会回到“推荐资源”页签中按知识点展示。</p>
+              <h3>搜索资料并绑定到选中知识点</h3>
+              <p>先选择阶段和知识点，再输入关键词搜索；这里不维护项目资料库，也不生成图谱候选，绑定后的资料会回到“推荐资源”页签中按知识点展示。</p>
             </section>
           </div>
         </el-tab-pane>
@@ -764,6 +769,13 @@ const pathNodeCount = computed(() => (
 ))
 const pathTotalHoursLabel = computed(() => (
   planStore.currentPlan?.total_hours ? `${planStore.currentPlan.total_hours} 小时` : '待估算'
+))
+const practiceIntensity = computed(() => {
+  const value = planStore.currentPlan?.audit?.profile_snapshot?.practice_intensity
+  return typeof value === 'number' ? value : null
+})
+const pathModeSourceLabel = computed(() => pathModeSourceLabelFrom(
+  planStore.currentPlan?.path_mode_source || planStore.currentPlan?.audit?.path_mode_source,
 ))
 const pathStatCards = computed(() => [
   {
@@ -1523,6 +1535,16 @@ function resourceSourceLabel(sourceType: string) {
   return '在线增强'
 }
 
+function safeExternalUrl(url?: string | null) {
+  if (!url) return ''
+  try {
+    const parsed = new URL(url)
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
 function pathModeLabel(pathMode: string) {
   const map: Record<string, string> = {
     standard: '标准路径',
@@ -1531,6 +1553,17 @@ function pathModeLabel(pathMode: string) {
     practice_first: '实践优先',
   }
   return map[pathMode] || pathMode
+}
+
+function pathModeSourceLabelFrom(source?: string | null) {
+  const map: Record<string, string> = {
+    explicit_request: '显式选择',
+    project_path_mode: '项目设置',
+    learner_profile_preference: '画像偏好',
+    standard_fallback: '默认标准',
+    variant_preview: '变体预览',
+  }
+  return source ? map[source] || source : ''
 }
 
 function graphOptionLabel(option?: string | null) {

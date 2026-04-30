@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ResourceItem(BaseModel):
@@ -15,6 +16,8 @@ class ResourceItem(BaseModel):
     source_type: str
     stage_name: str | None = None
     node_id: str | None = None
+    preference_match: str | None = None
+    preference_reason: str | None = None
     created_at: datetime | None = None
 
 
@@ -41,6 +44,15 @@ class ManualResourceBindRequest(BaseModel):
     title: str = Field(min_length=1)
     url: str = Field(min_length=1)
     snippet: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        normalized = value.strip()
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("url 仅支持 http/https 链接")
+        return normalized
 
     @model_validator(mode="after")
     def validate_target(self) -> "ManualResourceBindRequest":

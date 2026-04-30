@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app.api.v1.plans import _apply_graph_option_diff
+from app.api.v1.plans import _apply_graph_option_diff, _dict_stages_to_list, _resolve_effective_path_mode
 from app.models.sqlite_models import GoalResolutionSession, LearnerProfile, LearningPath, LearningProject, PlanExplanationCache, VariantPreviewSession
 from app.services.domain_pack_service import get_domain_pack_service
 
@@ -143,8 +143,120 @@ async def test_generate_plan_accepts_compressed_path_mode(client, project, profi
     assert latest_resp.status_code == 200
     latest = latest_resp.json()
     assert latest["path_mode"] == "compressed"
+    assert latest["path_mode_source"] == "explicit_request"
     assert latest["audit"]["path_mode"] == "compressed"
+    assert latest["audit"]["path_mode_source"] == "explicit_request"
     assert latest["audit"]["included_nodes"]
+
+
+async def test_generate_plan_uses_profile_path_mode_when_project_default(client, project):
+    profile_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/profiles",
+        json={
+            "math_level": 2,
+            "coding_level": 2,
+            "ml_level": 1,
+            "theory_weight": 0.6,
+            "practice_weight": 0.4,
+            "weekly_hours": 10,
+            "deadline_weeks": 12,
+            "path_mode_preference": "compressed",
+        },
+    )
+    assert profile_resp.status_code == 200
+
+    resp = await client.post(f"/api/v1/projects/{project['id']}/plans")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["path_mode"] == "compressed"
+    assert data["path_mode_source"] == "learner_profile_preference"
+
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    latest = latest_resp.json()
+    assert latest["audit"]["path_mode"] == "compressed"
+    assert latest["audit"]["path_mode_source"] == "learner_profile_preference"
+    assert latest["audit"]["path_mode_resolution"] == {"profile_path_mode_preference": "compressed"}
+    assert latest["audit"]["derived_planner_parameters"]["path_mode_source"] == "learner_profile_preference"
+    assert latest["audit"]["preference_sources"]["path_mode"] == "learner_profile_preference"
+
+
+async def test_generate_plan_explicit_request_overrides_profile_path_preference(client, project):
+    profile_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/profiles",
+        json={
+            "math_level": 2,
+            "coding_level": 2,
+            "ml_level": 1,
+            "theory_weight": 0.6,
+            "practice_weight": 0.4,
+            "weekly_hours": 10,
+            "deadline_weeks": 12,
+            "path_mode_preference": "compressed",
+        },
+    )
+    assert profile_resp.status_code == 200
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/plans",
+        json={"path_mode": "standard"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["path_mode"] == "standard"
+    assert data["path_mode_source"] == "explicit_request"
+
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    latest = latest_resp.json()
+    assert latest["audit"]["path_mode"] == "standard"
+    assert latest["audit"]["path_mode_source"] == "explicit_request"
+    assert latest["audit"]["path_mode_resolution"] == {"requested_path_mode": "standard"}
+
+
+def test_stage_serialization_includes_empty_reason_metadata():
+    stages = _dict_stages_to_list(
+        {
+            "基础准备": [
+                {
+                    "node_id": "ml_a04",
+                    "name": "导数与偏导",
+                    "estimated_hours": 2,
+                }
+            ],
+            "核心掌握": [],
+        },
+        {
+            "stage_logs": {
+                "_stage_summaries": {
+                    "核心掌握": {"empty_reason": "当前目标没有匹配核心阶段节点。"},
+                }
+            }
+        },
+    )
+
+    assert "empty_reason" not in stages[0]
+    assert stages[1]["empty_reason"] == "当前目标没有匹配核心阶段节点。"
+
+
+def test_effective_path_mode_fallback_and_project_precedence():
+    mode, source, resolution = _resolve_effective_path_mode(
+        requested_path_mode=None,
+        project_path_mode="standard",
+        profile={"path_mode_preference": "invalid"},
+    )
+    assert mode == "standard"
+    assert source == "standard_fallback"
+    assert resolution == {"invalid_profile_path_mode_preference": "invalid"}
+
+    mode, source, resolution = _resolve_effective_path_mode(
+        requested_path_mode=None,
+        project_path_mode="compressed",
+        profile={"path_mode_preference": "standard"},
+    )
+    assert mode == "compressed"
+    assert source == "project_path_mode"
+    assert resolution == {"project_path_mode": "compressed"}
 
 
 async def test_generate_plan_audit_includes_persona_snapshot(client, project):
@@ -158,7 +270,7 @@ async def test_generate_plan_audit_includes_persona_snapshot(client, project):
             "practice_weight": 0.8,
             "weekly_hours": 18,
             "deadline_weeks": 6,
-            "path_mode_preference": "practice_first",
+            "path_mode_preference": "compressed",
         },
     )
     assert profile_resp.status_code == 200
@@ -168,8 +280,11 @@ async def test_generate_plan_audit_includes_persona_snapshot(client, project):
 
     latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
     assert latest_resp.status_code == 200
-    snapshot = latest_resp.json()["audit"]["profile_snapshot"]
-    assert snapshot["path_mode_preference"] == "practice_first"
+    latest = latest_resp.json()
+    snapshot = latest["audit"]["profile_snapshot"]
+    assert latest["audit"]["path_mode"] == "compressed"
+    assert latest["audit"]["path_mode_source"] == "learner_profile_preference"
+    assert snapshot["path_mode_preference"] == "compressed"
     assert snapshot["persona_label"] == "实践驱动型学习者"
     assert "实践驱动型学习者" in snapshot["persona_summary"]
 

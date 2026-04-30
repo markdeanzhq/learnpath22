@@ -30,9 +30,10 @@ const taskCardStub = defineComponent({
   props: {
     task: { type: Object, required: true },
     taskNumber: { type: Number, default: 1 },
+    practiceIntensity: { type: Number, default: null },
   },
   emits: ['locateNode'],
-  template: '<button class="task-card-stub" @click="$emit(\'locateNode\', task.node_id)">第 {{ taskNumber }} 项 {{ task.name }}</button>',
+  template: '<button class="task-card-stub" @click="$emit(\'locateNode\', task.node_id)">第 {{ taskNumber }} 项 {{ task.name }} 练习强度 {{ practiceIntensity }}</button>',
 })
 
 const stages = [
@@ -61,9 +62,9 @@ const stages = [
   },
 ]
 
-function mountStageTimeline(stageList: any[] = stages) {
+function mountStageTimeline(stageList: any[] = stages, practiceIntensity: number | null = null) {
   return shallowMount(StageTimeline, {
-    props: { stages: stageList },
+    props: { stages: stageList, practiceIntensity },
     global: {
       stubs: {
         TaskCard: taskCardStub,
@@ -97,6 +98,14 @@ describe('StageTimeline', () => {
     expect(taskCards[1].text()).toContain('第 2 项 监督学习')
   })
 
+  it('passes practice intensity into task cards and adjusts stage guidance', () => {
+    const wrapper = mountStageTimeline(stages, 5)
+
+    expect(wrapper.text()).toContain('优先在推荐资源中寻找代码、案例或小题进行动手验证')
+    expect(wrapper.text()).toContain('练习强度 5')
+    expect(wrapper.findComponent(taskCardStub).props('practiceIntensity')).toBe(5)
+  })
+
   it('routes located task nodes to the latest path graph', async () => {
     const wrapper = mountStageTimeline()
 
@@ -123,9 +132,11 @@ describe('StageTimeline', () => {
       stage_name: '空阶段',
       estimated_hours: null,
       tasks: [],
+      empty_reason: '核心掌握暂无任务：当前目标范围没有匹配到该阶段的知识点。',
     }])
     expect(emptyTaskWrapper.text()).toContain('空阶段')
-    expect(emptyTaskWrapper.text()).toContain('该阶段暂无知识点，请重新生成路径或检查目标覆盖范围')
+    expect(emptyTaskWrapper.text()).toContain('核心掌握暂无任务：当前目标范围没有匹配到该阶段的知识点。')
+    expect(emptyTaskWrapper.text()).toContain('系统会保留目标闭包和评分结果')
   })
 })
 
@@ -142,6 +153,7 @@ describe('TaskCard', () => {
           importance: 5,
           estimated_hours: 1,
         },
+        practiceIntensity: 5,
       },
       global: {
         stubs: {
@@ -161,6 +173,7 @@ describe('TaskCard', () => {
     expect(wrapper.text()).toContain('入门难度 2/5')
     expect(wrapper.text()).toContain('约 1 小时')
     expect(wrapper.text()).toContain('建议完成笔记和练习后再进入下一项')
+    expect(wrapper.text()).toContain('高练习密度：优先在推荐资源中找代码、案例或小题完成一次动手验证。')
 
     await wrapper.get('button').trigger('click')
 

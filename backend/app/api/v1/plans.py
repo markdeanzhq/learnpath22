@@ -31,7 +31,7 @@ from app.schemas.explanation import (
     ExplanationResponse,
 )
 from app.schemas.goal_resolution import VariantPreviewSessionResponse
-from app.schemas.project import validate_path_mode
+from app.schemas.project import DEFAULT_PATH_MODE, validate_path_mode
 from app.services.domain_pack_service import get_domain_pack_service
 from app.services.explanation_service import (
     answer_explanation_question,
@@ -69,16 +69,60 @@ def _validate_path_mode_or_raise(path_mode: str | None) -> str:
         raise AppError(code=422, message="INVALID_PATH_MODE") from exc
 
 
-def _dict_stages_to_list(stage_dict: dict) -> list[dict]:
-    """将 {阶段名: [tasks]} 转换为 [{stage_index, stage_name, tasks, estimated_hours}]"""
+def _safe_profile_path_mode(path_mode: Any) -> tuple[str | None, dict[str, Any]]:
+    if not isinstance(path_mode, str) or not path_mode:
+        return None, {}
+    try:
+        return validate_path_mode(path_mode), {"profile_path_mode_preference": path_mode}
+    except ValueError:
+        return None, {"invalid_profile_path_mode_preference": path_mode}
+
+
+def _resolve_effective_path_mode(
+    *,
+    requested_path_mode: str | None,
+    project_path_mode: str | None,
+    profile: dict[str, Any],
+) -> tuple[str, str, dict[str, Any]]:
+    if requested_path_mode is not None:
+        path_mode = _validate_path_mode_or_raise(requested_path_mode)
+        return path_mode, "explicit_request", {"requested_path_mode": requested_path_mode}
+
+    if project_path_mode and project_path_mode != DEFAULT_PATH_MODE:
+        path_mode = _validate_path_mode_or_raise(project_path_mode)
+        return path_mode, "project_path_mode", {"project_path_mode": project_path_mode}
+
+    profile_mode, profile_resolution = _safe_profile_path_mode(profile.get("path_mode_preference"))
+    if profile_mode is not None:
+        return profile_mode, "learner_profile_preference", profile_resolution
+
+    return DEFAULT_PATH_MODE, "standard_fallback", profile_resolution
+
+
+def _stage_empty_reason(audit: dict[str, Any] | None, stage_name: str, tasks: list[dict[str, Any]]) -> str | None:
+    stage_logs = audit.get("stage_logs") if isinstance(audit, dict) else {}
+    stage_summaries = stage_logs.get("_stage_summaries") if isinstance(stage_logs, dict) else {}
+    summary = stage_summaries.get(stage_name) if isinstance(stage_summaries, dict) else {}
+    if isinstance(summary, dict) and summary.get("empty_reason"):
+        return summary["empty_reason"]
+    if not tasks:
+        return "当前目标范围没有匹配到该阶段的知识点；系统不会为填充版式加入无关节点。"
+    return None
+
+
+def _dict_stages_to_list(stage_dict: dict, audit: dict[str, Any] | None = None) -> list[dict]:
     result = []
     for idx, (name, tasks) in enumerate(stage_dict.items()):
-        result.append({
+        stage = {
             "stage_index": idx,
             "stage_name": name,
             "tasks": tasks,
             "estimated_hours": sum(t.get("estimated_hours", 0) for t in tasks),
-        })
+        }
+        empty_reason = _stage_empty_reason(audit, name, tasks)
+        if empty_reason:
+            stage["empty_reason"] = empty_reason
+        result.append(stage)
     return result
 
 
@@ -135,6 +179,7 @@ def _build_variant_summary(path_mode: str, plan_result: dict[str, Any], paramete
     return {
         "variant_id": _variant_id(path_mode, parameter_hash),
         "path_mode": path_mode,
+        "path_mode_source": audit.get("path_mode_source"),
         "budget_summary": budget,
         "included_node_ids": list(plan_result.get("ordered_ids") or []),
         "excluded_node_ids": [
@@ -144,6 +189,7 @@ def _build_variant_summary(path_mode: str, plan_result: dict[str, Any], paramete
         ],
         "audit_summary": {
             "path_mode": path_mode,
+            "path_mode_source": audit.get("path_mode_source"),
             "budget_status": budget.get("status"),
             "total_hours": plan_result.get("total_hours"),
             "node_count": plan_result.get("node_count"),
@@ -463,6 +509,7 @@ def _public_variant(variant: dict[str, Any]) -> dict[str, Any]:
     response = {
         "variant_id": variant["variant_id"],
         "path_mode": variant["path_mode"],
+        "path_mode_source": variant.get("path_mode_source"),
         "budget_summary": variant.get("budget_summary", {}),
         "included_node_ids": variant.get("included_node_ids", []),
         "excluded_node_ids": variant.get("excluded_node_ids", []),
@@ -521,10 +568,10 @@ def _load_json_list_or_dicts(raw_value: str | None) -> list[dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
-def _load_plan_stages(plan_json: str | None) -> list[dict[str, Any]]:
+def _load_plan_stages(plan_json: str | None, audit: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     raw_stages = json.loads(plan_json) if plan_json else {}
     if isinstance(raw_stages, dict):
-        return _dict_stages_to_list(raw_stages)
+        return _dict_stages_to_list(raw_stages, audit)
     return raw_stages if isinstance(raw_stages, list) else []
 
 
@@ -664,13 +711,15 @@ def _selected_variant(session: VariantPreviewSession, variant_id: str) -> dict[s
 
 
 def _plan_response(path, plan_result: dict[str, Any], path_mode: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    audit = plan_result.get("audit") or {}
     response = {
         "id": path.id,
         "project_id": path.project_id,
         "version": path.version,
-        "stages": _dict_stages_to_list(plan_result["stage_plan"]),
+        "stages": _dict_stages_to_list(plan_result["stage_plan"], audit),
         "budget_status": plan_result["budget_summary"]["status"],
         "path_mode": plan_result.get("path_mode", path_mode),
+        "path_mode_source": audit.get("path_mode_source"),
         "total_hours": plan_result["total_hours"],
         "node_count": plan_result["node_count"],
         "reinforced_ids": plan_result["reinforced_ids"],
@@ -766,6 +815,8 @@ async def preview_plan_variants(
                 removed_edge_ids=snapshot.removed_edge_ids,
                 confirmed_goal_result=deepcopy(confirmed_goal_result) if confirmed_goal_result else None,
                 path_mode=path_mode,
+                path_mode_source="variant_preview",
+                path_mode_resolution={"preview_path_mode": path_mode},
             )
         except UnsupportedGoalTypeError as exc:
             raise AppError(code=409, message="GOAL_DEFAULT_TARGETS_UNAVAILABLE", details={"reason": str(exc)}) from exc
@@ -809,10 +860,12 @@ async def preview_graph_options(
     if not profile_row:
         raise AppError(code=400, message="请先完成画像测评再生成路径")
 
-    path_mode = _validate_path_mode_or_raise(
-        (req.path_mode if req else None) or getattr(project, "path_mode", None)
-    )
     profile = _profile_to_dict(profile_row)
+    path_mode, path_mode_source, path_mode_resolution = _resolve_effective_path_mode(
+        requested_path_mode=req.path_mode if req else None,
+        project_path_mode=getattr(project, "path_mode", None),
+        profile=profile,
+    )
     profile_hash = _hash_json(profile)
     confirmed_goal_result = _build_confirmed_goal_result(project)
     parameter_hash = _variant_parameter_hash(project, confirmed_goal_result, [path_mode])
@@ -838,6 +891,8 @@ async def preview_graph_options(
                 removed_edge_ids=snapshot.removed_edge_ids,
                 confirmed_goal_result=deepcopy(option_goal_result) if option_goal_result else None,
                 path_mode=path_mode,
+                path_mode_source=path_mode_source,
+                path_mode_resolution=path_mode_resolution,
             )
         except UnsupportedGoalTypeError:
             variants.append(_build_unavailable_graph_option(
@@ -1018,8 +1073,10 @@ async def generate_plan(
         "persona_evidence": profile_row.persona_evidence,
     }
     requested_path_mode = req.path_mode if req and req.path_mode is not None else None
-    path_mode = _validate_path_mode_or_raise(
-        requested_path_mode or getattr(project, "path_mode", None)
+    path_mode, path_mode_source, path_mode_resolution = _resolve_effective_path_mode(
+        requested_path_mode=requested_path_mode,
+        project_path_mode=getattr(project, "path_mode", None),
+        profile=profile,
     )
     project.path_mode = path_mode
 
@@ -1036,6 +1093,8 @@ async def generate_plan(
             removed_edge_ids=snapshot.removed_edge_ids,
             confirmed_goal_result=deepcopy(confirmed_goal_result) if confirmed_goal_result else None,
             path_mode=path_mode,
+            path_mode_source=path_mode_source,
+            path_mode_resolution=path_mode_resolution,
         )
     except ValueError as exc:
         if str(exc) == "INVALID_PATH_MODE":
@@ -1055,9 +1114,10 @@ async def generate_plan(
         "id": path.id,
         "project_id": path.project_id,
         "version": path.version,
-        "stages": _dict_stages_to_list(plan_result["stage_plan"]),
+        "stages": _dict_stages_to_list(plan_result["stage_plan"], plan_result.get("audit")),
         "budget_status": plan_result["budget_summary"]["status"],
         "path_mode": plan_result.get("path_mode", path_mode),
+        "path_mode_source": (plan_result.get("audit") or {}).get("path_mode_source"),
         "total_hours": plan_result["total_hours"],
         "node_count": plan_result["node_count"],
         "reinforced_ids": plan_result["reinforced_ids"],
@@ -1074,8 +1134,8 @@ async def get_latest_plan_endpoint(
     if not path:
         raise NotFoundError("暂无学习路径")
 
-    stages = _load_plan_stages(path.plan_json)
     audit = json.loads(path.audit_json) if path.audit_json else None
+    stages = _load_plan_stages(path.plan_json, audit)
 
     return {
         "id": path.id,
@@ -1084,6 +1144,7 @@ async def get_latest_plan_endpoint(
         "stages": stages,
         "budget_status": path.budget_status,
         "path_mode": (audit or {}).get("path_mode", "standard"),
+        "path_mode_source": (audit or {}).get("path_mode_source"),
         "total_hours": path.total_hours,
         "audit": audit,
     }
@@ -1114,7 +1175,7 @@ async def _build_latest_explanation_response(
     if not audit:
         raise NotFoundError("暂无审计数据")
 
-    stages = _load_plan_stages(path.plan_json)
+    stages = _load_plan_stages(path.plan_json, audit)
     latest_plan_node_ids = {
         task.get("node_id")
         for stage in stages

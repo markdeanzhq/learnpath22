@@ -60,7 +60,17 @@ describe('useOverlayCandidateWorkflow', () => {
     const workflow = useOverlayCandidateWorkflow({ lastOverlaySession, overlayPreflight, nodes, overlayCandidateFilter })
 
     expect(OVERLAY_CANDIDATE_FILTER_OPTIONS.map((option) => option.value)).toEqual(['all', 'blocking', 'review', 'pending', 'ready'])
-    expect(workflow.overlaySessionStats.value).toEqual({ invalid: 1, needsReview: 1, valid: 2, pendingReview: 3 })
+    expect(workflow.overlaySessionStats.value).toEqual({ invalid: 1, needsReview: 1, valid: 2, pendingReview: 1, planningDisabled: 0 })
+    expect(workflow.overlayPreflightPrimaryAction.value).toEqual(expect.objectContaining({
+      actionType: 'repair_invalid',
+      targetFilter: 'blocking',
+      openFirstRepairable: true,
+    }))
+    expect(workflow.overlayPreflightActions.value.map((action) => action.actionType)).toEqual([
+      'repair_invalid',
+      'review_needs_review',
+      'review_pending',
+    ])
     expect(workflow.overlayWorkflowCurrentStep.value?.title).toBe('校验修复')
     expect(workflow.overlayPreflightTagType.value).toBe('warning')
     expect(workflow.overlayPreflightStatusLabel.value).toBe('需关注')
@@ -125,6 +135,7 @@ describe('useOverlayCandidateWorkflow', () => {
     expect(workflow.overlayPreflightStatusLabel.value).toBe('阻塞')
     expect(workflow.overlayPreflightGuidance.value).toContain('先修复校验失败候选')
     expect(workflow.overlayPreflightIssues.value.map((item) => item.message)).toEqual(['存在无效节点', '投影未同步'])
+    expect(workflow.overlayPreflightActions.value).toEqual([])
 
     overlayPreflight.value = createPreflight(0, 0, { nodeCounts: { pending_review: 1 } })
     expect(workflow.overlayPreflightGuidance.value).toContain('请逐项确认审核')
@@ -136,5 +147,31 @@ describe('useOverlayCandidateWorkflow', () => {
     expect(workflow.overlayPreflightTagType.value).toBe('success')
     expect(workflow.overlayPreflightStatusLabel.value).toBe('可用')
     expect(workflow.overlayPreflightGuidance.value).toContain('当前草稿尚未产生可进入增强图谱')
+  })
+
+  it('builds preflight actions for repair, review, audit, and planning entries', () => {
+    const lastOverlaySession = ref({
+      nodes: [
+        { node_id: 'draft-invalid', name: '校验失败节点', validation_status: 'invalid', review_status: 'pending' },
+        { node_id: 'draft-pending', name: '待审核节点', validation_status: 'valid', review_status: 'pending' },
+        { node_id: 'draft-disabled', name: '未开启规划节点', validation_status: 'valid', review_status: 'confirmed', planning_enabled: false },
+      ],
+      edges: [
+        { edge_id: 'edge-review', source_node_id: 'draft-pending', target_node_id: 'ml_c01', validation_status: 'needs_review', review_status: 'pending' },
+      ],
+      resources: [],
+    } as unknown as OverlaySessionView)
+    const overlayPreflight = ref(createPreflight(0, 0))
+    const nodes = ref([] as GraphNodeData[])
+    const overlayCandidateFilter = ref<CandidateIssueFilter>('all')
+
+    const workflow = useOverlayCandidateWorkflow({ lastOverlaySession, overlayPreflight, nodes, overlayCandidateFilter })
+
+    expect(workflow.overlayPreflightActions.value).toEqual([
+      expect.objectContaining({ actionType: 'repair_invalid', targetFilter: 'blocking', count: 1, openFirstRepairable: true }),
+      expect.objectContaining({ actionType: 'review_needs_review', targetFilter: 'review', count: 1, openFirstRepairable: true }),
+      expect.objectContaining({ actionType: 'review_pending', targetFilter: 'pending', count: 1, openFirstRepairable: false }),
+      expect.objectContaining({ actionType: 'enable_planning', targetFilter: 'ready', count: 1, openFirstRepairable: false }),
+    ])
   })
 })

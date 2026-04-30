@@ -72,6 +72,49 @@ describe('OverlayPreflightPanel', () => {
     expect(wrapper.emitted('open-path-comparison')).toHaveLength(1)
   })
 
+  it('emits selected candidate action without changing lifecycle state locally', async () => {
+    const repairAction = {
+      actionType: 'repair_invalid',
+      targetFilter: 'blocking',
+      label: '修复校验失败 1',
+      description: '打开候选队列并定位首个校验失败项。',
+      count: 1,
+      openFirstRepairable: true,
+      tagType: 'danger',
+    } as const
+    const reviewAction = {
+      actionType: 'review_needs_review',
+      targetFilter: 'review',
+      label: '复核需确认 1',
+      description: '打开待复核候选。',
+      count: 1,
+      openFirstRepairable: true,
+      tagType: 'warning',
+    } as const
+    const wrapper = mount(OverlayPreflightPanel, {
+      props: {
+        preflight,
+        tagType: 'warning',
+        statusLabel: '需关注',
+        guidance: '先修复校验失败候选。',
+        issues: [],
+        candidateActions: [repairAction, reviewAction],
+        primaryAction: repairAction,
+      },
+      global: { stubs: elementPlusStubs },
+    })
+
+    expect(wrapper.text()).toContain('候选处理入口')
+    expect(wrapper.text()).toContain('修复校验失败 1')
+    expect(wrapper.text()).toContain('复核需确认 1')
+
+    const repairButton = wrapper.findAll('button').find((button) => button.text().includes('修复校验失败'))
+    expect(repairButton).toBeTruthy()
+    await repairButton!.trigger('click')
+
+    expect(wrapper.emitted('open-candidate-action')).toEqual([[repairAction]])
+  })
+
   it('omits ignored edge and issue sections when there is no extra signal', () => {
     const wrapper = mount(OverlayPreflightPanel, {
       props: {

@@ -17,6 +17,24 @@
     <div v-if="issues.length" class="overlay-preflight-issues">
       <span v-for="(item, index) in issues" :key="`${item.kind}-${index}`">{{ item.message }}</span>
     </div>
+    <div v-if="candidateActions.length" class="overlay-preflight-candidate-actions">
+      <div class="overlay-preflight-action-copy">
+        <strong>候选处理入口</strong>
+        <span>{{ primaryAction?.description || '打开候选队列后再显式修复、审核或开启规划。' }}</span>
+      </div>
+      <div class="overlay-preflight-action-buttons">
+        <el-button
+          v-for="action in candidateActions"
+          :key="action.actionType"
+          size="small"
+          :type="actionButtonType(action.tagType)"
+          plain
+          @click="emit('open-candidate-action', action)"
+        >
+          {{ action.label }}
+        </el-button>
+      </div>
+    </div>
     <div v-if="canOpenPathComparison" class="overlay-preflight-actions">
       <span>已纳入规划的扩展可在学习路径页比较基础/增强图谱影响。</span>
       <el-button size="small" type="primary" plain @click="emit('open-path-comparison')">
@@ -29,23 +47,34 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { OverlayPreflightItem, OverlayPreflightResponse } from '@/api/modules/graph'
+import type { OverlayPreflightCandidateAction } from './composables/useOverlayCandidateWorkflow'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   preflight: OverlayPreflightResponse
   tagType: string
   statusLabel: string
   guidance: string
   issues: OverlayPreflightItem[]
-}>()
+  candidateActions?: OverlayPreflightCandidateAction[]
+  primaryAction?: OverlayPreflightCandidateAction | null
+}>(), {
+  candidateActions: () => [],
+  primaryAction: null,
+})
 
 const emit = defineEmits<{
   'open-path-comparison': []
+  'open-candidate-action': [action: OverlayPreflightCandidateAction]
 }>()
 
 const canOpenPathComparison = computed(() => (
   props.preflight.status !== 'blocked'
   && Boolean(props.preflight.counts.visible_overlay_nodes || props.preflight.counts.visible_overlay_edges)
 ))
+
+function actionButtonType(tagType: OverlayPreflightCandidateAction['tagType']) {
+  return tagType === 'danger' ? 'danger' : tagType
+}
 </script>
 
 <style scoped>
@@ -86,7 +115,8 @@ const canOpenPathComparison = computed(() => (
   font-size: 12px;
 }
 
-.overlay-preflight-actions {
+.overlay-preflight-actions,
+.overlay-preflight-candidate-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -94,11 +124,35 @@ const canOpenPathComparison = computed(() => (
   gap: 8px;
   margin-top: 10px;
   padding: 10px;
-  border: 1px solid #d9ecff;
   border-radius: 8px;
-  background: #ecf5ff;
   color: #606266;
   font-size: 12px;
+}
+
+.overlay-preflight-actions {
+  border: 1px solid #d9ecff;
+  background: #ecf5ff;
+}
+
+.overlay-preflight-candidate-actions {
+  border: 1px solid #fde2e2;
+  background: #fef0f0;
+}
+
+.overlay-preflight-action-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.overlay-preflight-action-copy strong {
+  color: #303133;
+}
+
+.overlay-preflight-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .overlay-guidance {

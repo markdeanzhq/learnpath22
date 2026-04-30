@@ -7,8 +7,8 @@
       <section class="questionnaire-header">
         <div>
           <p class="questionnaire-eyebrow">第二步：画像采集</p>
-          <h2>让路径更贴合你的基础和时间</h2>
-          <p>这些回答会影响前置补强、理论/实践排序和时间预算提示，不会改变知识图谱中的硬依赖。</p>
+          <h2>让路径更贴合你的基础、偏好和时间</h2>
+          <p>这些回答会分别影响前置补强、理论/案例排序、路径完整度、资源推荐形态、练习密度和时间预算提示，不会改变知识图谱中的硬依赖。</p>
         </div>
         <el-tag :type="source === 'static' ? 'info' : 'success'">
           {{ source === 'static' ? '标准画像问卷' : '智能个性化问卷' }}
@@ -51,7 +51,7 @@
       <section class="submit-card">
         <div>
           <strong>提交后将生成画像参数</strong>
-          <p>系统会把问卷答案映射为数学、编程、机器学习基础、学习偏好和时间预算等规划输入。</p>
+          <p>系统会把问卷答案映射为基础水平、排序偏好、路径完整度、资源形态、练习密度和时间预算等规划输入。</p>
         </div>
         <el-button
           type="primary"
@@ -116,16 +116,16 @@ function selectAnswer(questionId: string, value: AnswerValue) {
 function impactHint(field: string) {
   const hints: Record<string, string> = {
     math_level: '影响是否补充线性代数、概率统计等数学前置内容。',
-    coding_level: '影响实践任务比例、代码资源和项目练习安排。',
+    coding_level: '影响是否需要补充 Python、代码阅读等编程前置内容，不直接代表练习密度。',
     ml_level: '影响机器学习基础概念的补强深度和起点。',
-    theory_weight: '影响理论讲解与实践练习在排序中的权重。',
-    practice_weight: '影响实践优先程度和练习型节点的排序。',
+    theory_weight: '只影响知识点排序更偏理论理解还是案例上手，不代表练习数量。',
+    practice_weight: '与理论权重互补，用于排序侧重，不等同于练习密度。',
     weekly_hours: '影响学习路径的时间预算和每周推进节奏。',
     deadline_weeks: '影响系统对压缩路径和预算风险的提示。',
-    path_mode_preference: '影响默认路径模式，如标准、压缩、理论优先或实践优先。',
+    path_mode_preference: '影响首次生成时默认采用标准或压缩路径，表达路径完整度。',
     learning_goal_orientation: '帮助解释系统为什么偏向基础、项目、考试或职业目标。',
-    resource_preference: '影响后续推荐资料的展示偏好。',
-    practice_intensity: '影响练习强度说明和实践任务解释。',
+    resource_preference: '影响资源搜索提示、推荐结果标记和轻量排序加权。',
+    practice_intensity: '表达练习密度，用于学习引导和资源行动建议，不会硬塞无关知识点。',
   }
   return hints[field] || '用于生成学习者画像，让路径排序和解释更贴近你的情况。'
 }

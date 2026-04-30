@@ -86,6 +86,23 @@ def test_assign_stage_practice():
     assert assign_stage(node, "domain") == "应用突破"
 
 
+def test_build_stage_plan_explains_empty_stages_without_filler_nodes():
+    pack = _get_pack()
+    stages, logs = build_stage_plan(
+        ordered_ids=["ml_a04"],
+        nodes_by_id=pack.nodes_by_id,
+        profile=PROFILE_BEGINNER,
+        goal_type="concept",
+        stage_rules=pack.stage_rules,
+        scoring_config=pack.scoring_config,
+    )
+
+    assert stages["基础准备"]
+    assert stages["核心掌握"] == []
+    assert logs["_stage_summaries"]["核心掌握"]["empty_reason"]
+    assert "无关节点" in logs["_stage_summaries"]["核心掌握"]["empty_reason"]
+
+
 # --- budget ---
 
 def test_budget_feasible():

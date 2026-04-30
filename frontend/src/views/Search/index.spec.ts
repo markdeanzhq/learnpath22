@@ -72,13 +72,14 @@ vi.mock('@/api/modules/search', () => ({
 }))
 
 const slotStub = (tag: string) => ({ template: `<${tag}><slot /></${tag}>` })
+const cardStub = { template: '<section><slot name="header" /><slot /></section>' }
 const tableColumnStub = { template: '<div />' }
 
 function mountSearch() {
   return shallowMount(SearchIndex, {
     global: {
       stubs: {
-        ElCard: slotStub('section'),
+        ElCard: cardStub,
         ElTag: slotStub('span'),
         ElAlert: slotStub('div'),
         ElButton: slotStub('button'),
@@ -129,6 +130,17 @@ describe('Search overlay bridge flow', () => {
       source_ids: ['src-001'],
       results: [{ result_id: 'result-001', source_id: 'src-001', source_type: 'search_url', reused: false, repaired: false }],
     })
+  })
+
+  it('renders project resource library and search history semantics', async () => {
+    const wrapper = mountSearch()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('项目资料库')
+    expect(wrapper.text()).toContain('搜索、保存并回看当前项目的学习资料')
+    expect(wrapper.text()).toContain('项目资料库与搜索历史')
+    expect(wrapper.text()).toContain('路径页负责绑定到知识点')
+    expect(wrapper.text()).toContain('知识图谱页负责把资料转为 overlay 候选')
   })
 
   it('persists a search result then bridges it to one overlay source', async () => {

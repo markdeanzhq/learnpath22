@@ -1,5 +1,5 @@
 <template>
-  <el-drawer v-model="visibleModel" title="创建扩展草稿" :size="520" direction="rtl">
+  <el-drawer v-model="visibleModel" title="创建图谱候选草稿" :size="520" direction="rtl">
     <div class="overlay-drawer" v-loading="overlaySubmitting || overlayExtractionPreviewLoading || overlayAutoDraftLoading">
       <DisplayModeSwitch v-model="displayModeModel" />
       <el-alert
@@ -21,14 +21,14 @@
         <h4>推荐流程</h4>
         <ol>
           <li>优先点击“分析当前目标并生成推荐草稿”，确认系统是否识别到未覆盖概念。</li>
-          <li>若需要外部资料，直接在抽屉内搜索并加入草稿来源，避免手动跳转资料页。</li>
+          <li>若需要外部资料，直接在抽屉内搜索并加入草稿来源；项目资料库负责保存历史，路径页负责知识点绑定。</li>
           <li>生成候选预览后，只保留可信节点、关系与资源，再创建草稿并进入人工审核。</li>
         </ol>
         <p>抽取成功更依赖资料质量：内容应包含概念定义、适用场景、前置知识、实践案例或资源摘要；只给一个关键词或裸 URL 往往证据不足。</p>
       </section>
       <section v-if="!activeGoalDraftResolutionSessionId" class="overlay-subsection goal-draft-entry manual-goal-draft-entry">
         <h4>智能草稿建议</h4>
-        <p>适合当前目标属于机器学习范围、但现有图谱未覆盖的情况，例如随机森林、SVM、集成学习或深度学习。若目标已覆盖，系统会建议直接生成路径；您仍可在下方手动或自动搜索资料补充项目图谱。</p>
+        <p>适合当前目标属于机器学习范围、但现有图谱未覆盖的情况，例如随机森林、SVM、集成学习或深度学习。若目标已覆盖，系统会建议直接生成路径；您仍可在下方收集资料生成候选草稿。</p>
         <el-button size="small" type="primary" plain :loading="manualGoalDraftLoading" @click="emit('prepare-goal-draft')">
           分析当前目标并生成推荐草稿
         </el-button>
@@ -81,11 +81,11 @@
       </section>
 
       <section v-if="manualOverlayMode" class="overlay-subsection overlay-search-card">
-        <h4>项目扩展会话</h4>
-        <p>先确认扩展主题与约束，再搜索或补充资料；系统只生成候选，必须人工审核后才能开启规划。</p>
+        <h4>资料转图谱候选</h4>
+        <p>这里的搜索用于收集 overlay 草稿来源并生成候选；系统不会直接写入正式图谱，必须人工审核后才能开启规划。</p>
         <div class="expansion-session-flow">
           <span>确认主题</span>
-          <span>搜索/补充资料</span>
+          <span>收集草稿来源</span>
           <span>生成候选</span>
           <span>人工审核</span>
           <span>开启规划</span>
@@ -97,7 +97,7 @@
             @update:model-value="emit('update:overlaySearchQuery', normalizeInput($event))"
             @keyup.enter="emit('search-overlay-results')"
           />
-          <el-button type="primary" plain :loading="overlaySearchLoading" @click="emit('search-overlay-results')">搜索资料</el-button>
+          <el-button type="primary" plain :loading="overlaySearchLoading" @click="emit('search-overlay-results')">搜索草稿来源</el-button>
         </div>
         <div class="expansion-constraint-field">
           <label>扩展约束（可选）</label>
@@ -112,8 +112,8 @@
           />
         </div>
         <div class="auto-draft-action-row">
-          <el-button type="primary" :loading="overlayAutoDraftLoading" @click="emit('create-auto-draft')">搜索资料并生成草稿</el-button>
-          <span>资料保存与 AI 抽取分开处理；即使抽取失败，已保存资料仍可用于重试或手动补充。</span>
+          <el-button type="primary" :loading="overlayAutoDraftLoading" @click="emit('create-auto-draft')">搜索来源并生成候选草稿</el-button>
+          <span>资料保存与 AI 抽取分开处理；即使抽取失败，已保存来源仍可用于重试或手动补充。</span>
         </div>
         <el-alert
           v-if="overlaySearchError"
@@ -148,7 +148,7 @@
       <el-form v-if="manualOverlayMode" label-position="top">
         <section class="overlay-subsection manual-source-guide">
           <h4>手动资料补充指南</h4>
-          <p>推荐使用“自动搜索资料”或“已保存搜索”。如果手动输入，请提供足够上下文，系统才能抽取节点、关系和资源。</p>
+          <p>推荐使用“搜索草稿来源”或“已保存搜索”。如果手动输入，请提供足够上下文，系统才能抽取节点、关系和资源。</p>
         </section>
         <el-form-item label="来源类型">
           <el-radio-group :model-value="overlayForm.sourceType" @update:model-value="updateSourceType">
@@ -207,7 +207,7 @@
             type="info"
             :closable="false"
             show-icon
-            title="已保存搜索来自资料搜索页或上方自动搜索。选择 1~6 条高相关资料后生成候选预览，通常比裸 URL 更稳定。"
+            title="已保存搜索来自项目资料库或上方草稿来源搜索。选择 1~6 条高相关资料后生成候选预览，通常比裸 URL 更稳定。"
           />
           <el-form-item label="已保存搜索结果">
             <el-select

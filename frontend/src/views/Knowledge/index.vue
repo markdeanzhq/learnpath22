@@ -66,7 +66,10 @@
           :status-label="overlayPreflightStatusLabel"
           :guidance="overlayPreflightGuidance"
           :issues="overlayPreflightIssues"
+          :candidate-actions="overlayPreflightActions"
+          :primary-action="overlayPreflightPrimaryAction"
           @open-path-comparison="openPathComparison"
+          @open-candidate-action="openOverlayPreflightCandidateAction"
         />
         <el-alert
           v-if="graphState === 'ready' && lastRefreshError"
@@ -173,6 +176,7 @@ import { useOverlayRepairActions } from './composables/useOverlayRepairActions'
 import {
   useOverlayCandidateWorkflow,
   type CandidateIssueFilter,
+  type OverlayPreflightCandidateAction,
   type OverlaySessionView,
 } from './composables/useOverlayCandidateWorkflow'
 import { useOverlayDraftInput, type OverlayFormState } from './composables/useOverlayDraftInput'
@@ -376,6 +380,9 @@ const {
   overlayPreflightStatusLabel,
   overlayPreflightIssues,
   overlayPreflightGuidance,
+  overlayPreflightActions,
+  overlayPreflightPrimaryAction,
+  overlaySessionCandidates,
   filteredOverlayNodes,
   filteredOverlayEdges,
   filteredOverlayResources,
@@ -413,7 +420,7 @@ const {
   getErrorMessage: getOverlayErrorMessage,
   notifySuccess: (message) => ElMessage.success(message),
 })
-const { openFirstRepairableCandidate } = useOverlayRepairActions({
+const { openOverlayRepairTarget, openFirstRepairableCandidate } = useOverlayRepairActions({
   overlayCandidateRepairTarget,
   openNodeCandidateEditor,
   openEdgeCandidateEditor,
@@ -473,6 +480,27 @@ function updateOverlayForm(nextOverlayForm: OverlayFormState) {
 
 async function openPathComparison() {
   await router.push({ name: 'Path', query: { tool: 'graph_options', from: 'knowledge_overlay' } })
+}
+
+function openOverlayPreflightCandidateAction(action: OverlayPreflightCandidateAction) {
+  if (!lastOverlaySession.value) return
+  overlayDrawerVisible.value = true
+  overlayCandidateFilter.value = action.targetFilter
+  if (!action.openFirstRepairable) return
+  void nextTick(() => {
+    const target = overlaySessionCandidates.value.find((item) => matchesPreflightRepairTarget(item.candidate, action.targetFilter))
+    if (target) {
+      openOverlayRepairTarget(target)
+    } else {
+      openFirstRepairableCandidate()
+    }
+  })
+}
+
+function matchesPreflightRepairTarget(candidate: { validation_status?: string | null }, filter: CandidateIssueFilter) {
+  if (filter === 'review') return candidate.validation_status === 'needs_review'
+  if (filter === 'blocking') return candidate.validation_status === 'invalid'
+  return false
 }
 
 function updateResourceBindingField(field: 'resourceId' | 'targetType' | 'targetId', value: string) {

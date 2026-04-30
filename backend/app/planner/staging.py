@@ -15,6 +15,7 @@ DEFAULT_CATEGORY_MAP = {
     "evaluation": DEFAULT_STAGES[2],
     "practice": DEFAULT_STAGES[2],
 }
+DEFAULT_EMPTY_STAGE_REASON = "当前目标范围没有匹配到该阶段的知识点；系统保留目标闭包和评分结果，不为填充版式加入无关节点。"
 
 
 def get_stage_names(stage_rules: dict[str, Any] | None = None) -> list[str]:
@@ -28,6 +29,10 @@ def get_fallback_stage(stage_rules: dict[str, Any] | None = None) -> str:
 
 def get_category_stage_map(stage_rules: dict[str, Any] | None = None) -> dict[str, str]:
     return (stage_rules or {}).get("category_to_stage", DEFAULT_CATEGORY_MAP)
+
+
+def empty_stage_reason(stage_name: str, goal_type: str) -> str:
+    return f"{stage_name}暂无任务：{DEFAULT_EMPTY_STAGE_REASON} goal_type={goal_type}。"
 
 
 def assign_stage(
@@ -98,5 +103,14 @@ def build_stage_plan(
                 "beginner_override" if final_stage != stage else "default_stage_rule",
             ],
         }
+
+    stage_logs["_stage_summaries"] = {
+        stage_name: {
+            "stage_name": stage_name,
+            "task_count": len(tasks),
+            "empty_reason": empty_stage_reason(stage_name, goal_type) if not tasks else None,
+        }
+        for stage_name, tasks in stages.items()
+    }
 
     return stages, stage_logs

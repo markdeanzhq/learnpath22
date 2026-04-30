@@ -276,21 +276,24 @@ describe('KnowledgeOverlayDrawer', () => {
     expect(wrapper.emitted('update:displayMode')).toEqual([['debug']])
     expect(wrapper.emitted('update:overlayCandidateFilter')).toEqual([['blocking']])
     expect(wrapper.emitted('update:overlaySearchQuery')).toEqual([['secret-002']])
-    expect(wrapper.emitted('update-overlay-form')?.[0][0]).toEqual(expect.objectContaining({ rawText: 'secret-002' }))
+    expect(wrapper.emitted('update-overlay-form')?.[0][0]).toEqual(expect.objectContaining({ constraintNote: 'secret-002' }))
   })
 
   it('shows guidance and forwards embedded search actions', async () => {
     const wrapper = mountDrawer()
 
     expect(wrapper.text()).toContain('推荐流程')
+    expect(wrapper.text()).toContain('资料转图谱候选')
+    expect(wrapper.text()).toContain('项目资料库负责保存历史')
+    expect(wrapper.text()).toContain('搜索来源并生成候选草稿')
     expect(wrapper.text()).toContain('手动资料补充指南')
-    expect(wrapper.text()).toContain('安全抓取')
+    expect(wrapper.text()).toContain('适合粘贴教程片段')
     expect(wrapper.text()).toContain('先修复校验失败候选')
     expect(wrapper.text()).toContain('首个目标：线性回归')
     expect(wrapper.text()).toContain('随机森林入门')
 
-    await wrapper.findAll('button').find((button) => button.text() === '一键自动生成草稿')?.trigger('click')
-    await wrapper.findAll('button').find((button) => button.text() === '搜索资料')?.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === '搜索来源并生成候选草稿')?.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === '搜索草稿来源')?.trigger('click')
     await wrapper.findAll('button').find((button) => button.text() === '加入草稿来源')?.trigger('click')
 
     expect(wrapper.emitted('create-auto-draft')).toHaveLength(1)

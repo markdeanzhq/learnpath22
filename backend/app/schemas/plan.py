@@ -25,6 +25,7 @@ class PathStageItem(BaseModel):
     stage_name: str
     tasks: list[PathTaskItem]
     estimated_hours: float
+    empty_reason: str | None = None
 
 
 class PlanResponse(BaseModel):

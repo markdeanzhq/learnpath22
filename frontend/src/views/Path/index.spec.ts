@@ -65,7 +65,7 @@ const {
       budget_status: 'feasible',
       total_hours: 12,
       stages: [] as any[],
-    },
+    } as any,
   },
   lastReplanResultState: {
     value: null as any,
@@ -189,6 +189,15 @@ const slotStub = (tag: string) => defineComponent({
   `,
 })
 
+const stageTimelineStub = defineComponent({
+  name: 'StageTimeline',
+  props: {
+    stages: { type: Array, default: () => [] },
+    practiceIntensity: { type: Number, default: null },
+  },
+  template: '<div data-testid="stage-timeline"><span v-if="practiceIntensity != null">练习强度 {{ practiceIntensity }}</span></div>',
+})
+
 function mountPathIndex() {
   return shallowMount(PathIndex, {
     global: {
@@ -196,7 +205,7 @@ function mountPathIndex() {
         loading: () => undefined,
       },
       stubs: {
-        StageTimeline: slotStub('div'),
+        StageTimeline: stageTimelineStub,
         Explanation: slotStub('div'),
         ElCard: slotStub('section'),
         ElTag: slotStub('span'),
@@ -563,6 +572,38 @@ describe('Path page goal reconfirm flow', () => {
     expect((wrapper.vm as any).activeTab).toBe('previews')
   })
 
+  it('renders resolved path mode source and forwards practice intensity', async () => {
+    currentPlanState.value = {
+      id: 'plan-profile-mode',
+      version: 2,
+      budget_status: 'feasible',
+      total_hours: 10,
+      path_mode: 'compressed',
+      path_mode_source: 'learner_profile_preference',
+      audit: {
+        profile_snapshot: {
+          practice_intensity: 5,
+        },
+      },
+      stages: [
+        {
+          stage_index: 0,
+          stage_name: '基础准备',
+          tasks: [{ node_id: 'ml-a01', name: '机器学习导论' }],
+          estimated_hours: 2,
+        },
+      ],
+    }
+    loadLatestMock.mockResolvedValueOnce(undefined)
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('压缩路径')
+    expect(wrapper.text()).toContain('来源：画像偏好')
+    expect(wrapper.text()).toContain('练习强度 5')
+  })
+
   it('renders the path adjustment workbench with guided options', async () => {
     const wrapper = mountPathIndex()
     await flushPromises()
@@ -575,13 +616,15 @@ describe('Path page goal reconfirm flow', () => {
     expect(wrapper.text()).toContain('立即生成新版')
     expect(wrapper.text()).toContain('先比较，再应用')
     expect(wrapper.text()).toContain('学习节奏')
-    expect(wrapper.text()).toContain('适合：想改变学习投入或侧重点')
+    expect(wrapper.text()).toContain('标准或压缩路径控制完整度')
+    expect(wrapper.text()).toContain('适合：想改变学习投入或路径长度')
     expect(wrapper.text()).toContain('图谱范围')
     expect(wrapper.text()).toContain('适合：目标涉及项目级扩展知识')
     expect(wrapper.text()).toContain('自然语言')
     expect(wrapper.text()).toContain('适合：不知道该选哪个参数')
     expect(wrapper.text()).toContain('还没有生成变体预览')
-    expect(wrapper.text()).toContain('搜索资料会绑定到当前知识点')
+    expect(wrapper.text()).toContain('搜索资料并绑定到选中知识点')
+    expect(wrapper.text()).toContain('这里不维护项目资料库，也不生成图谱候选')
   })
 
   it('opens graph option comparison from the route query without auto-previewing', async () => {
@@ -775,6 +818,14 @@ describe('Path page goal reconfirm flow', () => {
                   score: 0.91,
                   source_type: 'tavily_auto',
                 },
+                {
+                  id: 'resource-unsafe',
+                  title: '危险链接资料',
+                  url: 'javascript:alert(1)',
+                  snippet: '不应渲染为可点击链接。',
+                  score: 0.5,
+                  source_type: 'manual',
+                },
               ],
             },
             {
@@ -793,13 +844,16 @@ describe('Path page goal reconfirm flow', () => {
     const vm = wrapper.vm as any
     expect(wrapper.text()).toContain('知识点资源工作台')
     expect(wrapper.text()).toContain('资源默认跟随知识点展示')
+    expect(wrapper.text()).toContain('搜索并绑定入口只服务当前选中的阶段与知识点')
     expect(wrapper.text()).toContain('总资源')
     expect(wrapper.text()).toContain('待补充知识点')
     expect(wrapper.text()).toContain('机器学习导论资源')
+    expect(wrapper.text()).toContain('危险链接资料')
     expect(wrapper.text()).toContain('在线增强')
-    expect(vm.totalResourceCount).toBe(1)
-    expect(vm.selectedNodeResourceCount).toBe(1)
+    expect(vm.totalResourceCount).toBe(2)
+    expect(vm.selectedNodeResourceCount).toBe(2)
     expect(vm.missingResourceNodeCount).toBe(1)
+    expect(wrapper.findAll('a.search-link').some((link) => link.text().includes('危险链接资料'))).toBe(false)
 
     await wrapper.findAll('.resource-node-button')[1].trigger('click')
     await nextTick()

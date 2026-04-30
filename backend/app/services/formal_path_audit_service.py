@@ -148,8 +148,12 @@ def _derived_planner_parameters(audit: dict[str, Any], goal_frame: dict[str, Any
     budget = audit.get("budget_summary") if isinstance(audit.get("budget_summary"), dict) else {}
     return {
         "path_mode": audit.get("path_mode") or planner_parameters.get("path_mode") or budget.get("path_mode") or "standard",
+        "path_mode_source": audit.get("path_mode_source") or "unknown",
+        "path_mode_resolution": audit.get("path_mode_resolution") or {},
         "theory_weight": profile.get("theory_weight", planner_parameters.get("theory_weight")),
         "practice_weight": profile.get("practice_weight", planner_parameters.get("practice_weight")),
+        "resource_preference": profile.get("resource_preference", planner_parameters.get("resource_preference")),
+        "practice_intensity": profile.get("practice_intensity", planner_parameters.get("practice_intensity")),
         "weekly_hours": profile.get("weekly_hours", planner_parameters.get("weekly_hours")),
         "deadline_weeks": profile.get("deadline_weeks", planner_parameters.get("deadline_weeks")),
         "explanation_focus": planner_parameters.get("explanation_focus", []),

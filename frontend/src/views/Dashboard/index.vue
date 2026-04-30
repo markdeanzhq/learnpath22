@@ -15,6 +15,9 @@
           v-if="planStore.currentPlan?.stages"
           :stages="planStore.currentPlan.stages"
           :events="trackingStore.events"
+          :node-resources-map="nodeResourcesMap"
+          :resources-loading="resourcesLoading"
+          :resource-error="resourceError"
           @mark-status="handleMarkStatus"
         />
         <el-empty v-else description="暂无学习路径，请先生成路径">
@@ -42,6 +45,7 @@ import { DataAnalysis } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useTrackingStore } from '@/stores/tracking'
+import { resourceApi, type PlanResourcesResponse, type ResourceItem } from '@/api/modules/resource'
 import StatsOverview from './components/StatsOverview.vue'
 import ProgressList from './components/ProgressList.vue'
 
@@ -51,13 +55,27 @@ const planStore = usePlanStore()
 const trackingStore = useTrackingStore()
 
 const loadingAll = ref(false)
+const resourcesLoading = ref(false)
+const resourceError = ref('')
+const planResources = ref<PlanResourcesResponse | null>(null)
 const projectId = computed(() => projectStore.currentProject?.id)
+const nodeResourcesMap = computed<Record<string, ResourceItem[]>>(() => {
+  const map: Record<string, ResourceItem[]> = {}
+  for (const stage of planResources.value?.stages || []) {
+    for (const node of stage.nodes || []) {
+      map[node.node_id] = node.resources || []
+    }
+  }
+  return map
+})
 
 async function loadAll() {
   if (!projectId.value) return
   loadingAll.value = true
   trackingStore.summary = null
   trackingStore.events = []
+  planResources.value = null
+  resourceError.value = ''
   try {
     const results = await Promise.allSettled([
       trackingStore.loadSummary(projectId.value),
@@ -69,6 +87,7 @@ async function loadAll() {
         console.warn('Dashboard load error:', r.reason)
       }
     }
+    await loadPlanResources()
   } finally {
     loadingAll.value = false
   }
@@ -77,6 +96,26 @@ async function loadAll() {
 onMounted(() => loadAll())
 
 watch(projectId, () => loadAll())
+
+async function loadPlanResources() {
+  const currentProjectId = projectId.value
+  const pathId = planStore.currentPlan?.id
+  if (!currentProjectId || !pathId) {
+    planResources.value = null
+    return
+  }
+  resourcesLoading.value = true
+  resourceError.value = ''
+  try {
+    planResources.value = await resourceApi.getPlanResources(currentProjectId, pathId)
+  } catch (e: any) {
+    resourceError.value = e?.response?.data?.error || '资源加载失败'
+    planResources.value = null
+    console.warn('Dashboard resource load error:', e)
+  } finally {
+    resourcesLoading.value = false
+  }
+}
 
 async function handleMarkStatus(nodeId: string, eventType: 'start' | 'complete' | 'skip') {
   if (!projectId.value) return

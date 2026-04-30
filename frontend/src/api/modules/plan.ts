@@ -17,6 +17,7 @@ export interface PathStage {
   stage_name: string
   tasks: PathTask[]
   estimated_hours: number | null
+  empty_reason?: string | null
 }
 
 export interface BudgetSummary {
@@ -43,6 +44,9 @@ export interface PlanAudit {
     practice_weight: number
     weekly_hours: number
     deadline_weeks: number
+    path_mode_preference?: string | null
+    resource_preference?: string | null
+    practice_intensity?: number | null
   }
   budget_summary: BudgetSummary
   reinforcement_logs: Record<string, {
@@ -278,6 +282,7 @@ export interface LearningPlan {
   reinforced_ids?: string[]
   text_output?: string
   path_mode?: PathMode | string | null
+  path_mode_source?: string | null
 }
 
 export interface ReplanDiff {
@@ -304,6 +309,7 @@ export interface ReplanResult {
   stages: PathStage[]
   budget_status: string
   path_mode?: PathMode | string | null
+  path_mode_source?: string | null
   total_hours: number
   diff: ReplanDiff | null
   diff_details?: Partial<Record<keyof ReplanDiff, ReplanDiffDetailItem[]>> | null
@@ -319,6 +325,7 @@ export interface VariantConfirmResponse {
   stages: PathStage[]
   budget_status: string
   path_mode?: PathMode | string | null
+  path_mode_source?: string | null
   total_hours: number
   node_count?: number
   reinforced_ids?: string[]
@@ -334,6 +341,7 @@ export type FeedbackIntentType = 'compress_time' | 'increase_practice' | 'increa
 export interface VariantSummary {
   variant_id: string
   path_mode: PathMode
+  path_mode_source?: string | null
   budget_summary: Record<string, unknown>
   included_node_ids: string[]
   excluded_node_ids: string[]

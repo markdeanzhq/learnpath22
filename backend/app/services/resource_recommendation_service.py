@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppError, NotFoundError
 from app.repositories.plan_repository import get_plan_by_id
+from app.repositories.profile_repository import get_latest_profile
 from app.repositories.resource_repository import (
     create_resource_binding,
     list_resource_bindings,
@@ -24,6 +25,27 @@ from app.services.domain_pack_service import get_domain_pack_service
 
 AUTO_SEARCH_RESULTS_PER_NODE = 2
 MAX_AUTO_SEARCH_NODES = 12
+RESOURCE_PREFERENCE_HINTS = {
+    "mixed": "图文 视频 代码 综合学习资料",
+    "text": "文字讲义 教材 笔记 tutorial notes",
+    "video": "视频课程 讲解 lecture video",
+    "code": "代码示例 Notebook GitHub Colab 实战",
+    "paper": "论文 文档 paper arxiv survey",
+}
+RESOURCE_PREFERENCE_LABELS = {
+    "mixed": "混合资料",
+    "text": "文字讲义",
+    "video": "视频课程",
+    "code": "代码示例",
+    "paper": "论文文档",
+}
+RESOURCE_PREFERENCE_KEYWORDS = {
+    "text": ("文字", "讲义", "教材", "教程", "笔记", "article", "tutorial", "notes"),
+    "video": ("视频", "课程", "讲解", "bilibili", "youtube", "lecture", "video"),
+    "code": ("代码", "示例", "notebook", "github", "colab", "code", "python"),
+    "paper": ("论文", "文档", "arxiv", "paper", "survey", "documentation"),
+}
+PREFERENCE_SCORE_BOOST = 0.08
 
 
 def _load_path_stage_list(path: Any) -> list[dict[str, Any]]:
@@ -44,12 +66,61 @@ def _load_path_stage_list(path: Any) -> list[dict[str, Any]]:
     return stages
 
 
+def _resource_value(resource: Any, key: str) -> Any:
+    if isinstance(resource, dict):
+        return resource.get(key)
+    return getattr(resource, key, None)
+
+
+def _normalize_resource_preference(value: Any) -> str:
+    return value if isinstance(value, str) and value in RESOURCE_PREFERENCE_HINTS else "mixed"
+
+
+def _resource_preference_from_profile(profile: Any) -> str:
+    return _normalize_resource_preference(getattr(profile, "resource_preference", None))
+
+
+def _resource_search_hint(resource_preference: str) -> str:
+    return RESOURCE_PREFERENCE_HINTS[_normalize_resource_preference(resource_preference)]
+
+
+def _resource_text(resource: Any) -> str:
+    values = [
+        _resource_value(resource, "title"),
+        _resource_value(resource, "snippet"),
+        _resource_value(resource, "description"),
+        _resource_value(resource, "url"),
+        _resource_value(resource, "source_type"),
+    ]
+    return " ".join(str(value).lower() for value in values if value)
+
+
+def _resource_preference_metadata(resource: Any, resource_preference: str) -> tuple[str, str, float]:
+    preference = _normalize_resource_preference(resource_preference)
+    if preference == "mixed":
+        return "mixed", "保留混合资料偏好，不按单一资料形态过滤。", 0.0
+
+    label = RESOURCE_PREFERENCE_LABELS[preference]
+    text = _resource_text(resource)
+    if any(keyword in text for keyword in RESOURCE_PREFERENCE_KEYWORDS.get(preference, ())):
+        return "preferred", f"匹配学习者偏好的{label}形态。", PREFERENCE_SCORE_BOOST
+    return "available", f"未明显命中{label}偏好，但因内容相关仍保留。", 0.0
+
+
+def _score_with_preference(score: Any, boost: float) -> float | None:
+    if not isinstance(score, (int, float)):
+        return None
+    return round(min(1.0, float(score) + boost), 3)
+
+
 def _resource_item_from_static(
     resource: dict[str, Any],
     *,
     stage_name: str | None,
     node_id: str | None,
+    resource_preference: str,
 ) -> dict[str, Any]:
+    match, reason, _boost = _resource_preference_metadata(resource, resource_preference)
     return {
         "id": resource["id"],
         "title": resource["title"],
@@ -59,11 +130,13 @@ def _resource_item_from_static(
         "source_type": "static",
         "stage_name": stage_name,
         "node_id": node_id,
+        "preference_match": match,
+        "preference_reason": reason,
         "created_at": None,
     }
 
 
-def _build_static_stage_resources(stage_name: str, pack: Any) -> list[dict[str, Any]]:
+def _build_static_stage_resources(stage_name: str, pack: Any, resource_preference: str) -> list[dict[str, Any]]:
     stage_id = None
     for stage in pack.stages:
         if stage.get("name") == stage_name:
@@ -73,19 +146,38 @@ def _build_static_stage_resources(stage_name: str, pack: Any) -> list[dict[str, 
     results: list[dict[str, Any]] = []
     for resource in pack.resources:
         if stage_id and stage_id in resource.get("stage_ids", []):
-            results.append(_resource_item_from_static(resource, stage_name=stage_name, node_id=None))
+            results.append(
+                _resource_item_from_static(
+                    resource,
+                    stage_name=stage_name,
+                    node_id=None,
+                    resource_preference=resource_preference,
+                )
+            )
     return results
 
 
-def _build_static_node_resources(node_id: str, pack: Any) -> list[dict[str, Any]]:
+def _build_static_node_resources(node_id: str, pack: Any, resource_preference: str) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for resource in pack.resources:
         if node_id in resource.get("node_ids", []):
-            results.append(_resource_item_from_static(resource, stage_name=None, node_id=node_id))
+            results.append(
+                _resource_item_from_static(
+                    resource,
+                    stage_name=None,
+                    node_id=node_id,
+                    resource_preference=resource_preference,
+                )
+            )
     return results
 
 
-def _build_node_query(project: Any, stage: dict[str, Any], task: dict[str, Any]) -> str:
+def _build_node_query(
+    project: Any,
+    stage: dict[str, Any],
+    task: dict[str, Any],
+    resource_preference: str,
+) -> str:
     query_parts = [
         task.get("name", ""),
         project.goal_text,
@@ -93,11 +185,13 @@ def _build_node_query(project: Any, stage: dict[str, Any], task: dict[str, Any])
         "机器学习",
         "入门",
         "学习资料",
+        _resource_search_hint(resource_preference),
     ]
     return " ".join(part for part in query_parts if part).strip()
 
 
-def _resource_item_from_binding(item: Any) -> ResourceItem:
+def _resource_item_from_binding(item: Any, resource_preference: str) -> ResourceItem:
+    match, reason, _boost = _resource_preference_metadata(item, resource_preference)
     return ResourceItem(
         id=item.id,
         title=item.title,
@@ -107,6 +201,8 @@ def _resource_item_from_binding(item: Any) -> ResourceItem:
         source_type=item.source_type,
         stage_name=item.stage_name,
         node_id=item.node_id,
+        preference_match=match,
+        preference_reason=reason,
         created_at=item.created_at,
     )
 
@@ -137,16 +233,18 @@ async def get_plan_resources(
     pack = get_domain_pack_service(project.domain)
     stages = _load_path_stage_list(path)
     dynamic_resources = await list_resource_bindings(db, project_id, path_id)
+    profile = await get_latest_profile(db, project_id)
+    resource_preference = _resource_preference_from_profile(profile)
 
     stage_groups: list[StageResourceGroup] = []
     for stage in stages:
         stage_name = stage["stage_name"]
         stage_resources = [
             ResourceItem.model_validate(item)
-            for item in _build_static_stage_resources(stage_name, pack)
+            for item in _build_static_stage_resources(stage_name, pack, resource_preference)
         ]
         stage_resources.extend(
-            _resource_item_from_binding(item)
+            _resource_item_from_binding(item, resource_preference)
             for item in dynamic_resources
             if item.stage_name == stage_name and item.node_id is None
         )
@@ -158,20 +256,10 @@ async def get_plan_resources(
                 continue
             node_resources = [
                 ResourceItem.model_validate(item)
-                for item in _build_static_node_resources(node_id, pack)
+                for item in _build_static_node_resources(node_id, pack, resource_preference)
             ]
             node_resources.extend(
-                ResourceItem(
-                    id=item.id,
-                    title=item.title,
-                    url=item.url,
-                    snippet=item.snippet,
-                    score=item.score,
-                    source_type=item.source_type,
-                    stage_name=item.stage_name,
-                    node_id=item.node_id,
-                    created_at=item.created_at,
-                )
+                _resource_item_from_binding(item, resource_preference)
                 for item in dynamic_resources
                 if item.node_id == node_id
             )
@@ -215,6 +303,8 @@ async def recommend_plan_resources(
     pack = get_domain_pack_service(project.domain)
     stages = _load_path_stage_list(path)
     dynamic_resources = await list_resource_bindings(db, project_id, path_id)
+    profile = await get_latest_profile(db, project_id)
+    resource_preference = _resource_preference_from_profile(profile)
 
     searched_node_count = 0
     for stage in stages:
@@ -222,16 +312,17 @@ async def recommend_plan_resources(
             node_id = task.get("node_id")
             if (
                 not node_id
-                or _build_static_node_resources(node_id, pack)
+                or _build_static_node_resources(node_id, pack, resource_preference)
                 or _has_dynamic_node_resource(dynamic_resources, node_id)
             ):
                 continue
             if searched_node_count >= MAX_AUTO_SEARCH_NODES:
                 break
-            query = _build_node_query(project, stage, task)
+            query = _build_node_query(project, stage, task, resource_preference)
             results = await search_service.search(query, max_results=AUTO_SEARCH_RESULTS_PER_NODE)
             searched_node_count += 1
             for item in results:
+                _match, _reason, boost = _resource_preference_metadata(item, resource_preference)
                 await create_resource_binding(
                     db,
                     project_id=project_id,
@@ -241,7 +332,7 @@ async def recommend_plan_resources(
                     title=item.get("title", ""),
                     url=item.get("url", ""),
                     snippet=item.get("snippet"),
-                    score=item.get("score"),
+                    score=_score_with_preference(item.get("score"), boost),
                     source_type="tavily_auto",
                 )
         if searched_node_count >= MAX_AUTO_SEARCH_NODES:

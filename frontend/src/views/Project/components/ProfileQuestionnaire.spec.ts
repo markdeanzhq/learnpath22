@@ -118,8 +118,50 @@ describe('ProfileQuestionnaire', () => {
     expect(wrapper.text()).toContain('已回答 0 / 3')
     expect(wrapper.text()).toContain('还差 3 题')
     expect(wrapper.text()).toContain('影响是否补充线性代数、概率统计等数学前置内容。')
-    expect(wrapper.text()).toContain('影响实践任务比例、代码资源和项目练习安排。')
+    expect(wrapper.text()).toContain('影响是否需要补充 Python、代码阅读等编程前置内容，不直接代表练习密度。')
     expect(wrapper.get('[data-testid="progress"]').text()).toContain('0%')
+  })
+
+  it('renders distinct semantics for path mode, resources, and practice density', async () => {
+    getQuestionsMock.mockResolvedValueOnce({
+      source: 'static',
+      questions: [
+        {
+          id: 'theory',
+          field: 'theory_weight',
+          question: '你希望知识点排序更偏向理论理解还是案例上手？',
+          options: [{ label: '理论优先', value: 0.8 }],
+        },
+        {
+          id: 'path-mode',
+          field: 'path_mode_preference',
+          question: '你希望学习路径的完整度如何？',
+          options: [{ label: '标准路径', value: 'standard' }],
+        },
+        {
+          id: 'resource',
+          field: 'resource_preference',
+          question: '你偏好的学习资料形态是什么？',
+          options: [{ label: '代码示例', value: 'code' }],
+        },
+        {
+          id: 'practice',
+          field: 'practice_intensity',
+          question: '你希望每个阶段的练习密度多高？',
+          options: [{ label: '高强度实践', value: 5 }],
+        },
+      ],
+    })
+
+    const wrapper = mountQuestionnaire()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('理论/案例排序、路径完整度、资源推荐形态、练习密度')
+    expect(wrapper.text()).toContain('只影响知识点排序更偏理论理解还是案例上手，不代表练习数量。')
+    expect(wrapper.text()).toContain('影响首次生成时默认采用标准或压缩路径，表达路径完整度。')
+    expect(wrapper.text()).toContain('影响资源搜索提示、推荐结果标记和轻量排序加权。')
+    expect(wrapper.text()).toContain('表达练习密度，用于学习引导和资源行动建议，不会硬塞无关知识点。')
+    expect(wrapper.text()).not.toContain('理论优先或实践优先')
   })
 
   it('selects option cards, updates progress, and submits answers', async () => {

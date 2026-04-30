@@ -36,8 +36,10 @@ import type { PathTask } from '@/api/modules/plan'
 const props = withDefaults(defineProps<{
   task: PathTask
   taskNumber?: number
+  practiceIntensity?: number | null
 }>(), {
   taskNumber: 1,
+  practiceIntensity: null,
 })
 
 const emit = defineEmits<{
@@ -72,10 +74,23 @@ const estimatedTimeLabel = computed(() => (
   props.task.estimated_hours ? `约 ${props.task.estimated_hours} 小时` : '时长待估算'
 ))
 
+const normalizedPracticeIntensity = computed(() => (
+  typeof props.practiceIntensity === 'number' ? props.practiceIntensity : 3
+))
+
+const practiceGuidance = computed(() => {
+  if (normalizedPracticeIntensity.value >= 4) return '高练习密度：优先在推荐资源中找代码、案例或小题完成一次动手验证。'
+  if (normalizedPracticeIntensity.value <= 2) return '低练习密度：先记录关键概念，练习可作为复盘选项。'
+  return '均衡练习密度：学完后做一次小练习或复述检查。'
+})
+
 const guidanceLabel = computed(() => {
-  if (props.task.importance >= 4) return '建议完成笔记和练习后再进入下一项。'
-  if (props.task.difficulty >= 4) return '建议拆成小目标学习，必要时回看前置概念。'
-  return '理解核心概念后即可继续推进。'
+  const base = props.task.importance >= 4
+    ? '建议完成笔记和练习后再进入下一项。'
+    : props.task.difficulty >= 4
+      ? '建议拆成小目标学习，必要时回看前置概念。'
+      : '理解核心概念后即可继续推进。'
+  return `${base}${practiceGuidance.value}`
 })
 </script>
 

@@ -51,13 +51,13 @@ STATIC_QUESTIONS: list[dict[str, Any]] = [
     {
         "id": "q_preference",
         "field": "theory_weight",
-        "question": "你更倾向哪种学习方式？",
+        "question": "你希望知识点排序更偏向理论理解还是案例上手？",
         "options": [
-            {"label": "强调理论推导和原理", "value": 0.8},
-            {"label": "偏理论但也要看案例", "value": 0.6},
-            {"label": "理论与实践并重", "value": 0.5},
-            {"label": "偏实践但也要懂原理", "value": 0.4},
-            {"label": "尽快上手写代码", "value": 0.2},
+            {"label": "明显优先理论推导和原理", "value": 0.8},
+            {"label": "稍微优先理论讲解", "value": 0.6},
+            {"label": "理论讲解与案例上手并重", "value": 0.5},
+            {"label": "稍微优先案例和应用", "value": 0.4},
+            {"label": "明显优先上手写代码", "value": 0.2},
         ],
     },
     {
@@ -87,12 +87,10 @@ STATIC_QUESTIONS: list[dict[str, Any]] = [
     {
         "id": "q_path_mode",
         "field": "path_mode_preference",
-        "question": "你更希望系统如何组织学习路径？",
+        "question": "你希望学习路径的完整度如何？",
         "options": [
-            {"label": "标准路径，兼顾完整性和节奏", "value": "standard"},
-            {"label": "压缩路径，只保留必要前置和目标", "value": "compressed"},
-            {"label": "理论优先，先理解原理", "value": "theory_first"},
-            {"label": "实践优先，尽快进入练习", "value": "practice_first"},
+            {"label": "标准路径：保留必要前置与适量补强节点", "value": "standard"},
+            {"label": "压缩路径：优先保留目标与硬前置依赖", "value": "compressed"},
         ],
     },
     {
@@ -122,13 +120,13 @@ STATIC_QUESTIONS: list[dict[str, Any]] = [
     {
         "id": "q_practice_intensity",
         "field": "practice_intensity",
-        "question": "你希望学习过程中安排多少练习和实践？",
+        "question": "你希望每个阶段的练习密度多高？",
         "options": [
-            {"label": "很少练习，先理解概念", "value": 1},
-            {"label": "少量练习辅助理解", "value": 2},
-            {"label": "理论和练习均衡", "value": 3},
-            {"label": "较多练习巩固", "value": 4},
-            {"label": "高强度实践和项目驱动", "value": 5},
+            {"label": "低练习密度：以理解和复盘为主", "value": 1},
+            {"label": "少量练习：用小题辅助理解", "value": 2},
+            {"label": "均衡练习：概念学习后安排巩固", "value": 3},
+            {"label": "较高练习密度：每阶段都要动手验证", "value": 4},
+            {"label": "高强度实践：尽量配套案例或小项目", "value": 5},
         ],
     },
 ]

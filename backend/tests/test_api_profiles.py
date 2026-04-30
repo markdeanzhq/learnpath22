@@ -311,7 +311,8 @@ async def test_collector_static_questions_include_budget_and_mode_fields(client,
     resp = await client.post(f"/api/v1/projects/{project['id']}/collector/questions")
 
     assert resp.status_code == 200
-    fields = {question["field"] for question in resp.json()["questions"]}
+    questions = resp.json()["questions"]
+    fields = {question["field"] for question in questions}
     assert {
         "weekly_hours",
         "deadline_weeks",
@@ -320,6 +321,12 @@ async def test_collector_static_questions_include_budget_and_mode_fields(client,
         "resource_preference",
         "practice_intensity",
     } <= fields
+
+    by_field = {question["field"]: question for question in questions}
+    path_mode_values = {option["value"] for option in by_field["path_mode_preference"]["options"]}
+    assert path_mode_values == {"standard", "compressed"}
+    assert "完整度" in by_field["path_mode_preference"]["question"]
+    assert "练习密度" in by_field["practice_intensity"]["question"]
 
 
 async def test_collector_submit_maps_deadline_path_mode_and_persona(client, project):

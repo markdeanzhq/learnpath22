@@ -90,6 +90,8 @@ def plan_with_profile(
     removed_edge_ids: set[str] | None = None,
     confirmed_goal_result: dict[str, Any] | None = None,
     path_mode: str = "standard",
+    path_mode_source: str = "explicit_request",
+    path_mode_resolution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     path_mode = validate_path_mode(path_mode)
     scoring_config = pack.scoring_config
@@ -247,6 +249,8 @@ def plan_with_profile(
         reinforced_ids=sorted(reinforced_ids),
         final_ids=sorted(final_ids),
         path_mode=path_mode,
+        path_mode_source=path_mode_source,
+        path_mode_resolution=path_mode_resolution,
         ordering_mode=mode,
         budget_status=budget_summary["status"],
         included_nodes=included_nodes,

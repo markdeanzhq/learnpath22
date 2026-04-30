@@ -943,6 +943,69 @@ describe('Knowledge overlay entry', () => {
     expect(pushMock).toHaveBeenCalledWith({ name: 'Path', query: { tool: 'graph_options', from: 'knowledge_overlay' } })
   })
 
+  it('opens overlay candidate actions without changing review or planning lifecycle state', async () => {
+    const wrapper = mountKnowledge()
+    await flushPromises()
+
+    ;(wrapper.vm as any).lastOverlaySession = {
+      session: {
+        session_id: 'sess-preflight-action',
+        project_id: 'project-001',
+        mode: 'default',
+        session_status: 'validated',
+        source_ids: ['src-001'],
+        warnings: [],
+        created_at: '2026-04-22T09:00:00Z',
+        updated_at: '2026-04-22T09:00:00Z',
+      },
+      sources: [],
+      nodes: [
+        {
+          node_id: 'po:node-invalid',
+          name: '非法节点',
+          validation_status: 'invalid',
+          validation_errors: ['missing_summary'],
+          review_status: 'pending',
+        },
+      ],
+      edges: [
+        {
+          edge_id: 'po:edge-review',
+          source_node_id: 'po:node-invalid',
+          target_node_id: 'ml_c01',
+          relation_type: 'RELATED_TO',
+          validation_status: 'needs_review',
+          validation_errors: ['duplicate_edge'],
+          review_status: 'pending',
+        },
+      ],
+      resources: [],
+      warnings: [],
+    }
+    await wrapper.vm.$nextTick()
+    graphReviewOverlayElementMock.mockClear()
+    graphSetOverlayPlanningMock.mockClear()
+
+    const preflightPanel = wrapper.findComponent(OverlayPreflightPanel)
+    const repairAction = (wrapper.vm as any).overlayPreflightActions.find((action: any) => action.actionType === 'repair_invalid')
+    const reviewAction = (wrapper.vm as any).overlayPreflightActions.find((action: any) => action.actionType === 'review_needs_review')
+
+    preflightPanel.vm.$emit('open-candidate-action', repairAction)
+    await flushPromises()
+
+    expect((wrapper.vm as any).overlayDrawerVisible).toBe(true)
+    expect((wrapper.vm as any).overlayCandidateFilter).toBe('blocking')
+    expect((wrapper.vm as any).candidateEditor.kind).toBe('node')
+
+    preflightPanel.vm.$emit('open-candidate-action', reviewAction)
+    await flushPromises()
+
+    expect((wrapper.vm as any).overlayCandidateFilter).toBe('review')
+    expect((wrapper.vm as any).candidateEditor.kind).toBe('edge')
+    expect(graphReviewOverlayElementMock).not.toHaveBeenCalled()
+    expect(graphSetOverlayPlanningMock).not.toHaveBeenCalled()
+  })
+
   it('loads first-screen graph companions through the workspace endpoint', async () => {
     const workspaceLoad = createDeferred<any>()
     graphGetGraphWorkspaceMock.mockReturnValueOnce(workspaceLoad.promise)

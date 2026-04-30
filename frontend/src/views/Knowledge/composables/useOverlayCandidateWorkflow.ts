@@ -48,6 +48,18 @@ export type OverlayCandidateDiagnosticSummary = {
   canOpenRepairTarget: boolean
 }
 
+export type OverlayPreflightActionType = 'repair_invalid' | 'review_needs_review' | 'review_pending' | 'enable_planning'
+
+export type OverlayPreflightCandidateAction = {
+  actionType: OverlayPreflightActionType
+  targetFilter: CandidateIssueFilter
+  label: string
+  description: string
+  count: number
+  openFirstRepairable: boolean
+  tagType: 'success' | 'warning' | 'info' | 'danger'
+}
+
 type OverlaySessionCandidateLike = {
   validation_status?: string | null
   review_status?: string | null
@@ -101,7 +113,8 @@ export function useOverlayCandidateWorkflow({
       invalid: candidates.filter((item) => item.validation_status === 'invalid').length,
       needsReview: candidates.filter((item) => item.validation_status === 'needs_review').length,
       valid: candidates.filter((item) => item.validation_status === 'valid').length,
-      pendingReview: candidates.filter((item) => item.review_status === 'pending').length,
+      pendingReview: candidates.filter((item) => item.validation_status === 'valid' && item.review_status === 'pending').length,
+      planningDisabled: candidates.filter((item) => item.validation_status === 'valid' && item.review_status === 'confirmed' && item.planning_enabled === false).length,
     }
   })
 
@@ -270,6 +283,54 @@ export function useOverlayCandidateWorkflow({
     if (counts.visible_overlay_nodes || counts.visible_overlay_edges) return '增强图谱已可用于项目图谱和路径预检；如需写入 Neo4j 投影，再点击同步图谱。'
     return '当前草稿尚未产生可进入增强图谱的节点或关系。'
   })
+  const overlayPreflightActions = computed<OverlayPreflightCandidateAction[]>(() => {
+    const preflight = overlayPreflight.value
+    const hasSessionCandidates = overlaySessionCandidates.value.length > 0
+    if (!preflight || !hasSessionCandidates) return []
+    const invalid = overlaySessionStats.value.invalid
+    const needsReview = overlaySessionStats.value.needsReview
+    const pendingReview = overlaySessionStats.value.pendingReview
+    const planningDisabled = overlaySessionStats.value.planningDisabled
+    return [
+      invalid ? buildOverlayPreflightAction({
+        actionType: 'repair_invalid',
+        targetFilter: 'blocking',
+        label: `修复校验失败 ${invalid}`,
+        description: '打开候选队列并定位首个校验失败项，先修字段、证据或关系端点。',
+        count: invalid,
+        openFirstRepairable: true,
+        tagType: 'danger',
+      }) : null,
+      needsReview ? buildOverlayPreflightAction({
+        actionType: 'review_needs_review',
+        targetFilter: 'review',
+        label: `复核需确认 ${needsReview}`,
+        description: '打开待复核候选，处理重复、证据不足或保留判断。',
+        count: needsReview,
+        openFirstRepairable: true,
+        tagType: 'warning',
+      }) : null,
+      pendingReview ? buildOverlayPreflightAction({
+        actionType: 'review_pending',
+        targetFilter: 'pending',
+        label: `审核待确认 ${pendingReview}`,
+        description: '查看已通过机器校验但尚未人工确认的候选。',
+        count: pendingReview,
+        openFirstRepairable: false,
+        tagType: 'info',
+      }) : null,
+      planningDisabled ? buildOverlayPreflightAction({
+        actionType: 'enable_planning',
+        targetFilter: 'ready',
+        label: `查看未开启规划 ${planningDisabled}`,
+        description: '查看已确认候选；如需参与路径，再在抽屉中显式开启规划。',
+        count: planningDisabled,
+        openFirstRepairable: false,
+        tagType: 'success',
+      }) : null,
+    ].filter((item): item is OverlayPreflightCandidateAction => Boolean(item))
+  })
+  const overlayPreflightPrimaryAction = computed(() => overlayPreflightActions.value[0] || null)
   const filteredOverlayNodes = computed(() => (lastOverlaySession.value?.nodes || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
   const filteredOverlayEdges = computed(() => (lastOverlaySession.value?.edges || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
   const filteredOverlayResources = computed(() => (lastOverlaySession.value?.resources || []).filter((candidate) => matchesOverlayCandidateFilter(candidate, overlayCandidateFilter.value)))
@@ -322,6 +383,8 @@ export function useOverlayCandidateWorkflow({
     overlayPreflightStatusLabel,
     overlayPreflightIssues,
     overlayPreflightGuidance,
+    overlayPreflightActions,
+    overlayPreflightPrimaryAction,
     overlaySessionCandidates,
     filteredOverlayNodes,
     filteredOverlayEdges,
@@ -380,6 +443,10 @@ function buildOverlayCandidateDiagnostic({
     firstTargetTitle: overlayRepairTargetTitle(firstTarget),
     firstError: firstTarget.candidate.validation_errors?.[0] || '',
   }
+}
+
+function buildOverlayPreflightAction(action: OverlayPreflightCandidateAction): OverlayPreflightCandidateAction {
+  return action
 }
 
 function addEndpointOption(

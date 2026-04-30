@@ -4,8 +4,8 @@
       <template #header>
         <div class="card-header">
           <div>
-            <div class="page-title">资料搜索</div>
-            <div class="page-subtitle">为当前项目搜索相关学习资料</div>
+            <div class="page-title">项目资料库</div>
+            <div class="page-subtitle">搜索、保存并回看当前项目的学习资料；需要进入图谱时再转为草稿来源。</div>
           </div>
           <el-tag v-if="projectStore.currentProject" type="info">
             {{ projectStore.currentProject.title }}
@@ -24,7 +24,7 @@
         >
           <template #default>
             <template v-if="configMissing">
-              资料搜索属于在线增强能力。请先到“设置”页面填写 `SEARCH_API_KEY`，保存后再使用搜索；这不会影响学习路径规划主链演示。
+              项目资料库搜索属于在线增强能力。请先到“设置”页面填写 `SEARCH_API_KEY`，保存后再使用搜索；这不会影响学习路径规划主链演示。
               <el-button link type="primary" @click="router.push('/settings')">前往设置</el-button>
             </template>
             <template v-else-if="readinessWarning">
@@ -41,7 +41,7 @@
 
         <el-input
           v-model="searchQuery"
-          placeholder="输入关键词搜索学习资料..."
+          placeholder="搜索并保存到项目资料库..."
           @keyup.enter="doSearch"
         >
           <template #append>
@@ -49,7 +49,7 @@
           </template>
         </el-input>
 
-        <div class="tips">建议输入更具体的目标，如“逻辑回归 分类 原理”</div>
+        <div class="tips">这里是项目资料库与搜索历史；路径页负责绑定到知识点，知识图谱页负责把资料转为 overlay 候选。</div>
 
         <el-table v-if="searchResults.length" :data="searchResults" size="small" stripe>
           <el-table-column label="标题" min-width="240">
@@ -62,17 +62,17 @@
           <el-table-column label="相关度" width="100">
             <template #default="{ row }">{{ (row.score * 100).toFixed(0) }}%</template>
           </el-table-column>
-          <el-table-column label="项目扩展" width="150">
+          <el-table-column label="图谱草稿来源" width="170">
             <template #default="{ row, $index }">
               <el-button link type="primary" :loading="overlayAddingUrl === row.url" @click="addResultToOverlay(row, $index)">
-                加入项目扩展
+                转为草稿来源
               </el-button>
             </template>
           </el-table-column>
         </el-table>
 
         <section v-if="persistedResults.length" class="saved-section">
-          <div class="section-title">已保存结果</div>
+          <div class="section-title">已保存资料与搜索历史</div>
           <el-table :data="persistedResults" size="small" stripe>
             <el-table-column label="标题" min-width="240">
               <template #default="{ row }">
@@ -81,11 +81,11 @@
               </template>
             </el-table-column>
             <el-table-column prop="query" label="搜索词" min-width="160" />
-            <el-table-column label="扩展来源" width="170">
+            <el-table-column label="图谱草稿来源" width="170">
               <template #default="{ row }">
-                <el-tag v-if="row.source_id" type="success" size="small">已桥接</el-tag>
+                <el-tag v-if="row.source_id" type="success" size="small">已转来源</el-tag>
                 <el-button v-else link type="primary" :loading="overlayAddingResultId === row.result_id" @click="bridgePersistedResult(row)">
-                  加入项目扩展
+                  转为草稿来源
                 </el-button>
               </template>
             </el-table-column>
@@ -212,9 +212,9 @@ async function bridgePersistedResult(result: PersistedSearchResult) {
     const bridged = await searchApi.bridgeOverlaySources(projectId.value, [result.result_id])
     const sourceId = bridged.source_ids[0]
     result.source_id = sourceId
-    ElMessage.success(bridged.results[0]?.reused ? '已复用项目扩展来源' : '已加入项目扩展来源')
+    ElMessage.success(bridged.results[0]?.reused ? '已复用图谱草稿来源' : '已转为图谱草稿来源')
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '加入项目扩展失败')
+    ElMessage.error(e?.response?.data?.error || '转为图谱草稿来源失败')
   } finally {
     overlayAddingResultId.value = ''
   }

@@ -25,9 +25,12 @@
             </div>
           </header>
 
-          <p class="stage-guide">按顺序完成本阶段知识点，遇到陌生概念可先定位到图谱查看前置关系。</p>
+          <p class="stage-guide">{{ stageGuide(stage) }}</p>
 
-          <el-empty v-if="!stage.tasks.length" description="该阶段暂无知识点，请重新生成路径或检查目标覆盖范围" />
+          <section v-if="!stage.tasks.length" class="stage-empty-reason">
+            <el-empty :description="stage.empty_reason || defaultEmptyStageReason" />
+            <p>这不是规划失败；系统会保留目标闭包和评分结果，不为了填满版式加入无关知识点。</p>
+          </section>
           <el-row v-else :gutter="12" class="task-grid">
             <el-col
               v-for="task in stage.tasks"
@@ -37,6 +40,7 @@
               <TaskCard
                 :task="task"
                 :task-number="task.order_in_stage + 1"
+                :practice-intensity="practiceIntensity"
                 @locate-node="handleLocateNode"
               />
             </el-col>
@@ -53,7 +57,12 @@ import { buildPathGraphQuery } from '@/api/modules/graph'
 import type { PathStage } from '@/api/modules/plan'
 import TaskCard from './TaskCard.vue'
 
-defineProps<{ stages: PathStage[] }>()
+const props = withDefaults(defineProps<{
+  stages: PathStage[]
+  practiceIntensity?: number | null
+}>(), {
+  practiceIntensity: null,
+})
 
 const emit = defineEmits<{
   locateNode: [nodeId: string]
@@ -61,6 +70,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const stageColors = ['#409EFF', '#67C23A', '#E6A23C', '#909399']
+const defaultEmptyStageReason = '当前目标范围没有匹配到该阶段的知识点；系统不会为填充版式加入无关节点。'
 
 function stageColor(stageIndex: number) {
   return stageColors[stageIndex % stageColors.length]
@@ -68,6 +78,24 @@ function stageColor(stageIndex: number) {
 
 function stageHoursLabel(stage: PathStage) {
   return stage.estimated_hours ? `约 ${stage.estimated_hours} 小时` : '时长待估算'
+}
+
+function normalizedPracticeIntensity() {
+  return typeof props.practiceIntensity === 'number' ? props.practiceIntensity : 3
+}
+
+function stageGuide(stage: PathStage) {
+  if (!stage.tasks.length) {
+    return '该阶段暂时保持为空，说明当前目标闭包没有命中这一阶段的必要知识点。'
+  }
+  const intensity = normalizedPracticeIntensity()
+  if (intensity >= 4) {
+    return '按顺序完成本阶段知识点，并优先在推荐资源中寻找代码、案例或小题进行动手验证。'
+  }
+  if (intensity <= 2) {
+    return '按顺序理解本阶段核心概念即可，练习可作为复盘时的可选巩固。'
+  }
+  return '按顺序完成本阶段知识点，遇到陌生概念可先定位到图谱查看前置关系。'
 }
 
 function handleLocateNode(nodeId: string) {
@@ -146,6 +174,22 @@ function handleLocateNode(nodeId: string) {
   color: var(--el-text-color-secondary);
   font-size: 13px;
   line-height: 1.7;
+}
+
+.stage-empty-reason {
+  padding: 12px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 12px;
+  background: var(--el-fill-color-blank);
+}
+
+.stage-empty-reason p {
+  max-width: 560px;
+  margin: 0 auto;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: center;
 }
 
 .task-grid {
