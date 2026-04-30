@@ -63,6 +63,7 @@
               <small v-if="resourcesLoading">加载中...</small>
               <small v-else-if="resourceError">资源暂不可用</small>
             </summary>
+            <p class="task-next-action">{{ recommendedTaskAction(task.node_id) }}</p>
             <p v-if="resourcesLoading" class="resource-fallback">正在加载该知识点绑定资源，进度操作可继续使用。</p>
             <p v-else-if="resourceError" class="resource-fallback warning">{{ resourceError }}；进度操作仍可继续。</p>
             <p v-else-if="!taskResources(task.node_id).length" class="resource-fallback">该知识点暂无绑定资源，可先继续记录进度，稍后到学习路径页补充。</p>
@@ -73,6 +74,7 @@
                 <el-tag size="small" :type="resourceTagType(resource.source_type)">{{ resourceSourceLabel(resource.source_type) }}</el-tag>
               </div>
               <p>{{ resource.snippet || '暂无摘要' }}</p>
+              <p v-if="resource.preference_reason" class="resource-preference-reason">{{ resource.preference_reason }}</p>
             </article>
           </details>
         </section>
@@ -86,6 +88,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { SuccessFilled, Loading, RemoveFilled, MoreFilled } from '@element-plus/icons-vue'
 import { buildPathGraphQuery } from '@/api/modules/graph'
+import { safeExternalUrl } from '@/utils/url'
 import type { PathStage } from '@/api/modules/plan'
 import type { ResourceItem } from '@/api/modules/resource'
 import type { TrackingEventResponse } from '@/api/modules/tracking'
@@ -146,14 +149,19 @@ function taskResources(nodeId: string) {
   return props.nodeResourcesMap[nodeId] || []
 }
 
-function safeExternalUrl(url?: string | null) {
-  if (!url) return ''
-  try {
-    const parsed = new URL(url)
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : ''
-  } catch {
-    return ''
+function recommendedTaskAction(nodeId: string) {
+  const status = statusMap.value[nodeId] || 'pending'
+  const resourceCount = taskResources(nodeId).length
+  if (status === 'completed') return '已完成：可以进入下一知识点，或在路径变化后触发进度感知重规划。'
+  if (status === 'skipped') return '已跳过：后续可通过重规划让系统调整剩余路径。'
+  if (status === 'in_progress') {
+    return resourceCount
+      ? '继续学习：优先阅读一条绑定资料，完成后记录学习状态。'
+      : '继续学习：当前无绑定资料，必要时到学习路径页补充资源。'
   }
+  return resourceCount
+    ? '建议动作：先阅读一条绑定资料，再点击开始记录学习。'
+    : '建议动作：先点击开始记录进度，稍后到学习路径页补充资料。'
 }
 
 function resourceSourceLabel(sourceType: string) {
@@ -225,10 +233,14 @@ function handleLocateNode(nodeId: string) {
 .task-resources summary small {
   color: #909399;
 }
+.task-next-action,
 .resource-fallback {
   margin: 8px 0 0;
   color: #909399;
   font-size: 12px;
+}
+.task-next-action {
+  color: #409eff;
 }
 .resource-fallback.warning {
   color: #e6a23c;
@@ -256,6 +268,9 @@ function handleLocateNode(nodeId: string) {
   color: #606266;
   font-size: 12px;
   line-height: 1.5;
+}
+.resource-preference-reason {
+  color: #67c23a !important;
 }
 
 @media (max-width: 768px) {

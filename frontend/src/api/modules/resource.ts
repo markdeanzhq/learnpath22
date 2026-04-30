@@ -7,6 +7,8 @@ export interface ResourceItem {
   snippet?: string | null
   score?: number | null
   source_type: 'static' | 'tavily_auto' | 'manual' | string
+  preference_match?: 'mixed' | 'preferred' | 'available' | string | null
+  preference_reason?: string | null
   stage_name?: string | null
   node_id?: string | null
   created_at?: string | null

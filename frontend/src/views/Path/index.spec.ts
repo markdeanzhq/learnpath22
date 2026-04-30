@@ -817,6 +817,8 @@ describe('Path page goal reconfirm flow', () => {
                   snippet: '适合入门的机器学习导论资料。',
                   score: 0.91,
                   source_type: 'tavily_auto',
+                  preference_match: 'preferred',
+                  preference_reason: '匹配学习者偏好的代码示例形态。',
                 },
                 {
                   id: 'resource-unsafe',
@@ -850,6 +852,8 @@ describe('Path page goal reconfirm flow', () => {
     expect(wrapper.text()).toContain('机器学习导论资源')
     expect(wrapper.text()).toContain('危险链接资料')
     expect(wrapper.text()).toContain('在线增强')
+    expect(wrapper.text()).toContain('匹配偏好')
+    expect(wrapper.text()).toContain('匹配学习者偏好的代码示例形态。')
     expect(vm.totalResourceCount).toBe(2)
     expect(vm.selectedNodeResourceCount).toBe(2)
     expect(vm.missingResourceNodeCount).toBe(1)

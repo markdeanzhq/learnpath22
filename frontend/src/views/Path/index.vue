@@ -523,8 +523,12 @@
                         <el-tag size="small" :type="resourceTagType(item.source_type)">
                           {{ resourceSourceLabel(item.source_type) }}
                         </el-tag>
+                        <el-tag v-if="resourcePreferenceLabel(item.preference_match)" size="small" effect="plain" :type="resourcePreferenceTagType(item.preference_match)">
+                          {{ resourcePreferenceLabel(item.preference_match) }}
+                        </el-tag>
                       </div>
                       <div class="resource-snippet">{{ item.snippet || '暂无摘要' }}</div>
+                      <div v-if="item.preference_reason" class="resource-preference-reason">{{ item.preference_reason }}</div>
                       <div class="resource-meta" v-if="item.score != null">相关度：{{ (item.score * 100).toFixed(0) }}%</div>
                     </el-card>
                   </section>
@@ -547,8 +551,12 @@
                           <el-tag size="small" :type="resourceTagType(item.source_type)">
                             {{ resourceSourceLabel(item.source_type) }}
                           </el-tag>
+                          <el-tag v-if="resourcePreferenceLabel(item.preference_match)" size="small" effect="plain" :type="resourcePreferenceTagType(item.preference_match)">
+                            {{ resourcePreferenceLabel(item.preference_match) }}
+                          </el-tag>
                         </div>
                         <div class="resource-snippet">{{ item.snippet || '暂无摘要' }}</div>
+                        <div v-if="item.preference_reason" class="resource-preference-reason">{{ item.preference_reason }}</div>
                         <div class="resource-meta" v-if="item.score != null">相关度：{{ (item.score * 100).toFixed(0) }}%</div>
                       </el-card>
                     </section>
@@ -562,8 +570,12 @@
                           <el-tag size="small" :type="resourceTagType(item.source_type)">
                             {{ resourceSourceLabel(item.source_type) }}
                           </el-tag>
+                          <el-tag v-if="resourcePreferenceLabel(item.preference_match)" size="small" effect="plain" :type="resourcePreferenceTagType(item.preference_match)">
+                            {{ resourcePreferenceLabel(item.preference_match) }}
+                          </el-tag>
                         </div>
                         <div class="resource-snippet">{{ item.snippet || '暂无摘要' }}</div>
+                        <div v-if="item.preference_reason" class="resource-preference-reason">{{ item.preference_reason }}</div>
                         <div class="resource-meta" v-if="item.score != null">相关度：{{ (item.score * 100).toFixed(0) }}%</div>
                       </el-card>
                     </section>
@@ -735,6 +747,7 @@ import {
   stringifyPreviewValue,
 } from '@/utils/pathPreviewDisplay'
 import { formatErrorCode } from '@/utils/displayLabels'
+import { safeExternalUrl } from '@/utils/url'
 import StageTimeline from './components/StageTimeline.vue'
 import Explanation from './Explanation.vue'
 import { useExplanationState } from './useExplanationState'
@@ -1535,14 +1548,18 @@ function resourceSourceLabel(sourceType: string) {
   return '在线增强'
 }
 
-function safeExternalUrl(url?: string | null) {
-  if (!url) return ''
-  try {
-    const parsed = new URL(url)
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : ''
-  } catch {
-    return ''
-  }
+function resourcePreferenceLabel(preferenceMatch?: string | null) {
+  if (preferenceMatch === 'preferred') return '匹配偏好'
+  if (preferenceMatch === 'available') return '相关保留'
+  if (preferenceMatch === 'mixed') return '混合资料'
+  return ''
+}
+
+function resourcePreferenceTagType(preferenceMatch?: string | null): '' | 'success' | 'warning' | 'danger' | 'info' {
+  if (preferenceMatch === 'preferred') return 'success'
+  if (preferenceMatch === 'available') return 'info'
+  if (preferenceMatch === 'mixed') return 'warning'
+  return ''
 }
 
 function pathModeLabel(pathMode: string) {
@@ -2141,10 +2158,14 @@ function shortHash(value?: string | null) {
   color: #606266;
   line-height: 1.6;
 }
+.resource-preference-reason,
 .resource-meta {
   color: #909399;
   font-size: 12px;
   margin-top: 8px;
+}
+.resource-preference-reason {
+  color: #67c23a;
 }
 .path-empty-card {
   min-height: 360px;

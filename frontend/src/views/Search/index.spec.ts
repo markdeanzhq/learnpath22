@@ -1,6 +1,7 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SearchIndex from './index.vue'
+import { safeExternalUrl } from '@/utils/url'
 
 const {
   searchMock,
@@ -141,6 +142,9 @@ describe('Search overlay bridge flow', () => {
     expect(wrapper.text()).toContain('项目资料库与搜索历史')
     expect(wrapper.text()).toContain('路径页负责绑定到知识点')
     expect(wrapper.text()).toContain('知识图谱页负责把资料转为 overlay 候选')
+    expect(wrapper.text()).toContain('留在资料库')
+    expect(wrapper.text()).toContain('去路径页绑定')
+    expect(wrapper.text()).toContain('去知识图谱页生成候选')
   })
 
   it('persists a search result then bridges it to one overlay source', async () => {
@@ -180,10 +184,8 @@ describe('Search overlay bridge flow', () => {
   })
 
   it('allows only http and https external links', () => {
-    const wrapper = mountSearch()
-
-    expect((wrapper.vm as any).safeExternalUrl('https://example.com/a')).toBe('https://example.com/a')
-    expect((wrapper.vm as any).safeExternalUrl('javascript:alert(1)')).toBe('')
-    expect((wrapper.vm as any).safeExternalUrl('data:text/html,boom')).toBe('')
+    expect(safeExternalUrl('https://example.com/a')).toBe('https://example.com/a')
+    expect(safeExternalUrl('javascript:alert(1)')).toBe('')
+    expect(safeExternalUrl('data:text/html,boom')).toBe('')
   })
 })

@@ -51,6 +51,21 @@
 
         <div class="tips">这里是项目资料库与搜索历史；路径页负责绑定到知识点，知识图谱页负责把资料转为 overlay 候选。</div>
 
+        <section class="resource-route-hints" aria-label="资料去向提示">
+          <article>
+            <strong>留在资料库</strong>
+            <span>保存搜索历史，便于后续回看和复用。</span>
+          </article>
+          <article>
+            <strong>去路径页绑定</strong>
+            <span>把资料绑定到当前阶段或知识点，学习时可在 Path 与 Dashboard 展开。</span>
+          </article>
+          <article>
+            <strong>去知识图谱页生成候选</strong>
+            <span>将高相关资料转为 overlay 草稿来源，再人工审核是否进入规划。</span>
+          </article>
+        </section>
+
         <el-table v-if="searchResults.length" :data="searchResults" size="small" stripe>
           <el-table-column label="标题" min-width="240">
             <template #default="{ row }">
@@ -110,6 +125,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { healthApi } from '@/api/modules/health'
 import { searchApi, type PersistedSearchResult, type SearchResultItem } from '@/api/modules/search'
+import { safeExternalUrl } from '@/utils/url'
 import { useProjectStore } from '@/stores/project'
 
 const router = useRouter()
@@ -144,16 +160,6 @@ watch(projectId, async (nextProjectId, previousProjectId) => {
     await loadPersistedResults()
   }
 })
-
-function safeExternalUrl(url?: string | null) {
-  if (!url) return ''
-  try {
-    const parsed = new URL(url)
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : ''
-  } catch {
-    return ''
-  }
-}
 
 async function loadSearchConfig() {
   try {
@@ -267,6 +273,29 @@ async function addResultToOverlay(row: SearchResultItem, index: number) {
   font-size: 13px;
   color: #909399;
 }
+.resource-route-hints {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.resource-route-hints article {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fafafa;
+}
+.resource-route-hints strong {
+  color: #303133;
+  font-size: 13px;
+}
+.resource-route-hints span {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .saved-section {
   margin-top: 20px;
 }
@@ -286,6 +315,9 @@ async function addResultToOverlay(row: SearchResultItem, index: number) {
 @media (max-width: 768px) {
   .page-container {
     padding: 12px;
+  }
+  .resource-route-hints {
+    grid-template-columns: 1fr;
   }
 }
 </style>

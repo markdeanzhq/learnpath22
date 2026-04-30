@@ -44,6 +44,9 @@ describe('OverlayPreflightPanel', () => {
 
     expect(wrapper.text()).toContain('增强图谱使用状态')
     expect(wrapper.text()).toContain('可用')
+    expect(wrapper.text()).toContain('校验失败')
+    expect(wrapper.text()).toContain('字段、证据或关系端点不满足要求')
+    expect(wrapper.text()).toContain('未开启规划')
     expect(wrapper.text()).toContain('1 个节点 / 1 条关系可进入增强图谱')
     expect(wrapper.text()).toContain('候选 2 节点 / 1 关系')
     expect(wrapper.text()).toContain('可进入增强图谱 1 节点 / 1 关系')

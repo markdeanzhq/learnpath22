@@ -76,6 +76,7 @@ describe('ProgressList graph links', () => {
               url: 'https://example.com/ml-intro',
               snippet: '适合入门的导论资料。',
               source_type: 'tavily_auto',
+              preference_reason: '匹配学习者偏好的视频课程形态。',
             },
             {
               id: 'resource-unsafe',
@@ -94,6 +95,8 @@ describe('ProgressList graph links', () => {
     expect(wrapper.text()).toContain('机器学习导论资料')
     expect(wrapper.text()).toContain('在线增强')
     expect(wrapper.text()).toContain('适合入门的导论资料。')
+    expect(wrapper.text()).toContain('匹配学习者偏好的视频课程形态。')
+    expect(wrapper.text()).toContain('建议动作：先阅读一条绑定资料')
     expect(wrapper.text()).toContain('不可直接打开资料')
     expect(wrapper.find('a.resource-link').attributes('href')).toBe('https://example.com/ml-intro')
     expect(wrapper.findAll('a.resource-link')).toHaveLength(1)
@@ -109,6 +112,7 @@ describe('ProgressList graph links', () => {
       global: { stubs: globalStubs },
     })
     expect(emptyWrapper.text()).toContain('学习资料 0 条')
+    expect(emptyWrapper.text()).toContain('建议动作：先点击开始记录进度')
     expect(emptyWrapper.text()).toContain('该知识点暂无绑定资源')
     expect(emptyWrapper.text()).toContain('开始')
 

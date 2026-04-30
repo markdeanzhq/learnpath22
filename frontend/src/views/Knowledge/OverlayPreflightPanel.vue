@@ -6,6 +6,12 @@
     </div>
     <p>{{ preflight.summary }}</p>
     <p class="overlay-guidance">{{ guidance }}</p>
+    <div class="overlay-status-guide" aria-label="候选状态说明">
+      <article v-for="item in statusGuideItems" :key="item.label">
+        <strong>{{ item.label }}</strong>
+        <span>{{ item.description }}</span>
+      </article>
+    </div>
     <div class="overlay-preflight-tags">
       <el-tag type="info" effect="plain">候选 {{ preflight.counts.active_nodes }} 节点 / {{ preflight.counts.active_edges }} 关系</el-tag>
       <el-tag type="success" effect="plain">可进入增强图谱 {{ preflight.counts.visible_overlay_nodes }} 节点 / {{ preflight.counts.visible_overlay_edges }} 关系</el-tag>
@@ -67,6 +73,13 @@ const emit = defineEmits<{
   'open-candidate-action': [action: OverlayPreflightCandidateAction]
 }>()
 
+const statusGuideItems = [
+  { label: '校验失败', description: '字段、证据或关系端点不满足要求，需要先修复。' },
+  { label: '需复核', description: '机器判断不确定，需要人工处理重复、证据不足或保留判断。' },
+  { label: '待审核', description: '已通过机器校验，但尚未人工确认，不会自动进入规划。' },
+  { label: '未开启规划', description: '已确认但 planning 开关关闭，只有显式开启后才参与路径。' },
+]
+
 const canOpenPathComparison = computed(() => (
   props.preflight.status !== 'blocked'
   && Boolean(props.preflight.counts.visible_overlay_nodes || props.preflight.counts.visible_overlay_edges)
@@ -115,6 +128,33 @@ function actionButtonType(tagType: OverlayPreflightCandidateAction['tagType']) {
   font-size: 12px;
 }
 
+.overlay-status-guide {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.overlay-status-guide article {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.overlay-status-guide strong {
+  color: #303133;
+  font-size: 12px;
+}
+
+.overlay-status-guide span {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .overlay-preflight-actions,
 .overlay-preflight-candidate-actions {
   display: flex;
@@ -160,5 +200,17 @@ function actionButtonType(tagType: OverlayPreflightCandidateAction['tagType']) {
   color: #606266;
   font-size: 12px;
   line-height: 1.6;
+}
+
+@media (max-width: 960px) {
+  .overlay-status-guide {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .overlay-status-guide {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
