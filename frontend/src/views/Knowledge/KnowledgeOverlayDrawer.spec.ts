@@ -252,6 +252,7 @@ describe('KnowledgeOverlayDrawer', () => {
 
     expect(wrapper.text()).toContain('推荐流程')
     expect(wrapper.text()).toContain('手动资料补充指南')
+    expect(wrapper.text()).toContain('安全抓取')
     expect(wrapper.text()).toContain('随机森林入门')
 
     await wrapper.findAll('button').find((button) => button.text() === '一键自动生成草稿')?.trigger('click')

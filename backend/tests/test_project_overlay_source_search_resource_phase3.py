@@ -48,6 +48,22 @@ async def _fresh_schema():
         await conn.run_sync(Base.metadata.drop_all)
 
 
+@pytest.fixture(autouse=True)
+def _disable_url_body_fetch(monkeypatch):
+    from app.services.url_content_fetch_service import UrlContentFetchResult
+
+    async def fake_fetch_url_text_excerpt(url: str) -> UrlContentFetchResult:
+        return UrlContentFetchResult(
+            raw_text_excerpt=None,
+            summary=None,
+            quality_status="url_body_unavailable",
+            metadata={"url_fetch": {"status": "disabled_in_test", "url": url}},
+        )
+
+    monkeypatch.setattr("app.api.v1.graph.fetch_url_text_excerpt", fake_fetch_url_text_excerpt)
+    monkeypatch.setattr("app.services.saved_search_overlay_bridge_service.fetch_url_text_excerpt", fake_fetch_url_text_excerpt)
+
+
 async def _create_project(db: AsyncSession, project_id: str) -> LearningProject:
     project = LearningProject(
         id=project_id,
@@ -191,6 +207,77 @@ async def test_pasted_text_overlay_source_persists_hash_and_excerpt(client, proj
     assert len(data["content_hash"]) == 64
     assert data["raw_text_excerpt"] == raw_text[:500]
     assert data["created_at"] is not None
+
+
+async def test_search_url_overlay_source_fetches_body_excerpt(client, project, monkeypatch):
+    from app.services.url_content_fetch_service import UrlContentFetchResult
+
+    async def fake_fetch_url_text_excerpt(url: str) -> UrlContentFetchResult:
+        return UrlContentFetchResult(
+            raw_text_excerpt="随机森林正文包含定义、前置知识和实践案例。",
+            summary="随机森林正文包含定义、前置知识和实践案例。",
+            quality_status="url_body_fetched",
+            metadata={"url_fetch": {"status": "fetched", "url": url}},
+        )
+
+    monkeypatch.setattr("app.api.v1.graph.fetch_url_text_excerpt", fake_fetch_url_text_excerpt)
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/graph/overlay/sources",
+        json={
+            "source_type": "search_url",
+            "url": "https://example.com/random-forest-body",
+            "title": "随机森林教程",
+            "snippet": "搜索摘要",
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["raw_text_excerpt"] == "随机森林正文包含定义、前置知识和实践案例。"
+    assert data["summary"] == "随机森林正文包含定义、前置知识和实践案例。"
+    assert data["quality_status"] == "url_body_fetched"
+    assert "url_fetch" in data["metadata_json"]
+
+
+async def test_saved_search_bridge_fetches_body_excerpt(client, project, db_session, monkeypatch):
+    from app.services.url_content_fetch_service import UrlContentFetchResult
+
+    async def fake_fetch_url_text_excerpt(url: str) -> UrlContentFetchResult:
+        return UrlContentFetchResult(
+            raw_text_excerpt="梯度下降网页正文包含概念、公式和代码练习。",
+            summary="梯度下降网页正文包含概念、公式和代码练习。",
+            quality_status="url_body_fetched",
+            metadata={"url_fetch": {"status": "fetched", "url": url}},
+        )
+
+    monkeypatch.setattr("app.services.saved_search_overlay_bridge_service.fetch_url_text_excerpt", fake_fetch_url_text_excerpt)
+
+    persist_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/search-results",
+        json={
+            "query": "梯度下降 学习资料",
+            "provider": "tavily",
+            "url": "https://example.com/gradient-descent-body",
+            "title": "梯度下降教程",
+            "snippet": "覆盖梯度下降直觉与实践。",
+            "result_rank": 1,
+        },
+    )
+    result_id = persist_resp.json()["result_id"]
+
+    bridge_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/search-results/bridge-overlay-sources",
+        json={"result_ids": [result_id]},
+    )
+
+    assert bridge_resp.status_code == 200
+    source_id = bridge_resp.json()["source_ids"][0]
+    stored_source = await db_session.get(ProjectOverlaySource, source_id)
+    assert stored_source.raw_text_excerpt == "梯度下降网页正文包含概念、公式和代码练习。"
+    assert stored_source.summary == "梯度下降网页正文包含概念、公式和代码练习。"
+    assert stored_source.quality_status == "url_body_fetched"
+    assert "url_fetch" in stored_source.metadata_json
 
 
 async def test_saved_search_bridge_creates_stable_search_url_source(client, project, db_session):

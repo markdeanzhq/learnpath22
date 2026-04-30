@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.sqlite_models import PersistedSearchResult, ProjectOverlaySource
 from app.repositories.project_overlay_repository import get_persisted_search_result, get_source
+from app.services.url_content_fetch_service import fetch_url_text_excerpt, merge_url_fetch_metadata
 
 
 def _metadata_with_result_id(result: PersistedSearchResult) -> str:
@@ -75,10 +76,12 @@ async def _resolve_overlay_source_for_persisted_result(
     if source is None:
         source = await _find_equivalent_search_source(db, project_id=project_id, result=result)
         if source is None:
+            fetched = await fetch_url_text_excerpt(result.url)
             source = ProjectOverlaySource(
                 source_id=_bridge_source_id(project_id, result.result_id),
                 project_id=project_id,
                 source_type="search_url",
+                raw_text_excerpt=fetched.raw_text_excerpt,
                 url=result.url,
                 title=result.title,
                 snippet=result.snippet,
@@ -86,9 +89,9 @@ async def _resolve_overlay_source_for_persisted_result(
                 query=result.query,
                 result_rank=result.result_rank,
                 retrieved_at=result.retrieved_at,
-                summary=result.summary,
-                quality_status=result.quality_status,
-                metadata_json=_metadata_with_result_id(result),
+                summary=result.summary or fetched.summary,
+                quality_status=result.quality_status or fetched.quality_status,
+                metadata_json=merge_url_fetch_metadata(_metadata_with_result_id(result), fetched.metadata),
             )
             db.add(source)
             await db.flush()

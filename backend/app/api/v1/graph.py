@@ -77,6 +77,7 @@ from app.services.project_overlay_promotion_service import (
     preview_project_overlay_promotion,
 )
 from app.services.graph_sync_service import get_graph_sync_service
+from app.services.url_content_fetch_service import fetch_url_text_excerpt, merge_url_fetch_metadata
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -974,6 +975,9 @@ async def create_overlay_source(
 
     content_hash = None
     excerpt = req.raw_text_excerpt
+    summary = req.summary
+    quality_status = req.quality_status
+    metadata_json = req.metadata_json
     if req.source_type == "pasted_text" and req.raw_text is not None:
         if len(req.raw_text) > MAX_TEXT_CHARS:
             raise AppError(code=422, message="TEXT_LIMIT_EXCEEDED")
@@ -981,6 +985,12 @@ async def create_overlay_source(
             raise AppError(code=422, message="TEXT_LIMIT_EXCEEDED")
         content_hash = hashlib.sha256(req.raw_text.encode("utf-8")).hexdigest()
         excerpt = excerpt or req.raw_text[:MAX_TEXT_CHARS]
+    elif req.source_type == "search_url" and req.url and not excerpt:
+        fetched = await fetch_url_text_excerpt(req.url)
+        excerpt = fetched.raw_text_excerpt
+        summary = summary or fetched.summary
+        quality_status = quality_status or fetched.quality_status
+        metadata_json = merge_url_fetch_metadata(metadata_json, fetched.metadata)
 
     source = await create_source(
         db,
@@ -995,9 +1005,9 @@ async def create_overlay_source(
         query=req.query,
         result_rank=req.result_rank,
         retrieved_at=req.retrieved_at,
-        summary=req.summary,
-        quality_status=req.quality_status,
-        metadata_json=req.metadata_json,
+        summary=summary,
+        quality_status=quality_status,
+        metadata_json=metadata_json,
     )
     return _source_response(source)
 

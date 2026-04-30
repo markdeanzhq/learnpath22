@@ -75,8 +75,16 @@ async def test_auto_overlay_draft_endpoint_searches_persists_and_creates_session
             "score": 0.91,
         }
     ])
+    from app.services.url_content_fetch_service import UrlContentFetchResult
+
     with (
         patch("app.services.project_overlay_auto_draft_service.search", search_mock),
+        patch("app.services.saved_search_overlay_bridge_service.fetch_url_text_excerpt", AsyncMock(return_value=UrlContentFetchResult(
+            raw_text_excerpt="随机森林网页正文",
+            summary="随机森林网页正文",
+            quality_status="url_body_fetched",
+            metadata={"url_fetch": {"status": "fetched"}},
+        ))),
         patch("app.services.project_overlay_auto_draft_service.preview_overlay_extraction_payload_from_sources", side_effect=fake_preview),
     ):
         resp = await client.post(

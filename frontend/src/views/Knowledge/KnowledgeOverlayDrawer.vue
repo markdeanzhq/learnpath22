@@ -85,7 +85,7 @@
         <p>输入具体概念或问题，系统会搜索资料并保存为项目扩展来源；加入后可直接生成候选预览。</p>
         <div class="auto-draft-action-row">
           <el-button type="primary" :loading="overlayAutoDraftLoading" @click="emit('create-auto-draft')">一键自动生成草稿</el-button>
-          <span>自动搜索、保存资料、AI 抽取并创建待审核草稿；不会直接写入正式图谱或路径。</span>
+          <span>自动搜索、保存资料、尝试安全抓取正文并创建待审核草稿；不会直接写入正式图谱或路径。</span>
         </div>
         <div class="overlay-search-row">
           <el-input
@@ -169,7 +169,7 @@
             type="warning"
             :closable="false"
             show-icon
-            title="当前不会自动读取网页正文，只会使用 URL、标题和摘要片段作为证据；建议填写标题和摘要，或改用自动搜索/粘贴文本。"
+            title="系统会尝试安全抓取公网 http(s) 页面正文；若页面不可访问、非文本或被安全策略拦截，将回退使用 URL、标题和摘要片段作为证据。"
           />
           <el-form-item label="URL">
             <el-input :model-value="overlayForm.url" placeholder="https://example.com/article" @update:model-value="updateTextField('url', $event)" />
