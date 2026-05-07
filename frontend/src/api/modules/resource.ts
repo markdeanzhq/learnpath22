@@ -50,11 +50,16 @@ export interface ProjectResourceBindingResponse {
   created_at: string
 }
 
+export interface ResourceRecommendOptions {
+  node_id?: string
+  stage_name?: string
+}
+
 export const resourceApi = {
   getPlanResources: (projectId: string, pathId: string): Promise<PlanResourcesResponse> =>
     request.get(`/projects/${projectId}/plans/${pathId}/resources`),
-  recommendPlanResources: (projectId: string, pathId: string): Promise<PlanResourcesResponse> =>
-    request.post(`/projects/${projectId}/plans/${pathId}/resources/recommend`),
+  recommendPlanResources: (projectId: string, pathId: string, options?: ResourceRecommendOptions): Promise<PlanResourcesResponse> =>
+    request.post(`/projects/${projectId}/plans/${pathId}/resources/recommend`, null, { params: options }),
   bindManualResource: (
     projectId: string,
     pathId: string,

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -147,9 +147,17 @@ async def get_plan_resources_endpoint(
 async def recommend_plan_resources_endpoint(
     project_id: str,
     path_id: str,
+    node_id: str | None = Query(default=None),
+    stage_name: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    return await recommend_plan_resources(db, project_id=project_id, path_id=path_id)
+    return await recommend_plan_resources(
+        db,
+        project_id=project_id,
+        path_id=path_id,
+        node_id=node_id,
+        stage_name=stage_name,
+    )
 
 
 @router.post(

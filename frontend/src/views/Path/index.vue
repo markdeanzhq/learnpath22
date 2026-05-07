@@ -454,11 +454,14 @@
                 :closable="false"
                 show-icon
               />
-              <el-button type="primary" @click="recommendResources" :loading="recommendLoading">
-                自动补充知识点资源
+              <el-button type="primary" @click="recommendSelectedNodeResources" :loading="selectedNodeRecommendLoading" :disabled="!selectedNodeId">
+                补充当前知识点资源
+              </el-button>
+              <el-button plain @click="recommendResources" :loading="recommendLoading">
+                批量补充缺资源知识点
               </el-button>
             </div>
-            <div v-loading="resourcesLoading" element-loading-text="正在加载推荐资源...">
+            <div v-loading="resourcesLoading" :element-loading-text="resourceLoadingText">
               <template v-if="planResources?.stages?.length">
                 <section class="resource-workbench">
                   <div class="resource-workbench-main">
@@ -818,7 +821,9 @@ const searching = ref(false)
 const searchDone = ref(false)
 const planResources = ref<PlanResourcesResponse | null>(null)
 const resourcesLoading = ref(false)
+const resourcesLoadedPathId = ref('')
 const recommendLoading = ref(false)
+const selectedNodeRecommendLoading = ref(false)
 const bindLoading = ref(false)
 const selectedStageName = ref('')
 const selectedNodeId = ref('')
@@ -1053,6 +1058,7 @@ const selectedNodeResourceCount = computed(() => selectedResourceNode.value?.res
 const missingResourceNodeCount = computed(() => (
   planResources.value?.stages.reduce((sum, stage) => sum + stage.nodes.filter((node) => !node.resources.length).length, 0) ?? 0
 ))
+const resourceLoadingText = computed(() => '正在读取已绑定资源...')
 
 async function loadOverlayPreflight() {
   if (!projectId.value) {
@@ -1066,14 +1072,26 @@ async function loadOverlayPreflight() {
   }
 }
 
+function resetPlanResourceCache() {
+  planResources.value = null
+  resourcesLoadedPathId.value = ''
+}
+
+async function ensurePlanResourcesLoaded(force = false) {
+  if (!planStore.currentPlan?.id) return
+  if (!force && resourcesLoadedPathId.value === planStore.currentPlan.id && planResources.value) return
+  await loadPlanResources()
+}
+
 async function loadPlanResources() {
   if (!projectId.value || !planStore.currentPlan?.id) {
-    planResources.value = null
+    resetPlanResourceCache()
     return
   }
   resourcesLoading.value = true
   try {
     planResources.value = await resourceApi.getPlanResources(projectId.value, planStore.currentPlan.id)
+    resourcesLoadedPathId.value = planStore.currentPlan.id
     if (!selectedStageName.value) {
       selectedStageName.value = planStore.currentPlan.stages[0]?.stage_name || ''
     }
@@ -1082,7 +1100,7 @@ async function loadPlanResources() {
     }
   } catch (e: any) {
     if (!planResources.value) {
-      planResources.value = null
+      resetPlanResourceCache()
     }
     ElMessage.error(e?.response?.data?.error || '加载推荐资源失败')
   } finally {
@@ -1207,9 +1225,10 @@ function handlePreviewError(error: any, fallback: string) {
 async function refreshAfterPlanWrite() {
   if (!projectId.value) return
   await planStore.loadLatest(projectId.value)
+  resetPlanResourceCache()
   await Promise.all([
     explanationState.load(),
-    loadPlanResources(),
+    activeTab.value === 'resources' ? ensurePlanResourcesLoaded(true) : Promise.resolve(),
     loadOverlayPreflight(),
   ])
 }
@@ -1232,16 +1251,16 @@ async function loadPath() {
     await settingsStore.refreshServerStatus().catch(() => undefined)
     await planStore.loadLatest(projectId.value)
     if (projectId.value !== previousProjectId || planStore.currentPlan?.id !== previousPlanId) {
-      planResources.value = null
+      resetPlanResourceCache()
       explanationState.clear()
     }
     await Promise.all([
       explanationState.load(llmExplanationPolish.value),
-      loadPlanResources(),
+      activeTab.value === 'resources' ? ensurePlanResourcesLoaded(true) : Promise.resolve(),
       loadOverlayPreflight(),
     ])
   } catch (e: any) {
-    planResources.value = null
+    resetPlanResourceCache()
     planStore.currentPlan = null
     explanationState.clear()
     clearPreviews()
@@ -1269,10 +1288,16 @@ onMounted(() => {
 })
 
 watch(() => route.query.tool, () => syncAdjustmentToolFromRoute())
+watch(activeTab, (tab) => {
+  if (tab === 'resources') {
+    void ensurePlanResourcesLoaded()
+  }
+})
 watch(projectId, () => loadPath())
 watch(currentPlanId, (nextPlanId, previousPlanId) => {
   if (previousPlanId && nextPlanId !== previousPlanId) {
     clearPreviews()
+    resetPlanResourceCache()
   }
 })
 
@@ -1281,10 +1306,8 @@ async function handleReplan(mode: string) {
   try {
     await planStore.replan(projectId.value, mode as 'progress_aware' | 'profile_update')
     clearPreviews()
-    await Promise.all([
-      explanationState.load(),
-      loadPlanResources(),
-    ])
+    resetPlanResourceCache()
+    await explanationState.load()
     activeTab.value = 'diff'
     ElMessage.success('重规划完成')
   } catch (e: any) {
@@ -1446,15 +1469,48 @@ async function confirmFeedbackPreview() {
   }
 }
 
+function applyPlanResources(data: PlanResourcesResponse) {
+  planResources.value = data
+  resourcesLoadedPathId.value = data.path_id
+  if (!selectedStageName.value) {
+    selectedStageName.value = planStore.currentPlan?.stages[0]?.stage_name || data.stages[0]?.stage_name || ''
+  }
+  if (!selectedNodeId.value) {
+    selectedNodeId.value = selectedStageTasks.value[0]?.node_id || data.stages[0]?.nodes[0]?.node_id || ''
+  }
+}
+
+async function recommendSelectedNodeResources() {
+  if (!projectId.value || !planStore.currentPlan?.id || !selectedNodeId.value) {
+    ElMessage.warning('请先选择目标知识点')
+    return
+  }
+  selectedNodeRecommendLoading.value = true
+  try {
+    const data = await resourceApi.recommendPlanResources(projectId.value, planStore.currentPlan.id, {
+      stage_name: selectedStageName.value,
+      node_id: selectedNodeId.value,
+    })
+    applyPlanResources(data)
+    activeTab.value = 'resources'
+    ElMessage.success('已为当前知识点补充资源')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || '补充当前知识点资源失败')
+  } finally {
+    selectedNodeRecommendLoading.value = false
+  }
+}
+
 async function recommendResources() {
   if (!projectId.value || !planStore.currentPlan?.id) return
   recommendLoading.value = true
   try {
-    planResources.value = await resourceApi.recommendPlanResources(projectId.value, planStore.currentPlan.id)
+    const data = await resourceApi.recommendPlanResources(projectId.value, planStore.currentPlan.id)
+    applyPlanResources(data)
     activeTab.value = 'resources'
-    ElMessage.success('已为当前路径补充知识点资源')
+    ElMessage.success('已批量补充缺资源知识点')
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '自动补充资源失败')
+    ElMessage.error(e?.response?.data?.error || '批量补充资源失败')
   } finally {
     recommendLoading.value = false
   }

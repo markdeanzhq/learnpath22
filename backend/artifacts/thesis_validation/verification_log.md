@@ -1,58 +1,28 @@
-# 测试与验证记录（5.5）
+# 测试与验证记录（毕业论文 v3 口径）
 
-- 变更：`thesis-alignment-review`
-- 记录时间：`2026-04-15T18:29:11Z`
-- 当前代码验证基线：
-  - 后端：`http://127.0.0.1:8010/api/v1`
-  - 前端：`http://127.0.0.1:5173`
-- 对照实例（仅用于解释兼容层）：
-  - 旧后端：`http://127.0.0.1:8000/api/v1`
-  - 旧静态前端：`http://127.0.0.1:8080`
+- 记录时间：`2026-05-04T07:17:32Z`
+- 验证对象：`thesis-validation-v1`
+- 后端基线：`http://127.0.0.1:8010/api/v1`
+- 证据文件：
+  - `backend/artifacts/thesis_validation/latest.json`
+  - `backend/artifacts/thesis_validation/paper_metrics.json`
+  - `backend/artifacts/thesis_validation/report.md`
 
 ## 1. 命令记录
 
-### 1.1 定向测试
-- 命令：`cd backend && .venv/Scripts/python.exe -m pytest tests/test_generate_thesis_validation_evidence.py`
-- 结果：`20 passed`
+### 1.1 启动本地验证后端
 
-### 1.2 论文证据刷新
-- 命令：`cd backend && .venv/Scripts/python.exe scripts/generate_thesis_validation_evidence.py --base-url http://127.0.0.1:8010/api/v1 --runtime-mode auto`
-- 输出文件：
-  - `backend/artifacts/thesis_validation/latest.json`
-  - `backend/artifacts/thesis_validation/paper_metrics.json`
+- 命令：`PYTHONPATH="E:/dailyfile/myfiles/project_all/learnpath322/backend" "E:/dailyfile/myfiles/project_all/learnpath322/backend/.venv/Scripts/python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8010`
+- 状态：`GET /api/v1/health` 返回 `200`
+
+### 1.2 刷新论文验证证据
+
+- 命令：`PYTHONPATH="E:/dailyfile/myfiles/project_all/learnpath322/backend" "E:/dailyfile/myfiles/project_all/learnpath322/backend/.venv/Scripts/python.exe" "E:/dailyfile/myfiles/project_all/learnpath322/backend/scripts/generate_thesis_validation_evidence.py" --base-url http://127.0.0.1:8010/api/v1 --runtime-mode auto`
 - 结果：`9/9 scenarios passed`
+- 引用就绪：`true`
 
-## 2. 当前代码实例与旧实例差异
+## 2. 当前验证口径
 
-### 2.1 当前代码后端（8010）
-- `GET /health/readiness` 直接返回双层预检结构：
-  - `status=degraded`
-  - `ready=false`
-  - `core_ready=true`
-  - `demo_ready=true`
-  - `enhanced_ready=false`
-- `services.graph_sync.status=ok`
-- `services.graph_sync.reason=synced`
-- `validation_contract.readiness_contract.mode=native_dual_layer`
-- `validation_contract.tracking_contract.summary_scope=latest_plan`
-
-### 2.2 旧联调后端（8000）
-- `GET /health/readiness` 仍返回旧聚合结构，只包含 `status`、`ready` 与 `services`
-- 不含 `core_ready/demo_ready/enhanced_ready`
-- 不含 `services.graph_sync`
-- tracking summary 也不是本轮要求的 `latest plan` 口径
-- 因此本轮结构化证据最终以 `8010` 工作区实例为准
-
-### 2.3 前端实例差异
-- `5173` 为 Vite dev server，加载当前前端源码
-- `8080` 为旧静态构建，本轮对照时发现其 Path / Dashboard 缺少“在图谱中定位”按钮
-- 因此前端真实验收以 `5173` 为准
-
-## 3. 结构化证据复核
-
-### 3.1 原始证据 `latest.json`
-- `base_url = http://127.0.0.1:8010/api/v1`
-- `requested_runtime_mode = auto`
 - `resolved_runtime_mode = offline`
 - `uses_online_dependencies = false`
 - `readiness_status = degraded`
@@ -60,39 +30,42 @@
 - `core_ready = true`
 - `demo_ready = true`
 - `enhanced_ready = false`
-- `readiness_contract.mode = native_dual_layer`
-- `readiness_contract.normalized = false`
-- `tracking_contract.summary_scope = latest_plan`
+- `services.graph_sync.status = ok`
+- `services.graph_sync.reason = synced`
+- `services.llm.status = skipped`
+- `services.llm.reason = LLM_API_KEY not configured`
+- `services.search.status = skipped`
+- `services.search.reason = 搜索服务未配置`
+- `tracking_summary_scope = latest_plan`
+
+## 3. 论文引用级指标
+
 - `scenario_count = 9`
 - `successful_scenarios = 9`
 - `failed_scenarios = 0`
 - `all_scenarios_passed = true`
-
-### 3.2 论文引用级指标 `paper_metrics.json`
-- `citation_ready = true`
+- `satisfied_required_edges = 303`
+- `total_required_edges = 303`
 - `dependency_satisfaction_ratio = 1.0`
-- `satisfied_required_edges = 306`
-- `total_required_edges = 306`
 - `average_stage_count = 3.0`
-- `average_total_stage_hours = 61.78`
-- `environment_state.readiness_contract_mode = native_dual_layer`
-- `environment_state.readiness_contract_normalized = false`
-- `environment_state.tracking_summary_scope = latest_plan`
-- `environment_state.service_statuses.graph_sync.status = ok`
-- `environment_state.service_statuses.graph_sync.reason = synced`
+- `average_total_stage_hours = 75.11`
 
-## 4. 真实浏览器复核
+## 4. 场景明细
 
-- Path 页存在“在图谱中定位”按钮
-- Dashboard 页存在“在图谱中定位”按钮
-- 点击后均会跳转到 `Knowledge` 页，并通过 `nodeId` 路由参数聚焦对应节点
-- 本轮样本节点为 `导数与偏导`
-- 该链路证明 Path / Dashboard → Knowledge 的节点定位已可直接演示
+| 场景 ID | 节点数 | 阶段数 | 总时长 | 依赖满足率 |
+|---|---:|---:|---:|---:|
+| `scenario_domain_beginner` | 47 | 3 | 125 | 100.0% |
+| `scenario_domain_intermediate` | 47 | 3 | 125 | 100.0% |
+| `scenario_domain_focused` | 47 | 3 | 125 | 100.0% |
+| `scenario_problem_beginner` | 24 | 3 | 64 | 100.0% |
+| `scenario_problem_intermediate` | 20 | 3 | 54 | 100.0% |
+| `scenario_problem_focused` | 20 | 3 | 54 | 100.0% |
+| `scenario_concept_beginner` | 20 | 3 | 53 | 100.0% |
+| `scenario_concept_intermediate` | 14 | 3 | 38 | 100.0% |
+| `scenario_concept_focused` | 14 | 3 | 38 | 100.0% |
 
-## 5. 结论
+## 5. 证据边界
 
-- [x] `backend/tests/test_generate_thesis_validation_evidence.py` 已通过
-- [x] thesis validation 结构化证据已按当前代码实例重新生成
-- [x] readiness 证据已改为双层语义，并显式记录 `services.graph_sync`
-- [x] tracking summary 证据已改为 `latest plan` 口径
-- [x] 前端节点定位链路已通过真实浏览器复核
+- 本次验证未使用在线 LLM 与搜索服务，论文结论只支撑本地领域知识包、图谱同步、规则规划、解释、进度追踪和重规划主链路。
+- LLM 目标理解、解释润色、扩展候选抽取和在线搜索应在论文中表述为可选增强能力，不作为本次 M1-M5 和 9 场景通过结论的依据。
+- 验证脚本已兼容当前 API 在 LLM 未配置时的受控澄清流程，会使用固定目标文本完成澄清后再创建项目与路径。

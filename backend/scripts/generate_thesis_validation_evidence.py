@@ -212,6 +212,58 @@ def build_preview_error_metadata(preview_response: Any) -> dict[str, Any]:
     }
 
 
+async def resolve_preview_response(
+    client: httpx.AsyncClient,
+    preview_response: dict[str, Any],
+    *,
+    goal_text: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    current = preview_response
+    clarification_evidence: list[dict[str, Any]] = []
+    max_turns = int(current.get("max_turns") or 5)
+
+    while current.get("result_type") == "answer_clarification" and len(clarification_evidence) < max_turns:
+        questions = current.get("questions") if isinstance(current.get("questions"), list) else []
+        question = questions[0] if questions and isinstance(questions[0], dict) else {}
+        session_id = str(current.get("clarification_session_id") or "")
+        question_id = str(question.get("question_id") or "")
+        if not session_id or not question_id:
+            break
+
+        answer_response = await request_json(
+            client,
+            "POST",
+            f"/goal-resolution/clarifications/{session_id}/answers",
+            payload={"answers": [{"question_id": question_id, "free_text": goal_text}]},
+        )
+        coverage_response = answer_response.get("coverage_response")
+        clarification_evidence.append({
+            "clarification_session_id": session_id,
+            "question_id": question_id,
+            "turn_count": answer_response.get("turn_count"),
+            "status": answer_response.get("status"),
+            "coverage_response_type": (
+                coverage_response.get("result_type") if isinstance(coverage_response, dict) else None
+            ),
+        })
+        if isinstance(coverage_response, dict):
+            current = coverage_response
+            break
+        if answer_response.get("status") != "active":
+            current = answer_response if isinstance(answer_response, dict) else current
+            break
+        current = {
+            "result_type": "answer_clarification",
+            "clarification_session_id": answer_response.get("clarification_session_id"),
+            "questions": answer_response.get("questions", []),
+            "turn_count": answer_response.get("turn_count"),
+            "max_turns": answer_response.get("max_turns", max_turns),
+        }
+        max_turns = int(current.get("max_turns") or max_turns)
+
+    return current, clarification_evidence
+
+
 def ensure_readiness_service(
     service: dict[str, Any] | None,
     fallback: dict[str, Any],
@@ -1075,6 +1127,13 @@ async def run_scenario(
                 "domain": project_payload.get("domain", "machine_learning"),
             },
         )
+        preview_response, clarification_evidence = await resolve_preview_response(
+            client,
+            preview_response,
+            goal_text=project_payload["goal_text"],
+        )
+        if clarification_evidence:
+            result["clarification_evidence"] = clarification_evidence
         preview_error = build_preview_error_metadata(preview_response)
         if (
             preview_error["missing_fields"]

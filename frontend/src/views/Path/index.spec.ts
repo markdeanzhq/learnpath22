@@ -781,6 +781,21 @@ describe('Path page goal reconfirm flow', () => {
     expect(vm.explanation.node_explanations[0].node_id).toBe('node-fresh')
   })
 
+  it('loads plan resources lazily when the resource tab opens', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    expect(resourceGetPlanResourcesMock).not.toHaveBeenCalled()
+
+    ;(wrapper.vm as any).activeTab = 'resources'
+    await nextTick()
+    await flushPromises()
+
+    expect(resourceGetPlanResourcesMock).toHaveBeenCalledWith('project-001', 'plan-001')
+    expect(wrapper.text()).toContain('补充当前知识点资源')
+    expect(wrapper.text()).toContain('批量补充缺资源知识点')
+  })
+
   it('keeps existing resources when refresh fails', async () => {
     resourceGetPlanResourcesMock.mockResolvedValueOnce(createResourceResponse('已保存推荐资源'))
 
@@ -788,6 +803,9 @@ describe('Path page goal reconfirm flow', () => {
     await flushPromises()
 
     const vm = wrapper.vm as any
+    vm.activeTab = 'resources'
+    await nextTick()
+    await flushPromises()
     expect(vm.planResources.stages[0].nodes[0].resources[0].title).toBe('已保存推荐资源')
 
     resourceGetPlanResourcesMock.mockRejectedValueOnce({ response: { data: { error: '资源读取失败' } } })
@@ -844,6 +862,10 @@ describe('Path page goal reconfirm flow', () => {
     await flushPromises()
 
     const vm = wrapper.vm as any
+    vm.activeTab = 'resources'
+    await nextTick()
+    await flushPromises()
+
     expect(wrapper.text()).toContain('知识点资源工作台')
     expect(wrapper.text()).toContain('资源默认跟随知识点展示')
     expect(wrapper.text()).toContain('搜索并绑定入口只服务当前选中的阶段与知识点')
@@ -865,6 +887,41 @@ describe('Path page goal reconfirm flow', () => {
     expect(vm.selectedNodeId).toBe('ml-a02')
     expect(vm.selectedNodeResourceCount).toBe(0)
     expect(wrapper.text()).toContain('该知识点暂无资源，可自动补充或搜索绑定')
+  })
+
+  it('recommends resources for the selected node only', async () => {
+    resourceGetPlanResourcesMock.mockResolvedValueOnce({
+      path_id: 'plan-001',
+      stages: [
+        {
+          stage_name: '基础准备',
+          stage_resources: [],
+          nodes: [
+            {
+              node_id: 'ml-a01',
+              node_name: '机器学习导论',
+              resources: [],
+            },
+          ],
+        },
+      ],
+    })
+    resourceRecommendMock.mockResolvedValueOnce(createResourceResponse('当前知识点补充资料'))
+    const wrapper = mountPathIndex()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.activeTab = 'resources'
+    await nextTick()
+    await flushPromises()
+
+    await vm.recommendSelectedNodeResources()
+    await flushPromises()
+
+    expect(resourceRecommendMock).toHaveBeenCalledWith('project-001', 'plan-001', {
+      stage_name: '基础准备',
+      node_id: 'ml-a01',
+    })
+    expect(vm.planResources.stages[0].nodes[0].resources[0].title).toBe('当前知识点补充资料')
   })
 
   it('redirects to project-level reconfirm when replan hits GOAL_TARGETS_REMOVED', async () => {

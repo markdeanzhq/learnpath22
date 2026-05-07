@@ -54,6 +54,16 @@ async def create_resource_binding(
     return binding
 
 
+async def create_resource_bindings(
+    db: AsyncSession,
+    bindings: list[dict[str, object]],
+) -> None:
+    if not bindings:
+        return
+    db.add_all(ResourceBinding(**binding) for binding in bindings)
+    await db.commit()
+
+
 async def delete_auto_resource_bindings(
     db: AsyncSession,
     *,

@@ -17,12 +17,10 @@ async def _set_resource_preference(db_session, project_id: str, resource_prefere
     await db_session.commit()
 
 
-async def _replace_plan_with_single_missing_node(
+async def _replace_plan_with_missing_nodes(
     db_session,
     plan_id: str,
-    *,
-    node_id: str,
-    node_name: str,
+    nodes: list[tuple[str, str]],
 ) -> None:
     result = await db_session.execute(select(LearningPath).where(LearningPath.id == plan_id))
     path = result.scalar_one()
@@ -37,14 +35,25 @@ async def _replace_plan_with_single_missing_node(
                     "difficulty": 1,
                     "importance": 1,
                     "estimated_hours": 1.0,
-                    "order_in_stage": 0,
+                    "order_in_stage": index,
                 }
+                for index, (node_id, node_name) in enumerate(nodes)
             ],
             **{stage_name: [] for stage_name in list(stages.keys())[1:]},
         },
         ensure_ascii=False,
     )
     await db_session.commit()
+
+
+async def _replace_plan_with_single_missing_node(
+    db_session,
+    plan_id: str,
+    *,
+    node_id: str,
+    node_name: str,
+) -> None:
+    await _replace_plan_with_missing_nodes(db_session, plan_id, [(node_id, node_name)])
 
 
 async def test_get_plan_resources_returns_node_first_static_resources(client, project, plan):
@@ -227,6 +236,87 @@ async def test_recommend_plan_resources_keeps_nonmatching_preference_results(
     )
     assert item["preference_match"] == "available"
     assert item["score"] == 0.5
+
+
+async def test_recommend_plan_resources_can_target_current_node_only(
+    client,
+    db_session,
+    project,
+    plan,
+):
+    await _replace_plan_with_missing_nodes(
+        db_session,
+        plan["id"],
+        [
+            ("resource_test_target_node", "目标缺资源知识点"),
+            ("resource_test_other_node", "其他缺资源知识点"),
+        ],
+    )
+
+    async def mock_search(query: str, max_results: int):
+        return [
+            {
+                "title": f"{query} 定向资料",
+                "url": "https://example.com/target-resource",
+                "snippet": "只应补充目标知识点。",
+                "score": 0.5,
+            }
+        ]
+
+    search_mock = AsyncMock(side_effect=mock_search)
+    with patch("app.services.search_service.search", new=search_mock):
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/plans/{plan['id']}/resources/recommend",
+            params={"node_id": "resource_test_target_node"},
+        )
+
+    assert resp.status_code == 200
+    assert search_mock.await_count == 1
+    searched_query = search_mock.await_args.args[0]
+    assert "目标缺资源知识点" in searched_query
+    assert "其他缺资源知识点" not in searched_query
+    target_node = next(
+        node
+        for stage in resp.json()["stages"]
+        for node in stage["nodes"]
+        if node["node_id"] == "resource_test_target_node"
+    )
+    other_node = next(
+        node
+        for stage in resp.json()["stages"]
+        for node in stage["nodes"]
+        if node["node_id"] == "resource_test_other_node"
+    )
+    assert len(target_node["resources"]) == 1
+    assert other_node["resources"] == []
+
+
+async def test_recommend_plan_resources_limits_batch_auto_search_nodes(
+    client,
+    db_session,
+    project,
+    plan,
+):
+    await _replace_plan_with_missing_nodes(
+        db_session,
+        plan["id"],
+        [(f"resource_test_batch_node_{index}", f"批量缺资源知识点 {index}") for index in range(8)],
+    )
+    search_mock = AsyncMock(return_value=[
+        {
+            "title": "批量补充资料",
+            "url": "https://example.com/batch-resource",
+            "snippet": "批量补充结果。",
+            "score": 0.5,
+        }
+    ])
+    with patch("app.services.search_service.search", new=search_mock):
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/plans/{plan['id']}/resources/recommend"
+        )
+
+    assert resp.status_code == 200
+    assert search_mock.await_count == 6
 
 
 async def test_bind_manual_resource_to_node(client, project, plan):

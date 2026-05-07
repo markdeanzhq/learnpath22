@@ -1,6 +1,7 @@
 """路径后增强式资源推荐服务"""
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -11,6 +12,7 @@ from app.repositories.plan_repository import get_plan_by_id
 from app.repositories.profile_repository import get_latest_profile
 from app.repositories.resource_repository import (
     create_resource_binding,
+    create_resource_bindings,
     list_resource_bindings,
 )
 from app.repositories.project_repository import get_project
@@ -24,7 +26,8 @@ from app.services import search_service
 from app.services.domain_pack_service import get_domain_pack_service
 
 AUTO_SEARCH_RESULTS_PER_NODE = 2
-MAX_AUTO_SEARCH_NODES = 12
+MAX_AUTO_SEARCH_NODES = 6
+AUTO_SEARCH_CONCURRENCY = 3
 RESOURCE_PREFERENCE_HINTS = {
     "mixed": "图文 视频 代码 综合学习资料",
     "text": "文字讲义 教材 笔记 tutorial notes",
@@ -286,11 +289,83 @@ def _has_dynamic_node_resource(resources: list[Any], node_id: str) -> bool:
     return any(item.node_id == node_id for item in resources)
 
 
+def _path_has_stage(stages: list[dict[str, Any]], stage_name: str) -> bool:
+    return any(stage.get("stage_name") == stage_name for stage in stages)
+
+
+def _path_has_node(stages: list[dict[str, Any]], node_id: str, stage_name: str | None = None) -> bool:
+    return any(
+        task.get("node_id") == node_id
+        for stage in stages
+        if not stage_name or stage.get("stage_name") == stage_name
+        for task in stage.get("tasks", [])
+    )
+
+
+def _resource_search_targets(
+    stages: list[dict[str, Any]],
+    *,
+    pack: Any,
+    dynamic_resources: list[Any],
+    resource_preference: str,
+    target_node_id: str | None = None,
+    target_stage_name: str | None = None,
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    limit = 1 if target_node_id else MAX_AUTO_SEARCH_NODES
+    targets: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for stage in stages:
+        if target_stage_name and stage.get("stage_name") != target_stage_name:
+            continue
+        for task in stage.get("tasks", []):
+            node_id = task.get("node_id")
+            if target_node_id and node_id != target_node_id:
+                continue
+            if (
+                not node_id
+                or _build_static_node_resources(node_id, pack, resource_preference)
+                or _has_dynamic_node_resource(dynamic_resources, node_id)
+            ):
+                continue
+            targets.append((stage, task))
+            if len(targets) >= limit:
+                return targets
+    return targets
+
+
+async def _search_node_resources(
+    project: Any,
+    stage: dict[str, Any],
+    task: dict[str, Any],
+    resource_preference: str,
+    semaphore: asyncio.Semaphore,
+) -> list[dict[str, object]]:
+    async with semaphore:
+        query = _build_node_query(project, stage, task, resource_preference)
+        results = await search_service.search(query, max_results=AUTO_SEARCH_RESULTS_PER_NODE)
+    records: list[dict[str, object]] = []
+    for item in results:
+        _match, _reason, boost = _resource_preference_metadata(item, resource_preference)
+        records.append(
+            {
+                "stage_name": stage["stage_name"],
+                "node_id": task.get("node_id"),
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("snippet"),
+                "score": _score_with_preference(item.get("score"), boost),
+                "source_type": "tavily_auto",
+            }
+        )
+    return records
+
+
 async def recommend_plan_resources(
     db: AsyncSession,
     *,
     project_id: str,
     path_id: str,
+    node_id: str | None = None,
+    stage_name: str | None = None,
 ) -> PlanResourcesResponse:
     project = await get_project(db, project_id)
     if not project:
@@ -302,41 +377,38 @@ async def recommend_plan_resources(
 
     pack = get_domain_pack_service(project.domain)
     stages = _load_path_stage_list(path)
+    if stage_name and not _path_has_stage(stages, stage_name):
+        raise AppError(code=422, message="目标阶段不存在")
+    if node_id and not _path_has_node(stages, node_id, stage_name):
+        raise AppError(code=422, message="目标知识点不存在于当前路径")
+
     dynamic_resources = await list_resource_bindings(db, project_id, path_id)
     profile = await get_latest_profile(db, project_id)
     resource_preference = _resource_preference_from_profile(profile)
-
-    searched_node_count = 0
-    for stage in stages:
-        for task in stage.get("tasks", []):
-            node_id = task.get("node_id")
-            if (
-                not node_id
-                or _build_static_node_resources(node_id, pack, resource_preference)
-                or _has_dynamic_node_resource(dynamic_resources, node_id)
-            ):
-                continue
-            if searched_node_count >= MAX_AUTO_SEARCH_NODES:
-                break
-            query = _build_node_query(project, stage, task, resource_preference)
-            results = await search_service.search(query, max_results=AUTO_SEARCH_RESULTS_PER_NODE)
-            searched_node_count += 1
-            for item in results:
-                _match, _reason, boost = _resource_preference_metadata(item, resource_preference)
-                await create_resource_binding(
-                    db,
-                    project_id=project_id,
-                    path_id=path_id,
-                    stage_name=stage["stage_name"],
-                    node_id=node_id,
-                    title=item.get("title", ""),
-                    url=item.get("url", ""),
-                    snippet=item.get("snippet"),
-                    score=_score_with_preference(item.get("score"), boost),
-                    source_type="tavily_auto",
-                )
-        if searched_node_count >= MAX_AUTO_SEARCH_NODES:
-            break
+    targets = _resource_search_targets(
+        stages,
+        pack=pack,
+        dynamic_resources=dynamic_resources,
+        resource_preference=resource_preference,
+        target_node_id=node_id,
+        target_stage_name=stage_name,
+    )
+    if targets:
+        semaphore = asyncio.Semaphore(AUTO_SEARCH_CONCURRENCY)
+        search_batches = await asyncio.gather(*(
+            _search_node_resources(project, stage, task, resource_preference, semaphore)
+            for stage, task in targets
+        ))
+        bindings = [
+            {
+                "project_id": project_id,
+                "path_id": path_id,
+                **binding,
+            }
+            for batch in search_batches
+            for binding in batch
+        ]
+        await create_resource_bindings(db, bindings)
 
     return await get_plan_resources(db, project_id=project_id, path_id=path_id)
 
