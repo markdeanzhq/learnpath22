@@ -12,6 +12,10 @@ def gen_uuid() -> str:
     return str(uuid.uuid4())
 
 
+def _naive_utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -21,7 +25,7 @@ class RuntimeSetting(Base):
 
     setting_key: Mapped[str] = mapped_column(String(50), primary_key=True)
     setting_value: Mapped[str] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class LearningProject(Base):
@@ -34,8 +38,8 @@ class LearningProject(Base):
     domain: Mapped[str] = mapped_column(String(50), default="machine_learning")
     status: Mapped[str] = mapped_column(String(20), default="active")
     path_mode: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, default="standard")
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
     # confirmed-resolution fields (task 1.2) — all nullable for backward compatibility
     requested_goal_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
@@ -74,7 +78,7 @@ class LearnerProfile(Base):
     persona_evidence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     raw_answers_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     collector_trace_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
 
 
 class KnowledgeSource(Base):
@@ -86,7 +90,7 @@ class KnowledgeSource(Base):
     title: Mapped[str] = mapped_column(String(200))
     source_type: Mapped[str] = mapped_column(String(50))
     content_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
 
 
 class LearningPath(Base):
@@ -99,7 +103,7 @@ class LearningPath(Base):
     audit_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     budget_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     total_hours: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
 
 
 class PathStage(Base):
@@ -139,8 +143,8 @@ class PlanExplanationCache(Base):
     plan_version: Mapped[int] = mapped_column(Integer)
     polish_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     explanation_json: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class TrackingEvent(Base):
@@ -151,7 +155,7 @@ class TrackingEvent(Base):
     node_id: Mapped[str] = mapped_column(String(50))
     event_type: Mapped[str] = mapped_column(String(20))
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
 
 
 class GraphReviewStatus(Base):
@@ -163,7 +167,7 @@ class GraphReviewStatus(Base):
     element_type: Mapped[str] = mapped_column(String(10))  # 'node' or 'edge'
     element_id: Mapped[str] = mapped_column(String(100))   # node_id or "source->target::type"
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/confirmed/removed
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ResourceBinding(Base):
@@ -180,7 +184,7 @@ class ResourceBinding(Base):
     score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), default="manual")
     is_selected: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
 
 
 class ProjectOverlaySource(Base):
@@ -204,8 +208,8 @@ class ProjectOverlaySource(Base):
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     quality_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ProjectOverlayExtractionSession(Base):
@@ -222,8 +226,8 @@ class ProjectOverlayExtractionSession(Base):
     warnings_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     provenance_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ProjectOverlayNode(Base):
@@ -261,8 +265,8 @@ class ProjectOverlayNode(Base):
     validation_errors_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     canonical_payload_hash: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ProjectOverlayEdge(Base):
@@ -292,8 +296,8 @@ class ProjectOverlayEdge(Base):
     validation_errors_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     canonical_payload_hash: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ProjectOverlayResource(Base):
@@ -324,8 +328,8 @@ class ProjectOverlayResource(Base):
     validation_errors_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     canonical_payload_hash: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ProjectOverlayResourceBinding(Base):
@@ -348,8 +352,8 @@ class ProjectOverlayResourceBinding(Base):
     target_id: Mapped[str] = mapped_column(Text)
     source_result_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     binding_source: Mapped[str] = mapped_column(String(30), default="overlay")
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ProjectOverlayProjectionState(Base):
@@ -363,8 +367,8 @@ class ProjectOverlayProjectionState(Base):
     overlay_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     projected_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ProjectOverlayPromotionBatch(Base):
@@ -381,8 +385,8 @@ class ProjectOverlayPromotionBatch(Base):
     resulting_pack_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     preview_report_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class ProjectOverlayPromotionItem(Base):
@@ -407,8 +411,8 @@ class ProjectOverlayPromotionItem(Base):
     source_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="pending")
     provenance_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 class PersistedSearchResult(Base):
@@ -435,12 +439,8 @@ class PersistedSearchResult(Base):
     quality_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     is_selected: Mapped[bool] = mapped_column(Boolean, default=True)
     metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-def _naive_utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    created_at: Mapped[datetime] = mapped_column(default=_naive_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_naive_utc_now, onupdate=_naive_utc_now)
 
 
 def _default_expires_at() -> datetime:

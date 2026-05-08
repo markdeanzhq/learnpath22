@@ -355,13 +355,16 @@ npm run build
 ```
 
 当前已验证结果：
-- 后端回归测试：`226 passed`（含论文验证指标评估 11 项 + 权重消融 6 项 + 解释润色 5 项）
-- 前端生产构建：通过（main chunk 472.83 kB / gzip 152.12 kB，与基线一致）
+- 后端全量测试：`696 passed`
+- 后端覆盖率：约 `77%`
+- 前端 Vitest：`249 passed`
+- 前端生产构建：通过
+- Bundle gzip 预算：`495.12KB / 650KB`，通过
 
 ### 论文交付物
 
-- `document/毕业论文_v2.md`：论文 v2 Markdown 稿（8 章 + 参考文献 + 致谢 + 附录 A/B，约 1400 行）
-- `document/毕业论文_v2.docx`：pandoc 转换产出，已套用 `本科毕业论文模板样例.docx` 样式
+- `document/毕业论文_v4.md`：论文 v4 Markdown 定稿（当前论文交付口径）
+- `document/毕业论文_v4.docx`：如需 Word 版，按 `document/template_notes.md` 的 pandoc 约定由 v4 Markdown 生成
 - `document/thesis_assets/final_reports/{G1,G2,G3}/`：论文第 7 章量化指标原始报表
 - `document/thesis_assets/final_ablation/`：论文第 7 章权重消融矩阵与 Kendall τ 表
 - `document/template_notes.md`：论文模板样式提取说明与 pandoc 转换约定

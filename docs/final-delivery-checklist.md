@@ -1,8 +1,8 @@
 # 最终交付清单
 
-> 生成时间：2026-04-19
-> 对应 change：`thesis-finalization`
-> 当前状态：除用户侧验收与归档外，其余工程交付已完成。
+> 更新时间：2026-05-08
+> 对应阶段：毕业设计最终交付收口
+> 当前状态：工程主链路、论文 v4 Markdown 定稿与自动化验证已完成；答辩前仍需用户侧完整演示、截图留证与 Word 版终检。
 
 ## 一、系统演示交付
 
@@ -14,7 +14,7 @@
 ### 2. 前端能力
 - 项目创建、画像采集、路径查看、解释面板、Knowledge overlay 审核、搜索页、设置页、Dashboard 均已可用
 - Knowledge overlay 已支持候选诊断、批量确认、批量纳入规划，并可从预检状态跳转到 Path 的基础/增强图谱对比入口
-- `npm run build` 已通过
+- `npm run build` 已通过，Bundle gzip 预算为 `495.12KB / 650KB`
 
 ### 3. 演示建议入口
 - 前端：`http://localhost:5173`
@@ -24,9 +24,10 @@
 ## 二、论文交付
 
 ### 1. 论文正文
-- Markdown 源文件：`document/毕业论文_v2.md`
-- Word 产物：`document/毕业论文_v2.docx`
+- Markdown 源文件：`document/毕业论文_v4.md`
+- Word 产物：当前仓库仅确认 v4 Markdown；如需提交 Word 版，应由 v4 Markdown 按 `document/template_notes.md` 生成并终检
 - 当前已同步到 Domain Pack v1.3.0、LLM/Overlay 增强、画像扩展与最新评测/消融口径
+- 论文结论边界：领域型目标以完整主干覆盖为主，个性化重点放在概念型/问题型、排序解释、预算提示和资源推荐
 
 ### 2. 论文图表与证据源
 - `document/thesis_assets/final_reports/`
@@ -52,7 +53,7 @@
 - Domain Pack 是正式规划事实源，Neo4j 是展示/审核 projection，SQLite 保存业务状态与 Project Overlay 真源
 - LLM 用于目标理解、画像问卷、overlay 抽取预览与解释润色，不直接写正式图谱或正式路径
 - 推荐演示主线：机器学习基础主链、逻辑回归问题型对照、随机森林扩展草稿、候选诊断与批量纳入规划、基础/增强路径对比
-- 关键结论：G1 默认领域闭包覆盖 47 个 active nodes，G2/G3 保持依赖满足，解释链与真实祖先闭包一致
+- 关键结论：G1 默认领域闭包覆盖 47 个 active nodes，G2/G3 保持依赖满足，解释链与真实祖先闭包一致；不把 G1 节点集合差异作为主要个性化证据
 
 ## 四、画像资源闭环演示 Checklist
 
@@ -72,17 +73,17 @@
 ## 五、仍需用户参与的收尾项
 
 ### 待用户执行
-- [ ] 按 `README.md` 第 12 节跑一遍完整演示流程
-- [ ] 审核 `document/毕业论文_v2.docx` 初稿并给出反馈
+- [ ] 按 `README.md` 第 12 节跑一遍完整演示流程并截图留证
+- [ ] 如需 Word 版提交，由 `document/毕业论文_v4.md` 生成 docx 后做格式终检
 
 ### 待用户确认后再做
-- [ ] 将 `openspec/changes/thesis-finalization/` 归档到 `openspec/changes/archive/`
-- [ ] 更新 memory 中的项目进度状态
+- [ ] 归档仍停留在活跃目录但任务已完成的 OpenSpec change
+- [ ] 根据最终提交状态更新 memory 中的项目进度状态
 
 ## 六、建议的最终收尾顺序
 
-1. 用户跑完整演示流程（对应 7.3）
-2. 用户审核论文 docx（对应 7.6）
-3. 根据反馈决定是否还需小修
-4. 确认无误后归档 `thesis-finalization`
+1. 用户跑完整演示流程并截图留证
+2. 如需 Word 版提交，由论文 v4 Markdown 生成 docx 并做格式终检
+3. 根据演示和格式检查反馈决定是否还需小修
+4. 确认无误后归档已完成但未归档的 OpenSpec change
 5. 更新 memory/project-progress
