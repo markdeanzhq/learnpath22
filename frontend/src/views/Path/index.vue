@@ -491,23 +491,26 @@
 
                 <section class="resource-focus-layout">
                   <aside class="resource-node-list" aria-label="按知识点选择资源">
-                    <section v-for="stage in planResources.stages" :key="stage.stage_name" class="resource-stage-group">
-                      <header>
-                        <strong>{{ stage.stage_name }}</strong>
-                        <el-tag size="small" type="info">{{ countStageResources(stage) }} 条</el-tag>
-                      </header>
-                      <button
-                        v-for="node in stage.nodes"
-                        :key="node.node_id"
-                        type="button"
-                        class="resource-node-button"
-                        :class="{ active: selectedNodeId === node.node_id }"
-                        @click="selectResourceNode(stage.stage_name, node.node_id)"
+                    <el-collapse v-model="activeResourceNodeStages" class="resource-node-stage-collapse">
+                      <el-collapse-item
+                        v-for="stage in planResources.stages"
+                        :key="stage.stage_name"
+                        :title="resourceStageCollapseTitle(stage)"
+                        :name="stage.stage_name"
                       >
-                        <strong>{{ node.node_name }}</strong>
-                        <span>{{ node.resources.length ? `${node.resources.length} 条资源` : '待补充资源' }}</span>
-                      </button>
-                    </section>
+                        <button
+                          v-for="node in stage.nodes"
+                          :key="node.node_id"
+                          type="button"
+                          class="resource-node-button"
+                          :class="{ active: selectedNodeId === node.node_id }"
+                          @click="selectResourceNode(stage.stage_name, node.node_id)"
+                        >
+                          <strong>{{ node.node_name }}</strong>
+                          <span>{{ node.resources.length ? `${node.resources.length} 条资源` : '待补充资源' }}</span>
+                        </button>
+                      </el-collapse-item>
+                    </el-collapse>
                   </aside>
 
                   <section class="resource-node-panel">
@@ -537,7 +540,7 @@
                   </section>
                 </section>
 
-                <el-collapse>
+                <el-collapse v-model="activeResourceOverviewStages" class="resource-overview-collapse">
                   <el-collapse-item
                     v-for="stage in planResources.stages"
                     :key="stage.stage_name"
@@ -767,6 +770,7 @@ const STALE_PREVIEW_ERRORS = new Set([
   'PROFILE_DRIFT',
   'PARAMETER_DRIFT',
 ])
+const DEFAULT_RESOURCE_STAGE_NAME = '基础准备'
 
 const route = useRoute()
 const router = useRouter()
@@ -838,6 +842,8 @@ const selectedNodeRecommendLoading = ref(false)
 const bindLoading = ref(false)
 const selectedStageName = ref('')
 const selectedNodeId = ref('')
+const activeResourceNodeStages = ref<string[]>([])
+const activeResourceOverviewStages = ref<string[]>([])
 const activeAdjustmentTool = ref<AdjustmentTool>('variants')
 const variantPreview = ref<VariantPreviewSessionResponse | null>(null)
 const selectedVariantId = ref('')
@@ -1071,6 +1077,31 @@ const missingResourceNodeCount = computed(() => (
 ))
 const resourceLoadingText = computed(() => '正在读取已绑定资源...')
 
+function defaultResourceStageName(stages: StageResourceGroup[]) {
+  return stages.find((stage) => stage.stage_name === DEFAULT_RESOURCE_STAGE_NAME)?.stage_name
+    || stages[0]?.stage_name
+    || ''
+}
+
+function syncResourceStageCollapse(stages: StageResourceGroup[]) {
+  const availableStageNames = new Set(stages.map((stage) => stage.stage_name))
+  const fallbackStageName = defaultResourceStageName(stages)
+  activeResourceNodeStages.value = activeResourceNodeStages.value.filter(
+    (stageName) => availableStageNames.has(stageName),
+  )
+  activeResourceOverviewStages.value = activeResourceOverviewStages.value.filter(
+    (stageName) => availableStageNames.has(stageName),
+  )
+  if (!activeResourceNodeStages.value.length && fallbackStageName) {
+    activeResourceNodeStages.value = [fallbackStageName]
+  }
+}
+
+function ensureResourceStageExpanded(stageName: string) {
+  if (!stageName || activeResourceNodeStages.value.includes(stageName)) return
+  activeResourceNodeStages.value = [...activeResourceNodeStages.value, stageName]
+}
+
 async function loadOverlayPreflight() {
   if (!projectId.value) {
     overlayPreflight.value = null
@@ -1086,6 +1117,8 @@ async function loadOverlayPreflight() {
 function resetPlanResourceCache() {
   planResources.value = null
   resourcesLoadedPathId.value = ''
+  activeResourceNodeStages.value = []
+  activeResourceOverviewStages.value = []
 }
 
 async function ensurePlanResourcesLoaded(force = false) {
@@ -1103,6 +1136,7 @@ async function loadPlanResources() {
   try {
     planResources.value = await resourceApi.getPlanResources(projectId.value, planStore.currentPlan.id)
     resourcesLoadedPathId.value = planStore.currentPlan.id
+    syncResourceStageCollapse(planResources.value.stages)
     if (!selectedStageName.value) {
       selectedStageName.value = planStore.currentPlan.stages[0]?.stage_name || ''
     }
@@ -1483,6 +1517,7 @@ async function confirmFeedbackPreview() {
 function applyPlanResources(data: PlanResourcesResponse) {
   planResources.value = data
   resourcesLoadedPathId.value = data.path_id
+  syncResourceStageCollapse(data.stages)
   if (!selectedStageName.value) {
     selectedStageName.value = planStore.currentPlan?.stages[0]?.stage_name || data.stages[0]?.stage_name || ''
   }
@@ -1589,6 +1624,7 @@ const selectedStageTasks = computed(() => (
 ))
 
 watch(selectedStageName, () => {
+  ensureResourceStageExpanded(selectedStageName.value)
   if (!selectedStageTasks.value.some((task) => task.node_id === selectedNodeId.value)) {
     selectedNodeId.value = selectedStageTasks.value[0]?.node_id || ''
   }
@@ -1597,6 +1633,12 @@ watch(selectedStageName, () => {
 function selectResourceNode(stageName: string, nodeId: string) {
   selectedStageName.value = stageName
   selectedNodeId.value = nodeId
+  ensureResourceStageExpanded(stageName)
+}
+
+function resourceStageCollapseTitle(stage: StageResourceGroup) {
+  const resourceCount = countStageResources(stage)
+  return `${stage.stage_name} · ${stage.nodes.length} 个知识点 · ${resourceCount} 条资源`
 }
 
 function countStageResources(stage: StageResourceGroup) {
@@ -2154,15 +2196,24 @@ function shortHash(value?: string | null) {
   border-radius: 14px;
   background: var(--el-fill-color-light);
 }
-.resource-stage-group + .resource-stage-group {
-  margin-top: 14px;
+.resource-node-stage-collapse,
+.resource-overview-collapse {
+  border-top: 0;
+  border-bottom: 0;
 }
-.resource-stage-group header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
+.resource-node-stage-collapse :deep(.el-collapse-item__header) {
+  min-height: 42px;
+  height: auto;
+  padding: 8px 0;
+  background: transparent;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.resource-node-stage-collapse :deep(.el-collapse-item__wrap) {
+  background: transparent;
+}
+.resource-node-stage-collapse :deep(.el-collapse-item__content) {
+  padding-bottom: 12px;
 }
 .resource-node-button {
   width: 100%;

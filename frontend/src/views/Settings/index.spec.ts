@@ -127,7 +127,7 @@ describe('Settings readiness display', () => {
     expect(wrapper.text()).toContain('本地主链')
     expect(wrapper.text()).toContain('项目创建、图谱浏览与路径规划优先走 SQLite 本地读模型和 Domain Pack')
     expect(wrapper.text()).toContain('Neo4j 投影')
-    expect(wrapper.text()).toContain('仅用于显式同步、投影诊断和推广流程，不阻塞本地主链演示')
+    expect(wrapper.text()).toContain('仅用于显式同步、投影诊断和图谱展示/审核流程，不阻塞本地主链演示')
     expect(wrapper.text()).toContain('在线增强')
     expect(wrapper.text()).toContain('LLM 润色、抽取预览和资料搜索能力')
     expect(wrapper.text()).toContain('本地图谱浏览与路径规划主链优先依赖 SQLite 和本地 Domain Pack')

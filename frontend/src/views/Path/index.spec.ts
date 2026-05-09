@@ -808,6 +808,46 @@ describe('Path page goal reconfirm flow', () => {
     expect(wrapper.text()).toContain('批量补充缺资源知识点')
   })
 
+  it('defaults node stage collapse to foundation and keeps overview collapsed', async () => {
+    resourceGetPlanResourcesMock.mockResolvedValueOnce({
+      path_id: 'plan-001',
+      stages: [
+        {
+          stage_name: '核心掌握',
+          stage_resources: [],
+          nodes: [{ node_id: 'ml-b01', node_name: '核心节点', resources: [] }],
+        },
+        {
+          stage_name: '基础准备',
+          stage_resources: [],
+          nodes: [{ node_id: 'ml-a01', node_name: '基础节点', resources: [] }],
+        },
+        {
+          stage_name: '应用突破',
+          stage_resources: [],
+          nodes: [{ node_id: 'ml-c01', node_name: '应用节点', resources: [] }],
+        },
+      ],
+    })
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    vm.activeTab = 'resources'
+    await nextTick()
+    await flushPromises()
+
+    expect(vm.activeResourceNodeStages).toEqual(['基础准备'])
+    expect(vm.activeResourceOverviewStages).toEqual([])
+    expect(wrapper.text()).toContain('基础准备 · 1 个知识点 · 0 条资源')
+
+    vm.selectResourceNode('应用突破', 'ml-c01')
+    await nextTick()
+
+    expect(vm.activeResourceNodeStages).toContain('应用突破')
+  })
+
   it('keeps existing resources when refresh fails', async () => {
     resourceGetPlanResourcesMock.mockResolvedValueOnce(createResourceResponse('已保存推荐资源'))
 

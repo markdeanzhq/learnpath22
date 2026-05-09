@@ -13,7 +13,9 @@ from app.core.config import get_llm_config, get_llm_polish_enabled
 from app.planner.scoring import (
     DEFAULT_MODE_ADJUSTMENTS,
     DEFAULT_PRIORITY_WEIGHTS,
+    classify_reinforcement_type,
     decompose_priority_score,
+    decompose_reinforce_score,
 )
 from app.schemas.explanation import (
     AuditHighlight,
@@ -92,6 +94,19 @@ _BUDGET_STATUS_LABELS: dict[str, str] = {
     "over_budget_required_closure": "硬前置超预算",
 }
 
+_REINFORCEMENT_TYPE_LABELS: dict[str, str] = {
+    "ability_gap": "能力短板补强",
+    "foundation_bridge": "基础桥接补强",
+}
+
+_REINFORCE_COMPONENT_LABELS: dict[str, str] = {
+    "ability_gap": "能力差距",
+    "foundation": "基础节点",
+    "bridge": "桥接价值",
+    "main_path": "主路径",
+    "beginner": "初学者支撑",
+}
+
 _GOAL_TYPE_LABELS: dict[str, str] = {
     "domain": "领域型",
     "concept": "概念型",
@@ -157,6 +172,64 @@ def _pick_weakest_dimension(gap: dict[str, float]) -> str:
         if values[dim] == max_val:
             return _DIM_LABEL[dim]
     return _DIM_LABEL[_WEAKEST_DIM_PRIORITY[0]]
+
+
+def _reinforcement_type_label(value: str | None) -> str:
+    return _label_value(value, _REINFORCEMENT_TYPE_LABELS)
+
+
+def _positive_reinforce_components(score_breakdown: dict[str, float]) -> list[str]:
+    return [
+        f"{_REINFORCE_COMPONENT_LABELS.get(key, key)} {_format_scalar(value)}"
+        for key, value in score_breakdown.items()
+        if value > 0
+    ]
+
+
+def _resolve_reinforcement_details(
+    node_id: str,
+    log: dict[str, Any],
+    nodes_by_id: dict[str, dict[str, Any]],
+    profile_snapshot: dict[str, Any],
+    scoring_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    gap = log.get("gap", {}) or {}
+    score_breakdown = log.get("score_breakdown", {}) or {}
+    node = nodes_by_id.get(node_id, {})
+    if not score_breakdown and node and profile_snapshot and "gap_total" in gap:
+        score_breakdown = decompose_reinforce_score(node, profile_snapshot, gap, scoring_config)
+    reinforce_score = log.get("reinforce_score")
+    if reinforce_score is None and score_breakdown:
+        reinforce_score = round(sum(score_breakdown.values()), 3)
+    reinforcement_type = log.get("reinforcement_type") or classify_reinforcement_type(gap)
+    return {
+        "gap": gap,
+        "reinforce_score": reinforce_score or 0,
+        "score_breakdown": score_breakdown,
+        "reinforcement_type": reinforcement_type,
+    }
+
+
+def _reinforcement_reason(details: dict[str, Any]) -> str:
+    gap = details["gap"]
+    gap_total = gap.get("gap_total", 0)
+    reinforce_score = details.get("reinforce_score", 0)
+    score_breakdown = details.get("score_breakdown", {})
+    components = _positive_reinforce_components(score_breakdown)
+    if gap_total > 0:
+        weakest = _pick_weakest_dimension(gap)
+        suffix = f"；主要依据：{'、'.join(components[:4])}" if components else ""
+        return (
+            f"能力短板补强：{weakest}差距较明显"
+            f"（能力差距分 {gap_total:.3f}，补强选择分 {reinforce_score:.3f}），"
+            f"因此补充该基础节点{suffix}。"
+        )
+    suffix = f"；主要依据：{'、'.join(components[:4])}" if components else ""
+    return (
+        "基础桥接补强：未检测到明显能力差距"
+        f"（能力差距分 {gap_total:.3f}，补强选择分 {reinforce_score:.3f}），"
+        f"但该节点具备基础支撑价值，因此纳入路径{suffix}。"
+    )
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -356,7 +429,12 @@ def build_explanation(
     mode_adjustments = scoring_config.get("mode_adjustments", DEFAULT_MODE_ADJUSTMENTS)
 
     node_explanations = _build_node_explanations(
-        audit, nodes_by_id, target_ids, ancestors_by_target
+        audit,
+        nodes_by_id,
+        target_ids,
+        ancestors_by_target,
+        profile_snapshot,
+        scoring_config,
     )
     ordering_explanations = _build_ordering_explanations(
         audit, nodes_by_id, profile_snapshot, mode, priority_weights, mode_adjustments
@@ -614,23 +692,36 @@ def _build_generation_steps(
         "保证目标节点进入学习顺序前具备必要基础。"
     )
 
-    reinforcement_focuses = _dedupe_strings(
-        [
-            _pick_weakest_dimension(item.gap or {})
-            for item in reinforcement_explanations
-            if item.gap
-        ]
-    )
+    ability_gap_items = [
+        item for item in reinforcement_explanations
+        if (item.gap or {}).get("gap_total", 0) > 0
+    ]
+    bridge_items = [
+        item for item in reinforcement_explanations
+        if (item.gap or {}).get("gap_total", 0) <= 0
+    ]
+    reinforcement_focuses = _dedupe_strings([
+        _pick_weakest_dimension(item.gap or {}) for item in ability_gap_items
+    ])
     reinforcement_evidence = [f"补强节点：{len(reinforced_ids)} 个"]
+    if ability_gap_items:
+        reinforcement_evidence.append(f"能力短板补强：{len(ability_gap_items)} 个")
+    if bridge_items:
+        reinforcement_evidence.append(f"基础桥接补强：{len(bridge_items)} 个")
     if reinforcement_focuses:
-        reinforcement_evidence.append(f"优先补齐：{'、'.join(reinforcement_focuses[:3])}")
+        reinforcement_evidence.append(f"短板方向：{'、'.join(reinforcement_focuses[:3])}")
     if reinforced_ids:
+        parts: list[str] = []
+        if ability_gap_items:
+            parts.append(f"{len(ability_gap_items)} 个能力短板补强")
+        if bridge_items:
+            parts.append(f"{len(bridge_items)} 个基础桥接补强")
         reinforcement_summary = (
-            f"系统结合画像差距额外补入 {len(reinforced_ids)} 个节点，"
-            f"优先修补{'、'.join(reinforcement_focuses[:3]) or '关键能力差距'}。"
+            f"系统结合学习者画像额外补入 {len(reinforced_ids)} 个节点，"
+            f"包含{'、'.join(parts) or '基础补强节点'}。"
         )
     else:
-        reinforcement_summary = "当前画像下未触发额外画像补强节点。"
+        reinforcement_summary = "当前画像下未触发额外补强节点。"
 
     ordering_mode_text = _label_value(ordering_summary.mode, _ORDERING_MODE_LABELS)
     ordering_factor_labels = _dedupe_strings(
@@ -760,6 +851,10 @@ def _build_node_group_summaries(
                         "node_name": item.node_name,
                         "reason": item.reason,
                         "decision_type": item.decision_type,
+                        "gap": item.gap,
+                        "reinforce_score": item.reinforce_score,
+                        "reinforcement_type": item.reinforcement_type,
+                        "score_breakdown": item.score_breakdown,
                     }
                     for item in items
                 ],
@@ -1003,9 +1098,16 @@ def _build_audit_highlights(
         ]
         closure_ids = _ordered_unique_node_ids(chain_node_ids, ordered_ids)
         closure_source = "dependency_chain_explanations"
+    reinforcement_logs = audit.get("reinforcement_logs") or {}
     reinforced_ids = _ordered_unique_node_ids(
-        audit.get("reinforced_ids", []) or list((audit.get("reinforcement_logs") or {}).keys())
+        audit.get("reinforced_ids", []) or list(reinforcement_logs.keys())
     )
+    reinforcement_type_counts: dict[str, int] = {}
+    for log in reinforcement_logs.values():
+        if not isinstance(log, dict):
+            continue
+        type_key = log.get("reinforcement_type") or classify_reinforcement_type(log.get("gap", {}) or {})
+        reinforcement_type_counts[type_key] = reinforcement_type_counts.get(type_key, 0) + 1
     fallback_summary = "未使用 live pack 回退。"
     if meta.provenance.fallback_used:
         reasons = "、".join(meta.provenance.fallback_reasons) or "未提供原因"
@@ -1045,13 +1147,18 @@ def _build_audit_highlights(
             key="profile_reinforcement",
             title="画像补强依据",
             summary=(
-                f"画像补强阶段纳入 {len(reinforced_ids)} 个节点。"
+                f"画像补强阶段纳入 {len(reinforced_ids)} 个节点，其中"
+                f"能力短板补强 {reinforcement_type_counts.get('ability_gap', 0)} 个、"
+                f"基础桥接补强 {reinforcement_type_counts.get('foundation_bridge', 0)} 个。"
                 if reinforced_ids
                 else "当前画像未触发额外补强节点。"
             ),
             value={
                 "reinforced_ids": reinforced_ids,
-                "reinforcement_log_count": len(audit.get("reinforcement_logs", {})),
+                "reinforcement_log_count": len(reinforcement_logs),
+                "reinforcement_type_counts": reinforcement_type_counts,
+                "reinforce_threshold": (audit.get("scoring_config") or {}).get("reinforce_threshold"),
+                "reinforce_weights": (audit.get("scoring_config") or {}).get("reinforce_weights"),
             },
             source="audit.reinforcement_logs",
         ),
@@ -1174,6 +1281,8 @@ def _build_node_explanations(
     nodes_by_id: dict[str, dict[str, Any]],
     target_ids: list[str],
     ancestors_by_target: dict[str, set[str]],
+    profile_snapshot: dict[str, Any],
+    scoring_config: dict[str, Any] | None,
 ) -> list[NodeExplanation]:
     results: list[NodeExplanation] = []
     target_set = set(target_ids)
@@ -1181,16 +1290,26 @@ def _build_node_explanations(
     reinforcement_logs = audit.get("reinforcement_logs", {})
 
     for nid, log in ordering_logs.items():
+        node_gap = log.get("gap")
+        reinforce_score = None
+        reinforcement_type = None
+        score_breakdown: dict[str, float] = {}
         if nid in target_set:
             reason = "目标节点：直接匹配学习目标"
             decision = "target"
         elif nid in reinforcement_logs:
-            gap = reinforcement_logs[nid].get("gap", {}) or {}
-            weakest = _pick_weakest_dimension(gap)
-            reason = (
-                f"画像补强：{weakest}差距最明显（总分 {gap.get('gap_total', 0):.3f}），"
-                f"优先补齐该方向基础"
+            details = _resolve_reinforcement_details(
+                nid,
+                reinforcement_logs[nid],
+                nodes_by_id,
+                profile_snapshot,
+                scoring_config,
             )
+            reason = _reinforcement_reason(details)
+            node_gap = details["gap"]
+            reinforce_score = details["reinforce_score"]
+            reinforcement_type = details["reinforcement_type"]
+            score_breakdown = details["score_breakdown"]
             decision = "reinforced"
         else:
             reason = _prereq_reason(nid, target_ids, ancestors_by_target, nodes_by_id)
@@ -1200,8 +1319,11 @@ def _build_node_explanations(
             node_id=nid,
             node_name=_get_node_name(nid, nodes_by_id),
             reason=reason,
-            gap=log.get("gap"),
+            gap=node_gap,
             decision_type=decision,
+            reinforce_score=reinforce_score,
+            reinforcement_type=reinforcement_type,
+            score_breakdown=score_breakdown,
         ))
 
     return results
@@ -1456,12 +1578,15 @@ def _build_reinforcement_explanations(
     reinforcement_logs = audit.get("reinforcement_logs", {})
 
     for nid, log in reinforcement_logs.items():
+        gap = log.get("gap", {}) or {}
         results.append(ReinforcementExplanation(
             node_id=nid,
             node_name=_get_node_name(nid, nodes_by_id),
-            gap=log.get("gap", {}),
+            gap=gap,
             reinforce_score=log.get("reinforce_score", 0),
             reasons=log.get("reasons", []),
+            reinforcement_type=log.get("reinforcement_type") or classify_reinforcement_type(gap),
+            score_breakdown=log.get("score_breakdown", {}) or {},
         ))
 
     return results
@@ -1765,6 +1890,10 @@ def _build_ask_payload(
                             "node_name": node_explanation.node_name,
                             "decision_type": node_explanation.decision_type,
                             "reason": node_explanation.reason,
+                            "gap": node_explanation.gap,
+                            "reinforce_score": node_explanation.reinforce_score,
+                            "reinforcement_type": node_explanation.reinforcement_type,
+                            "score_breakdown": node_explanation.score_breakdown,
                         }
                         if node_explanation
                         else None

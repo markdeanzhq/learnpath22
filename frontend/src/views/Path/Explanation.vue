@@ -145,7 +145,7 @@
                 {{ item }}
               </el-tag>
               <el-tag
-                v-for="node in step.nodeRefs"
+                v-for="node in step.visibleNodeRefs"
                 :key="node.node_id"
                 size="small"
                 :type="node.unresolved ? 'warning' : 'info'"
@@ -155,6 +155,16 @@
                 :aria-label="node.traceTitle"
               >
                 {{ node.label }}
+              </el-tag>
+              <el-tag
+                v-if="step.hiddenNodeRefCount"
+                size="small"
+                type="info"
+                effect="plain"
+                class="node-name-tag"
+                :title="`还有 ${step.hiddenNodeRefCount} 个节点未在时间线中展开，可在节点纳入原因中查看。`"
+              >
+                +{{ step.hiddenNodeRefCount }} 个
               </el-tag>
             </div>
           </el-timeline-item>
@@ -172,29 +182,121 @@
             <el-tag size="small" type="warning">目标 / 前置 / 补强</el-tag>
           </div>
         </template>
-        <el-row :gutter="12">
-          <el-col
-            v-for="group in displayNodeGroups"
+        <section v-if="nodeGroupStats.length" class="node-composition-panel" aria-label="节点组成概览">
+          <div class="node-composition-summary">
+            <div
+              v-for="stat in nodeGroupStats"
+              :key="stat.group_id"
+              class="node-composition-stat"
+              :class="`node-composition-stat--${stat.group_id}`"
+            >
+              <span>{{ stat.title }}</span>
+              <strong>{{ stat.count }} 个</strong>
+              <small>{{ stat.percent }}%</small>
+            </div>
+          </div>
+          <div class="node-composition-bar" aria-label="节点类型占比">
+            <span
+              v-for="stat in nodeGroupStats"
+              :key="`${stat.group_id}-bar`"
+              class="node-composition-segment"
+              :class="`node-composition-segment--${stat.group_id}`"
+              :style="nodeGroupSegmentStyle(stat)"
+              :title="`${stat.title}：${stat.count} 个，占 ${stat.percent}%`"
+            />
+          </div>
+        </section>
+
+        <div v-if="showNodeGroupFilters" class="node-filter-bar">
+          <el-input
+            v-model="nodeGroupKeyword"
+            clearable
+            placeholder="搜索知识点或纳入原因"
+            class="node-filter-input"
+          />
+          <div class="node-filter-buttons" aria-label="节点类型筛选">
+            <el-button
+              size="small"
+              :type="selectedNodeGroupFilter === 'all' ? 'primary' : ''"
+              @click="selectedNodeGroupFilter = 'all'"
+            >
+              全部
+            </el-button>
+            <el-button
+              v-for="stat in nodeGroupStats"
+              :key="`${stat.group_id}-filter`"
+              size="small"
+              :type="selectedNodeGroupFilter === stat.group_id ? 'primary' : ''"
+              @click="selectedNodeGroupFilter = stat.group_id"
+            >
+              {{ stat.title }}
+            </el-button>
+          </div>
+        </div>
+
+        <div
+          v-if="nodeGroupsForDisplay.length"
+          class="node-reason-layout"
+          :class="isFilteredNodeGroupImbalanced ? 'node-reason-layout--imbalanced' : 'node-reason-layout--balanced'"
+        >
+          <div
+            v-for="group in nodeGroupsForDisplay"
             :key="group.group_id"
-            :xs="24"
-            :md="8"
+            class="node-group-card"
+            :class="[
+              `node-group-card--${group.group_id}`,
+              { 'node-group-card--dominant': isDominantNodeGroup(group) },
+            ]"
           >
-            <div class="node-group-card">
-              <div class="node-group-title">
-                <strong>{{ group.title }}</strong>
-                <el-tag size="small" effect="plain">{{ group.nodes.length }} 个</el-tag>
-              </div>
-              <p class="summary-text">{{ group.summary }}</p>
-              <div class="node-list" v-if="group.nodes.length">
-                <div v-for="node in group.nodes" :key="node.node_id" class="node-item">
+            <div class="node-group-title">
+              <strong>{{ group.title }}</strong>
+              <el-tag size="small" :type="nodeGroupTagType(group.group_id)" effect="plain">
+                {{ group.nodes.length }} 个
+              </el-tag>
+            </div>
+            <p class="summary-text">{{ group.summary }}</p>
+            <div class="node-list">
+              <div v-for="node in visibleGroupNodes(group)" :key="node.node_id" class="node-item">
+                <div class="node-item-main">
                   <span class="node-name">{{ node.node_name }}</span>
-                  <span v-if="node.reason" class="node-reason">{{ node.reason }}</span>
+                  <div v-if="isReinforcedNode(node)" class="reinforcement-meta">
+                    <el-tag size="small" :type="reinforcementTagType(node.reinforcement_type)" effect="plain">
+                      {{ reinforcementTypeLabel(node.reinforcement_type) }}
+                    </el-tag>
+                    <el-tag v-if="node.gap.gap_total != null" size="small" effect="plain">
+                      能力差距分 {{ formatScore(node.gap.gap_total) }}
+                    </el-tag>
+                    <el-tag v-if="node.reinforce_score != null" size="small" type="success" effect="plain">
+                      补强选择分 {{ formatScore(node.reinforce_score) }}
+                    </el-tag>
+                  </div>
+                  <span v-if="node.reason" class="node-reason" :title="node.reason">{{ node.reason }}</span>
+                  <span v-if="reinforcementComponentText(node)" class="reinforcement-components">
+                    {{ reinforcementComponentText(node) }}
+                  </span>
+                </div>
+                <div class="node-item-actions">
+                  <el-button size="small" link :loading="askLoading" @click="askQuestion({ question_id: 'why_include_node', node_id: node.node_id })">
+                    为什么纳入
+                  </el-button>
+                  <el-button size="small" link :loading="askLoading" @click="askQuestion({ question_id: 'why_stage_assignment', node_id: node.node_id })">
+                    阶段原因
+                  </el-button>
                 </div>
               </div>
-              <el-empty v-else description="暂无节点" :image-size="48" />
             </div>
-          </el-col>
-        </el-row>
+            <el-button
+              v-if="hiddenGroupNodeCount(group) > 0"
+              link
+              type="primary"
+              class="node-group-toggle"
+              @click="toggleNodeGroup(group.group_id)"
+            >
+              {{ isNodeGroupExpanded(group.group_id) ? '收起列表' : `显示全部 ${group.nodes.length} 个` }}
+            </el-button>
+          </div>
+        </div>
+        <el-empty v-else description="没有匹配的节点" :image-size="48" />
       </el-card>
 
       <el-row :gutter="12" class="section-gap">
@@ -375,6 +477,10 @@ interface DisplayNode {
   node_id: string
   node_name: string
   reason: string
+  gap: Record<string, number>
+  reinforce_score: number | null
+  reinforcement_type: string
+  score_breakdown: Record<string, number>
 }
 
 interface DisplayNodeGroup {
@@ -382,6 +488,13 @@ interface DisplayNodeGroup {
   title: string
   summary: string
   nodes: DisplayNode[]
+}
+
+interface NodeGroupStat {
+  group_id: string
+  title: string
+  count: number
+  percent: number
 }
 
 interface StageCard {
@@ -423,6 +536,28 @@ const emit = defineEmits<{
 
 const activeAuditPanels = ref<string[]>([])
 const activeRawPanels = ref<string[]>([])
+const expandedNodeGroupIds = ref<string[]>([])
+const nodeGroupKeyword = ref('')
+const selectedNodeGroupFilter = ref('all')
+
+const NODE_GROUP_PREVIEW_LIMIT = 6
+const GENERATION_STEP_NODE_LIMIT = 5
+const NODE_GROUP_ORDER: Record<string, number> = {
+  target: 0,
+  prerequisite: 1,
+  reinforced: 2,
+}
+const REINFORCEMENT_TYPE_LABELS: Record<string, string> = {
+  ability_gap: '能力短板',
+  foundation_bridge: '基础桥接',
+}
+const REINFORCE_COMPONENT_LABELS: Record<string, string> = {
+  ability_gap: '能力差距',
+  foundation: '基础节点',
+  bridge: '桥接价值',
+  main_path: '主路径',
+  beginner: '初学者支撑',
+}
 
 const genericQuestions: Array<{ question_id: ExplanationQuestionId; label: string }> = [
   { question_id: 'why_path_order', label: '为什么按这个顺序学习？' },
@@ -444,6 +579,10 @@ const error = computed(() => props.error)
 const polishRequested = computed(() => props.polishRequested)
 const showAuditDetails = computed(() => props.displayMode !== 'simple')
 const showTechnicalDetails = computed(() => props.displayMode === 'debug')
+const nodeGroupPreviewLimit = computed(() => {
+  if (showTechnicalDetails.value) return Number.POSITIVE_INFINITY
+  return showAuditDetails.value ? NODE_GROUP_PREVIEW_LIMIT : 4
+})
 const askResponse = computed(() => props.askResponse)
 const askLoading = computed(() => props.askLoading)
 const askError = computed(() => props.askError)
@@ -543,23 +682,73 @@ const nodeNameById = computed(() => {
   }
   return names
 })
-const displayGenerationSteps = computed(() => generationSteps.value.map((step) => ({
-  ...step,
-  nodeRefs: step.node_ids.map(resolveDisplayNodeRef),
-})))
+const displayGenerationSteps = computed(() => generationSteps.value.map((step) => {
+  const nodeRefs = step.node_ids.map(resolveDisplayNodeRef)
+  return {
+    ...step,
+    nodeRefs,
+    visibleNodeRefs: nodeRefs.slice(0, GENERATION_STEP_NODE_LIMIT),
+    hiddenNodeRefCount: Math.max(0, nodeRefs.length - GENERATION_STEP_NODE_LIMIT),
+  }
+}))
 const hasGenerationStepNodeRefs = computed(() => displayGenerationSteps.value.some((step) => step.nodeRefs.length > 0))
 
 const displayNodeGroups = computed<DisplayNodeGroup[]>(() => {
   const groups = readability.value?.node_groups
   if (groups?.length) {
-    return groups.map((group) => ({
+    return sortNodeGroups(groups.map((group) => ({
       group_id: group.group_id,
       title: group.title,
       summary: group.summary,
       nodes: normalizeGroupNodes(group.nodes, group.node_ids),
-    }))
+    })))
   }
-  return buildFallbackNodeGroups()
+  return sortNodeGroups(buildFallbackNodeGroups())
+})
+const nodeGroupTotalCount = computed(() => displayNodeGroups.value.reduce((sum, group) => sum + group.nodes.length, 0))
+const nodeGroupStats = computed<NodeGroupStat[]>(() => displayNodeGroups.value.map((group) => ({
+  group_id: group.group_id,
+  title: group.title,
+  count: group.nodes.length,
+  percent: nodeGroupTotalCount.value ? Math.round((group.nodes.length / nodeGroupTotalCount.value) * 100) : 0,
+})))
+const showNodeGroupFilters = computed(() => (
+  nodeGroupTotalCount.value > 15
+  || Boolean(nodeGroupKeyword.value)
+  || selectedNodeGroupFilter.value !== 'all'
+))
+const filteredNodeGroups = computed<DisplayNodeGroup[]>(() => {
+  const keyword = nodeGroupKeyword.value.trim().toLowerCase()
+  return displayNodeGroups.value
+    .filter((group) => selectedNodeGroupFilter.value === 'all' || group.group_id === selectedNodeGroupFilter.value)
+    .map((group) => {
+      const nodes = keyword
+        ? group.nodes.filter((node) => [
+          node.node_name,
+          node.reason,
+          reinforcementTypeLabel(node.reinforcement_type),
+          reinforcementComponentText(node),
+        ].join(' ').toLowerCase().includes(keyword))
+        : group.nodes
+      return { ...group, nodes }
+    })
+    .filter((group) => group.nodes.length > 0)
+})
+const isFilteredNodeGroupImbalanced = computed(() => isImbalancedNodeGroups(filteredNodeGroups.value))
+const dominantFilteredNodeGroup = computed(() => {
+  if (!isFilteredNodeGroupImbalanced.value) return null
+  return [...filteredNodeGroups.value].sort((a, b) => b.nodes.length - a.nodes.length)[0] ?? null
+})
+const nodeGroupsForDisplay = computed(() => {
+  const dominant = dominantFilteredNodeGroup.value
+  if (!dominant) return filteredNodeGroups.value
+  return [dominant, ...filteredNodeGroups.value.filter((group) => group.group_id !== dominant.group_id)]
+})
+const goalNamesPreview = computed(() => {
+  const names = overview.value.goalNames
+  if (!names.length) return '目标节点待识别'
+  if (names.length <= 2) return names.join('、')
+  return `${names.slice(0, 2).join('、')}等 ${names.length} 个目标`
 })
 
 const orderingSummaryText = computed(() => (
@@ -613,7 +802,7 @@ const explanationQuickCards = computed(() => {
   return [
     {
       title: '为什么学这些？',
-      value: overview.value.goalNames.length ? overview.value.goalNames.join('、') : '目标节点待识别',
+      value: goalNamesPreview.value,
       detail: `系统围绕目标节点展开，并补齐 ${prerequisiteCount} 个必要前置。`,
     },
     {
@@ -675,6 +864,79 @@ const nodeQuestionTargets = computed(() => {
     .slice(0, 5)
 })
 
+function sortNodeGroups(groups: DisplayNodeGroup[]) {
+  return [...groups].sort((a, b) => (NODE_GROUP_ORDER[a.group_id] ?? 99) - (NODE_GROUP_ORDER[b.group_id] ?? 99))
+}
+
+function isImbalancedNodeGroups(groups: DisplayNodeGroup[]) {
+  const counts = groups.map((group) => group.nodes.length).filter((count) => count > 0).sort((a, b) => b - a)
+  if (counts.length <= 1) return false
+  const max = counts[0]
+  const second = counts[1] ?? 0
+  const min = counts[counts.length - 1] || 1
+  return max >= NODE_GROUP_PREVIEW_LIMIT * 2 && (max / Math.max(min, 1) >= 2.5 || max - second >= NODE_GROUP_PREVIEW_LIMIT)
+}
+
+function isDominantNodeGroup(group: DisplayNodeGroup) {
+  return dominantFilteredNodeGroup.value?.group_id === group.group_id
+}
+
+function isNodeGroupExpanded(groupId: string) {
+  return expandedNodeGroupIds.value.includes(groupId)
+}
+
+function toggleNodeGroup(groupId: string) {
+  expandedNodeGroupIds.value = isNodeGroupExpanded(groupId)
+    ? expandedNodeGroupIds.value.filter((item) => item !== groupId)
+    : [...expandedNodeGroupIds.value, groupId]
+}
+
+function visibleGroupNodes(group: DisplayNodeGroup) {
+  return isNodeGroupExpanded(group.group_id)
+    ? group.nodes
+    : group.nodes.slice(0, nodeGroupPreviewLimit.value)
+}
+
+function hiddenGroupNodeCount(group: DisplayNodeGroup) {
+  return Math.max(0, group.nodes.length - nodeGroupPreviewLimit.value)
+}
+
+function nodeGroupTagType(groupId: string) {
+  if (groupId === 'target') return 'success'
+  if (groupId === 'reinforced') return 'warning'
+  return 'info'
+}
+
+function nodeGroupSegmentStyle(stat: NodeGroupStat) {
+  return { flex: `${Math.max(stat.count, 1)} 1 0` }
+}
+
+function isReinforcedNode(node: DisplayNode) {
+  return Boolean(node.reinforcement_type || node.reinforce_score != null || Object.keys(node.score_breakdown).length)
+}
+
+function reinforcementTypeLabel(type: string) {
+  return REINFORCEMENT_TYPE_LABELS[type] || '画像补强'
+}
+
+function reinforcementTagType(type: string) {
+  if (type === 'ability_gap') return 'warning'
+  if (type === 'foundation_bridge') return 'success'
+  return 'info'
+}
+
+function reinforcementComponentText(node: DisplayNode) {
+  const parts = Object.entries(node.score_breakdown)
+    .filter(([, value]) => value > 0)
+    .slice(0, 4)
+    .map(([key, value]) => `${REINFORCE_COMPONENT_LABELS[key] || key} ${formatScore(value)}`)
+  return parts.length ? `主要依据：${parts.join(' / ')}` : ''
+}
+
+function formatScore(value?: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(3) : '未知'
+}
+
 function addNodeName(names: Map<string, string>, nodeId?: string | null, nodeName?: string | null) {
   const normalizedId = normalizeText(nodeId)
   const normalizedName = normalizeText(nodeName)
@@ -701,6 +963,19 @@ function resolveDisplayNodeRef(nodeId: string): DisplayNodeRef {
   }
 }
 
+function normalizeNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function normalizeNumberRecord(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, number>>((acc, [key, raw]) => {
+    const parsed = normalizeNumber(raw)
+    if (parsed != null) acc[key] = parsed
+    return acc
+  }, {})
+}
+
 function normalizeGroupNodes(nodes: Array<Record<string, unknown>>, fallbackIds: string[]) {
   if (nodes.length) {
     return nodes.map((node, index) => {
@@ -709,6 +984,10 @@ function normalizeGroupNodes(nodes: Array<Record<string, unknown>>, fallbackIds:
         node_id: nodeId,
         node_name: normalizeText(node.node_name) || normalizeText(node.name) || nodeId,
         reason: normalizeText(node.reason) || normalizeText(node.summary) || normalizeText(node.decision_type),
+        gap: normalizeNumberRecord(node.gap),
+        reinforce_score: normalizeNumber(node.reinforce_score),
+        reinforcement_type: normalizeText(node.reinforcement_type),
+        score_breakdown: normalizeNumberRecord(node.score_breakdown),
       }
     })
   }
@@ -716,6 +995,10 @@ function normalizeGroupNodes(nodes: Array<Record<string, unknown>>, fallbackIds:
     node_id: nodeId,
     node_name: nodeId,
     reason: '',
+    gap: {},
+    reinforce_score: null,
+    reinforcement_type: '',
+    score_breakdown: {},
   }))
 }
 
@@ -737,6 +1020,10 @@ function buildFallbackNodeGroups() {
       node_id: item.node_id,
       node_name: item.node_name,
       reason: item.reason,
+      gap: item.gap ?? {},
+      reinforce_score: item.reinforce_score ?? null,
+      reinforcement_type: item.reinforcement_type ?? '',
+      score_breakdown: item.score_breakdown ?? {},
     }
     if (item.decision_type === 'target') {
       target.push(node)
@@ -753,6 +1040,10 @@ function buildFallbackNodeGroups() {
         node_id: item.node_id,
         node_name: item.node_name,
         reason: item.reasons.join('、'),
+        gap: item.gap,
+        reinforce_score: item.reinforce_score,
+        reinforcement_type: item.reinforcement_type ?? '',
+        score_breakdown: item.score_breakdown ?? {},
       })
     }
   }
@@ -978,6 +1269,98 @@ function resolvePolishFallbackReason(reason?: string | null) {
 .node-id-note {
   margin: 8px 0 0;
 }
+.node-composition-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+.node-composition-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.node-composition-stat {
+  padding: 10px;
+  border-radius: 10px;
+  background: #fff;
+}
+.node-composition-stat span,
+.node-composition-stat small {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+.node-composition-stat strong {
+  display: block;
+  margin: 4px 0;
+  color: #303133;
+  font-size: 18px;
+}
+.node-composition-bar {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf2f7;
+}
+.node-composition-segment {
+  min-width: 10px;
+}
+.node-composition-segment--target,
+.node-composition-stat--target {
+  border-left: 3px solid var(--el-color-success);
+}
+.node-composition-segment--target {
+  background: var(--el-color-success);
+}
+.node-composition-segment--prerequisite,
+.node-composition-stat--prerequisite {
+  border-left: 3px solid var(--el-color-primary);
+}
+.node-composition-segment--prerequisite {
+  background: var(--el-color-primary);
+}
+.node-composition-segment--reinforced,
+.node-composition-stat--reinforced {
+  border-left: 3px solid var(--el-color-warning);
+}
+.node-composition-segment--reinforced {
+  background: var(--el-color-warning);
+}
+.node-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.node-filter-input {
+  max-width: 320px;
+}
+.node-filter-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.node-reason-layout {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+.node-reason-layout--balanced {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.node-reason-layout--imbalanced {
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+}
+.node-reason-layout--imbalanced .node-group-card--dominant {
+  grid-row: span 2;
+}
 .explanation-quick-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1110,10 +1493,12 @@ function resolvePolishFallbackReason(reason?: string | null) {
   color: #606266;
   line-height: 1.7;
 }
-.node-group-card,
 .summary-card {
   min-height: 100%;
   margin-bottom: 12px;
+}
+.node-group-card {
+  margin-bottom: 0;
 }
 .node-group-title,
 .node-question-item,
@@ -1139,8 +1524,43 @@ function resolvePolishFallbackReason(reason?: string | null) {
 }
 .node-item {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.node-item-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
   flex-direction: column;
   gap: 4px;
+}
+.node-item-actions,
+.reinforcement-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.node-item-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+.reinforcement-meta {
+  align-items: center;
+}
+.reinforcement-components {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.node-group-toggle {
+  margin-top: 8px;
+}
+.node-reason {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .node-name {
   font-weight: 600;
@@ -1193,8 +1613,33 @@ function resolvePolishFallbackReason(reason?: string | null) {
   }
 
   .defense-card-grid,
-  .explanation-quick-grid {
+  .explanation-quick-grid,
+  .node-composition-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .node-filter-bar,
+  .node-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .node-filter-input {
+    max-width: none;
+  }
+
+  .node-filter-buttons,
+  .node-item-actions {
+    justify-content: flex-start;
+  }
+
+  .node-reason-layout--balanced,
+  .node-reason-layout--imbalanced {
+    grid-template-columns: 1fr;
+  }
+
+  .node-reason-layout--imbalanced .node-group-card--dominant {
+    grid-row: auto;
   }
 }
 </style>

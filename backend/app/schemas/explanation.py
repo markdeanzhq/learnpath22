@@ -13,6 +13,9 @@ class NodeExplanation(BaseModel):
     gap: Optional[dict[str, float]] = None
     decision_type: str
     raw_reason: Optional[str] = None
+    reinforce_score: Optional[float] = None
+    reinforcement_type: Optional[str] = None
+    score_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class OrderExplanation(BaseModel):
@@ -46,6 +49,8 @@ class ReinforcementExplanation(BaseModel):
     gap: dict[str, float]
     reinforce_score: float
     reasons: list[str]
+    reinforcement_type: Optional[str] = None
+    score_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class DependencyChainExplanation(BaseModel):

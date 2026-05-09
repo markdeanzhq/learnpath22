@@ -49,6 +49,19 @@ const switchStub = defineComponent({
   template: '<button class="polish-switch" @click="$emit(\'change\', !modelValue)">{{ activeText }}</button>',
 })
 
+const inputStub = defineComponent({
+  props: ['modelValue', 'placeholder'],
+  emits: ['update:modelValue'],
+  template: `
+    <input
+      class="el-input-stub"
+      :value="modelValue"
+      :placeholder="placeholder"
+      @input="$emit('update:modelValue', $event.target.value)"
+    />
+  `,
+})
+
 const globalMountOptions = {
   directives: {
     loading: () => undefined,
@@ -61,6 +74,7 @@ const globalMountOptions = {
     ElCollapse: slotStub('div'),
     ElCollapseItem: slotStub('article'),
     ElEmpty: slotStub('div'),
+    ElInput: inputStub,
     ElRow: slotStub('div'),
     ElSwitch: switchStub,
     ElTag: tagStub,
@@ -171,6 +185,26 @@ function createExplanationResponse(overrides: Partial<ExplanationResponse> = {})
       },
     },
     ...overrides,
+  }
+}
+
+function createNodeGroup(
+  groupId: 'target' | 'prerequisite' | 'reinforced',
+  title: string,
+  count: number,
+  labelPrefix: string,
+) {
+  const nodes = Array.from({ length: count }, (_, index) => ({
+    node_id: `${groupId}-${index + 1}`,
+    node_name: `${labelPrefix} ${index + 1}`,
+    reason: `${title}纳入原因 ${index + 1}`,
+  }))
+  return {
+    group_id: groupId,
+    title,
+    summary: `${title}共 ${count} 个。`,
+    node_ids: nodes.map((node) => node.node_id),
+    nodes,
   }
 }
 
@@ -322,6 +356,164 @@ describe('Explanation component', () => {
     expect(wrapper.text()).toContain('内部节点 ID 可通过悬停查看')
     expect(wrapper.text()).not.toContain('未识别知识点（ml-c01）')
     expect(wrapper.find('.node-name-tag').attributes('title')).toBe('节点 ID：ml-c01')
+  })
+
+  it('summarizes imbalanced node groups and folds long lists by default', async () => {
+    const targetGroup = createNodeGroup('target', '目标节点', 3, '目标节点')
+    const prerequisiteGroup = createNodeGroup('prerequisite', '硬前置节点', 18, '前置节点')
+    const reinforcedGroup = createNodeGroup('reinforced', '画像补强节点', 4, '补强节点')
+    const wrapper = mountExplanation({
+      explanation: createExplanationResponse({
+        readability: {
+          ...createBaseReadability(),
+          overview_summary: {
+            ...createBaseReadability().overview_summary,
+            goal_names: ['目标一', '目标二', '目标三'],
+            node_count: 25,
+          },
+          node_groups: [targetGroup, reinforcedGroup, prerequisiteGroup],
+        },
+      }),
+    })
+
+    const quickCardText = wrapper.findAll('.explanation-quick-card')[0].text()
+    expect(quickCardText).toContain('目标一、目标二等 3 个目标')
+    expect(quickCardText).not.toContain('目标一、目标二、目标三')
+    expect(wrapper.find('.node-reason-layout--imbalanced').exists()).toBe(true)
+    expect(wrapper.find('.node-group-card--dominant').text()).toContain('硬前置节点')
+    expect(wrapper.text()).toContain('目标节点3 个12%')
+    expect(wrapper.text()).toContain('硬前置节点18 个72%')
+    expect(wrapper.text()).toContain('画像补强节点4 个16%')
+    expect(wrapper.text()).toContain('前置节点 4')
+    expect(wrapper.text()).not.toContain('前置节点 5')
+    expect(wrapper.text()).toContain('显示全部 18 个')
+
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('显示全部 18 个'))
+    expect(toggle).toBeTruthy()
+    await toggle?.trigger('click')
+
+    expect(wrapper.text()).toContain('前置节点 18')
+    expect(wrapper.text()).toContain('收起列表')
+  })
+
+  it('filters large node groups by keyword', async () => {
+    const wrapper = mountExplanation({
+      explanation: createExplanationResponse({
+        readability: {
+          ...createBaseReadability(),
+          node_groups: [
+            createNodeGroup('target', '目标节点', 3, '目标节点'),
+            createNodeGroup('prerequisite', '硬前置节点', 18, '前置节点'),
+            createNodeGroup('reinforced', '画像补强节点', 4, '补强节点'),
+          ],
+        },
+      }),
+    })
+
+    await wrapper.find('.el-input-stub').setValue('前置节点 12')
+
+    const reasonLayoutText = wrapper.find('.node-reason-layout').text()
+    expect(reasonLayoutText).toContain('前置节点 12')
+    expect(reasonLayoutText).not.toContain('前置节点 11')
+    expect(reasonLayoutText).not.toContain('目标节点 1')
+  })
+
+  it('limits generation step node tags and keeps the hidden count visible', () => {
+    const nodeGroup = createNodeGroup('prerequisite', '硬前置节点', 7, '流程节点')
+    const wrapper = mountExplanation({
+      displayMode: 'defense',
+      explanation: createExplanationResponse({
+        readability: {
+          ...createBaseReadability(),
+          generation_steps: [
+            {
+              step_id: 'ordering',
+              title: '拓扑排序',
+              summary: '按依赖排序。',
+              evidence_items: [],
+              node_ids: nodeGroup.node_ids,
+            },
+          ],
+          node_groups: [nodeGroup],
+        },
+      }),
+    })
+
+    const tagTexts = wrapper.findAll('.node-name-tag').map((tag) => tag.text())
+    expect(tagTexts).toContain('流程节点 1')
+    expect(tagTexts).toContain('流程节点 5')
+    expect(tagTexts).toContain('+2 个')
+    expect(tagTexts).not.toContain('流程节点 6')
+  })
+
+  it('emits node-specific question events from node cards', async () => {
+    const wrapper = mountExplanation()
+    const includeButton = wrapper.findAll('button').find((button) => button.text() === '为什么纳入')
+
+    expect(includeButton).toBeTruthy()
+    await includeButton?.trigger('click')
+
+    expect(wrapper.emitted('ask-question')?.[0]).toEqual([
+      { question_id: 'why_include_node', node_id: 'ml-c01' },
+    ])
+  })
+
+  it('shows reinforcement type, gap score, selection score, and score components', () => {
+    const wrapper = mountExplanation({
+      explanation: createExplanationResponse({
+        readability: {
+          ...createBaseReadability(),
+          node_groups: [
+            {
+              group_id: 'reinforced',
+              title: '画像补强节点',
+              summary: '根据学习者画像补充。',
+              node_ids: ['ml-a01', 'ml-b08'],
+              nodes: [
+                {
+                  node_id: 'ml-a01',
+                  node_name: 'Python与NumPy基础',
+                  reason: '基础桥接补强：未检测到明显能力差距。',
+                  gap: { gap_total: 0 },
+                  reinforce_score: 0.505,
+                  reinforcement_type: 'foundation_bridge',
+                  score_breakdown: {
+                    foundation: 0.2,
+                    bridge: 0.105,
+                    main_path: 0.1,
+                    beginner: 0.1,
+                  },
+                },
+                {
+                  node_id: 'ml-b08',
+                  node_name: '数据预处理',
+                  reason: '能力短板补强：编程实现差距较明显。',
+                  gap: { gap_total: 0.062 },
+                  reinforce_score: 0.533,
+                  reinforcement_type: 'ability_gap',
+                  score_breakdown: {
+                    ability_gap: 0.028,
+                    foundation: 0.2,
+                    bridge: 0.105,
+                    main_path: 0.1,
+                    beginner: 0.1,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    })
+
+    const text = wrapper.find('.node-reason-layout').text()
+    expect(text).toContain('基础桥接')
+    expect(text).toContain('能力短板')
+    expect(text).toContain('能力差距分 0.000')
+    expect(text).toContain('补强选择分 0.505')
+    expect(text).toContain('主要依据：基础节点 0.200 / 桥接价值 0.105 / 主路径 0.100 / 初学者支撑 0.100')
+    expect(text).toContain('能力差距分 0.062')
+    expect(text).not.toContain('总分')
   })
 
   it('renders audit sources as readable labels while keeping raw source traceable', () => {

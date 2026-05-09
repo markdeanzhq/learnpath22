@@ -5,6 +5,15 @@ from collections import defaultdict, deque
 from typing import Any
 
 
+DEFAULT_REINFORCE_WEIGHTS: dict[str, float] = {
+    "gap_total": 0.45,
+    "foundation_bonus": 0.20,
+    "bridge_value": 0.15,
+    "main_path_bonus": 0.10,
+    "beginner_bonus": 0.10,
+}
+
+
 def calc_gap(
     node: dict[str, Any],
     profile: dict[str, Any],
@@ -31,28 +40,48 @@ def calc_preference_fit(node: dict[str, Any], profile: dict[str, Any]) -> float:
     return round(fit, 3)
 
 
+def decompose_reinforce_score(
+    node: dict[str, Any],
+    profile: dict[str, Any],
+    gap: dict[str, float],
+    config: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    rw = (config or {}).get("reinforce_weights", DEFAULT_REINFORCE_WEIGHTS)
+    return {
+        "ability_gap": round(rw["gap_total"] * gap.get("gap_total", 0), 3),
+        "foundation": round(rw["foundation_bonus"] * int(node.get("is_foundation", False)), 3),
+        "bridge": round(rw["bridge_value"] * node.get("bridge_value", 0), 3),
+        "main_path": round(rw["main_path_bonus"] * int(node.get("is_main_path", False)), 3),
+        "beginner": round(rw["beginner_bonus"] * int(profile.get("ml_level", 1) <= 1), 3),
+    }
+
+
 def calc_reinforce_score(
     node: dict[str, Any],
     profile: dict[str, Any],
     gap: dict[str, float],
     config: dict[str, Any] | None = None,
 ) -> float:
-    rw = (config or {}).get("reinforce_weights", {
-        "gap_total": 0.45, "foundation_bonus": 0.20, "bridge_value": 0.15,
-        "main_path_bonus": 0.10, "beginner_bonus": 0.10,
-    })
-    beginner_bonus = 1 if profile.get("ml_level", 1) <= 1 else 0
-    foundation_bonus = 1 if node.get("is_foundation", False) else 0
-    main_path_bonus = 1 if node.get("is_main_path", False) else 0
+    return round(sum(decompose_reinforce_score(node, profile, gap, config).values()), 3)
 
-    score = (
-        rw["gap_total"] * gap["gap_total"]
-        + rw["foundation_bonus"] * foundation_bonus
-        + rw["bridge_value"] * node.get("bridge_value", 0)
-        + rw["main_path_bonus"] * main_path_bonus
-        + rw["beginner_bonus"] * beginner_bonus
-    )
-    return round(score, 3)
+
+def classify_reinforcement_type(gap: dict[str, float]) -> str:
+    return "ability_gap" if gap.get("gap_total", 0) > 0 else "foundation_bridge"
+
+
+def build_reinforcement_reasons(gap: dict[str, float], score_breakdown: dict[str, float]) -> list[str]:
+    reasons: list[str] = []
+    if gap.get("gap_total", 0) > 0:
+        reasons.append("ability_gap")
+    if score_breakdown.get("foundation", 0) > 0:
+        reasons.append("foundation_support")
+    if score_breakdown.get("bridge", 0) > 0:
+        reasons.append("bridge_value")
+    if score_breakdown.get("main_path", 0) > 0:
+        reasons.append("main_path_support")
+    if score_breakdown.get("beginner", 0) > 0:
+        reasons.append("beginner_support")
+    return reasons or ["profile_reinforcement"]
 
 
 def should_reinforce(
@@ -219,12 +248,16 @@ def select_profile_reinforcements(
     scored.sort(key=lambda item: (-item[0], item[1]))
 
     for reinforce_score, node_id, gap in scored[:max_count]:
+        node = nodes_by_id[node_id]
+        score_breakdown = decompose_reinforce_score(node, profile, gap, config)
         selected.append(node_id)
         logs[node_id] = {
             "decision_type": "reinforced",
             "gap": gap,
             "reinforce_score": reinforce_score,
-            "reasons": ["profile_reinforcement", "foundation_support"],
+            "score_breakdown": score_breakdown,
+            "reinforcement_type": classify_reinforcement_type(gap),
+            "reasons": build_reinforcement_reasons(gap, score_breakdown),
         }
 
     return selected, logs

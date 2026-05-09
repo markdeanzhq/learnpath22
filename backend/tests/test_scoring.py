@@ -7,7 +7,9 @@ from app.planner.scoring import (
     calc_gap,
     calc_preference_fit,
     calc_priority_score,
+    calc_reinforce_score,
     decompose_priority_score,
+    decompose_reinforce_score,
 )
 from app.services.domain_pack_service import get_domain_pack_service
 
@@ -101,3 +103,18 @@ def test_decompose_sums_to_priority_score():
                 f"calc_priority_score vs oracle reference mismatch (decomposer may have drifted): "
                 f"node={node['id']} mode={mode} score={score} oracle={oracle}"
             )
+
+
+def test_decompose_sums_to_reinforce_score():
+    pack = get_domain_pack_service()
+    node = pack.nodes_by_id["ml_a01"]
+    gap = calc_gap(node, PROFILE)
+
+    contribs = decompose_reinforce_score(node, PROFILE, gap, pack.scoring_config)
+    summed = round(sum(contribs.values()), 3)
+    score = calc_reinforce_score(node, PROFILE, gap, pack.scoring_config)
+
+    assert summed == score
+    assert contribs["foundation"] > 0
+    assert contribs["bridge"] > 0
+    assert contribs["main_path"] > 0

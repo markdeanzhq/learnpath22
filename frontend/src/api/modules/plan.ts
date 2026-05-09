@@ -70,6 +70,9 @@ export interface NodeExplanation {
   gap?: Record<string, number> | null
   decision_type: string
   raw_reason?: string | null
+  reinforce_score?: number | null
+  reinforcement_type?: string | null
+  score_breakdown?: Record<string, number>
 }
 
 export interface OrderExplanation {
@@ -103,6 +106,8 @@ export interface ReinforcementExplanation {
   gap: Record<string, number>
   reinforce_score: number
   reasons: string[]
+  reinforcement_type?: string | null
+  score_breakdown?: Record<string, number>
 }
 
 export interface DependencyChainExplanation {

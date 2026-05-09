@@ -3,7 +3,8 @@ import pytest
 
 from app.services.domain_pack_service import get_domain_pack_service
 from app.services import explanation_service
-from app.services.explanation_service import build_explanation
+from app.schemas.explanation import ExplanationAskRequest
+from app.services.explanation_service import answer_explanation_question, build_explanation
 
 
 def _make_audit(
@@ -230,6 +231,78 @@ def test_build_explanation_with_reinforcement():
     node_expl = [n for n in result.node_explanations if n.node_id == "ml_c01"]
     assert len(node_expl) == 1
     assert node_expl[0].decision_type == "reinforced"
+
+
+def test_reinforcement_zero_gap_explains_foundation_bridge():
+    pack = get_domain_pack_service()
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        profile_snapshot=_DEFAULT_PROFILE,
+        ordering_logs={
+            "ml_a01": {
+                "priority_score": 0.7,
+                "goal_relevance": 0.3,
+                "gap": {"gap_total": 0, "gap_math": 0, "gap_code": 0, "gap_ml": 0},
+                "reasons": [],
+            },
+        },
+        reinforcement_logs={
+            "ml_a01": {
+                "gap": {"gap_total": 0, "gap_math": 0, "gap_code": 0, "gap_ml": 0},
+            },
+        },
+    )
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+    node_expl = next(item for item in result.node_explanations if item.node_id == "ml_a01")
+
+    assert node_expl.decision_type == "reinforced"
+    assert node_expl.reinforcement_type == "foundation_bridge"
+    assert node_expl.reinforce_score is not None and node_expl.reinforce_score > 0
+    assert node_expl.score_breakdown["foundation"] > 0
+    assert "基础桥接补强" in node_expl.reason
+    assert "能力差距分 0.000" in node_expl.reason
+    assert "补强选择分" in node_expl.reason
+    assert "差距最明显" not in node_expl.reason
+    assert "总分" not in node_expl.reason
+
+    answer = answer_explanation_question(
+        result,
+        ExplanationAskRequest(question_id="why_include_node", node_id="ml_a01"),
+    )
+    assert "基础桥接补强" in answer.answer
+
+
+def test_reinforcement_positive_gap_explains_ability_gap():
+    pack = get_domain_pack_service()
+    profile = {**_DEFAULT_PROFILE, "coding_level": 1}
+    audit = _make_audit(
+        target_ids=["ml_c09"],
+        profile_snapshot=profile,
+        ordering_logs={
+            "ml_b08": {
+                "priority_score": 0.7,
+                "goal_relevance": 0.3,
+                "gap": {"gap_total": 0.062, "gap_math": 0, "gap_code": 0.25, "gap_ml": 0},
+                "reasons": [],
+            },
+        },
+        reinforcement_logs={
+            "ml_b08": {
+                "gap": {"gap_total": 0.062, "gap_math": 0, "gap_code": 0.25, "gap_ml": 0},
+            },
+        },
+    )
+
+    result = build_explanation(audit, pack.nodes_by_id, pack.requires_rev_adj, pack.scoring_config)
+    node_expl = next(item for item in result.node_explanations if item.node_id == "ml_b08")
+
+    assert node_expl.reinforcement_type == "ability_gap"
+    assert node_expl.score_breakdown["ability_gap"] > 0
+    assert "能力短板补强" in node_expl.reason
+    assert "编程实现差距较明显" in node_expl.reason
+    assert "能力差距分 0.062" in node_expl.reason
+    assert "总分" not in node_expl.reason
 
 
 def test_node_explanation_decision_types():
