@@ -1,22 +1,26 @@
 <template>
-  <div class="page-container">
-    <section class="project-hero">
-      <div>
-        <p class="hero-eyebrow">学习项目启动台</p>
-        <h1>创建并管理你的学习路径项目</h1>
-        <p class="hero-description">
-          先确认学习目标是否能被当前机器学习图谱覆盖，再采集画像参数，最后生成可解释的个性化学习路径。
-        </p>
-      </div>
-      <div class="hero-flow" aria-label="项目创建流程">
-        <span>1 描述目标</span>
-        <span>2 完成画像</span>
-        <span>3 生成路径</span>
-      </div>
-    </section>
+  <PageShell
+    title="学习项目"
+    eyebrow="项目工作台"
+    subtitle="先确认学习目标，再完成画像采集，最后生成可解释的学习路径。"
+  >
+    <template #actions>
+      <el-button plain @click="router.push('/search')">项目资料库</el-button>
+      <el-button type="primary" @click="startCreate">新建学习项目</el-button>
+    </template>
 
-    <el-row :gutter="20" class="project-layout">
-      <el-col :span="9">
+    <template #summary>
+      <PageSummaryBar :items="projectSummaryItems">
+        <NextActionCard :title="nextActionTitle" :description="nextActionDescription">
+          <el-button size="small" type="primary" :disabled="nextActionDisabled" @click="handlePageNextAction">
+            {{ nextActionButtonLabel }}
+          </el-button>
+        </NextActionCard>
+      </PageSummaryBar>
+    </template>
+
+    <section class="project-workspace">
+      <aside class="project-list-pane lp-scroll-panel">
         <ProjectListPanel
           :projects="projectStore.projects"
           :loading="projectStore.loading"
@@ -26,9 +30,9 @@
           @select="handleRowClick"
           @delete="handleDelete"
         />
-      </el-col>
+      </aside>
 
-      <el-col :span="15">
+      <main class="project-detail-pane lp-scroll-panel">
         <ProjectWorkflowPanel
           :step="step"
           :goal-form-mode="goalFormMode"
@@ -47,8 +51,8 @@
           @open-knowledge="openKnowledge"
           @open-path="openPath"
         />
-      </el-col>
-    </el-row>
+      </main>
+    </section>
 
     <ProjectCreateWizardDialog
       v-model="createWizardVisible"
@@ -65,7 +69,7 @@
       @continue-later="closeCreateWizardAndContinue"
       @update:model-value="handleCreateWizardVisibilityChange"
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup lang="ts">
@@ -77,6 +81,9 @@ import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useTrackingStore } from '@/stores/tracking'
 import { projectApi, type Project, type ProjectWorkflowAction, type ProjectWorkflowState } from '@/api/modules/project'
+import PageShell from '@/components/Layout/PageShell.vue'
+import PageSummaryBar from '@/components/PageSummaryBar.vue'
+import NextActionCard from '@/components/NextActionCard.vue'
 import ProjectCreateWizardDialog from './components/ProjectCreateWizardDialog.vue'
 import ProjectListPanel from './components/ProjectListPanel.vue'
 import ProjectWorkflowPanel from './components/ProjectWorkflowPanel.vue'
@@ -101,6 +108,43 @@ const createWizardFormDirty = ref(false)
 const workflowState = ref<ProjectWorkflowState | null>(null)
 const workflowLoading = ref(false)
 const workflowProjectId = computed(() => currentProjectId.value || projectStore.currentProject?.id || '')
+const recommendedAction = computed(() => workflowState.value?.recommended_next_action ?? null)
+const overlayCandidateCount = computed(() => {
+  const counts = workflowState.value?.overlay?.counts as Record<string, unknown> | undefined
+  return Number(counts?.active_nodes || 0) + Number(counts?.active_edges || 0)
+})
+const pathNodeCount = computed(() => Number(workflowState.value?.path?.node_count || 0))
+const trackingCompletionLabel = computed(() => `${Math.round(Number(workflowState.value?.tracking?.completion_rate || 0) * 100)}%`)
+const projectSummaryItems = computed<Array<{ label: string; value: string; detail: string; tone: 'primary' | 'success' | 'warning' | 'danger' | 'info' }>>(() => [
+  {
+    label: '当前项目',
+    value: projectStore.currentProject?.title || '未选择',
+    detail: projectStore.currentProject?.goal_text || '选择项目后继续学习流程',
+    tone: projectStore.currentProject ? 'primary' : 'info',
+  },
+  {
+    label: '扩展候选',
+    value: `${overlayCandidateCount.value} 个`,
+    detail: '已进入项目图谱工作流的候选内容',
+    tone: overlayCandidateCount.value ? 'warning' : 'info',
+  },
+  {
+    label: '路径节点',
+    value: `${pathNodeCount.value} 个`,
+    detail: pathNodeCount.value ? '当前正式路径覆盖节点' : '生成路径后展示',
+    tone: pathNodeCount.value ? 'success' : 'info',
+  },
+  {
+    label: '学习进度',
+    value: trackingCompletionLabel.value,
+    detail: '根据已记录学习事件计算',
+    tone: trackingCompletionLabel.value === '100%' ? 'success' : 'info',
+  },
+])
+const nextActionTitle = computed(() => recommendedAction.value?.label || (projectStore.currentProject ? '查看学习路径' : '创建学习项目'))
+const nextActionDescription = computed(() => recommendedAction.value?.description || (projectStore.currentProject ? '已有项目后，可以继续查看路径、画像或图谱状态。' : '先创建一个学习项目，系统会引导你完成目标确认和画像采集。'))
+const nextActionButtonLabel = computed(() => recommendedAction.value?.label || (projectStore.currentProject ? '查看路径' : '开始创建'))
+const nextActionDisabled = computed(() => recommendedAction.value?.enabled === false)
 let workflowRequestId = 0
 
 onMounted(async () => {
@@ -275,6 +319,36 @@ function openPath(action?: ProjectWorkflowAction) {
   router.push('/path')
 }
 
+function handlePageNextAction() {
+  const actionPayload = recommendedAction.value
+  const action = actionPayload?.action
+  if (!projectStore.currentProject && !action) {
+    startCreate()
+    return
+  }
+  if (!action || !actionPayload || actionPayload.enabled === false) {
+    openPath()
+    return
+  }
+  if (action === 'complete_profile') {
+    continueProfile()
+    return
+  }
+  if (action === 'review_overlay' || action === 'fix_overlay') {
+    openKnowledge(actionPayload)
+    return
+  }
+  if (action === 'generate_path') {
+    void goToPath()
+    return
+  }
+  if (action === 'reconfirm_goal') {
+    startCreate()
+    return
+  }
+  openPath(actionPayload)
+}
+
 async function goToPath() {
   const projectId = workflowProjectId.value
   if (!projectId) return
@@ -347,87 +421,38 @@ async function handleDelete(row: Project) {
 </script>
 
 <style scoped>
-.page-container {
-  padding: 20px;
+.project-workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 34%) minmax(0, 1fr);
+  gap: var(--lp-space-4);
+  height: calc(100vh - var(--lp-header-height) - 228px);
+  min-height: 460px;
 }
 
-.project-hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: flex-end;
-  margin-bottom: 20px;
-  padding: 24px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 16px;
-  background: linear-gradient(135deg, var(--el-color-primary-light-9), var(--el-fill-color-blank));
+.project-list-pane,
+.project-detail-pane {
+  min-width: 0;
 }
 
-.hero-eyebrow {
-  margin: 0 0 8px;
-  color: var(--el-color-primary);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.project-list-pane :deep(.el-card),
+.project-detail-pane :deep(.el-card) {
+  min-height: 100%;
 }
 
-.project-hero h1 {
-  margin: 0;
-  font-size: 26px;
-  line-height: 1.3;
+.project-detail-pane :deep(.workflow-steps) {
+  margin-bottom: var(--lp-space-4);
 }
 
-.hero-description {
-  max-width: 680px;
-  margin: 10px 0 0;
-  color: var(--el-text-color-secondary);
-  line-height: 1.7;
-}
-
-.hero-flow {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.hero-flow span {
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: var(--el-fill-color-blank);
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
-}
-
-@media (max-width: 768px) {
-  .page-container {
-    padding: 12px;
+@media (max-width: 960px) {
+  .project-workspace {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
   }
 
-  .project-hero {
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 18px;
-  }
-
-  .project-hero h1 {
-    font-size: 22px;
-  }
-
-  .hero-flow {
-    justify-content: flex-start;
-  }
-
-  :deep(.el-row) {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  :deep(.el-col) {
-    max-width: 100%;
-    flex: 0 0 100%;
+  .project-list-pane,
+  .project-detail-pane {
+    overflow: visible;
   }
 }
 </style>

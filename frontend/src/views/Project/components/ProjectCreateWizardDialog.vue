@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="modelValue"
     title="创建学习项目"
-    width="min(920px, 94vw)"
+    width="min(1240px, 98vw)"
     class="project-create-wizard-dialog"
     :close-on-click-modal="false"
     :before-close="handleBeforeClose"
@@ -16,25 +16,56 @@
         <p>{{ wizardDescription }}</p>
       </div>
       <div class="wizard-progress-pills" aria-label="创建向导进度">
-        <span :class="{ active: step === 0, done: step > 0 }">目标解析</span>
-        <span :class="{ active: step === 1, done: step > 1 }">画像采集</span>
-        <span :class="{ active: step === 2 }">生成路径</span>
+        <span v-for="item in wizardSteps" :key="item.key" :class="{ active: step === item.index, done: step > item.index }">
+          {{ item.label }}
+        </span>
       </div>
     </section>
 
-    <ProjectWorkflowPanel
-      :step="step"
-      goal-form-mode="create"
-      :current-project-id="currentProjectId"
-      :current-project="currentProject"
-      reconfirm-reason=""
-      :generating-plan="generatingPlan"
-      @project-created="$emit('projectCreated', $event)"
-      @profile-completed="$emit('profileCompleted')"
-      @generate-path="$emit('generatePath')"
-      @start-create="$emit('startCreate')"
-      @create-form-dirty-changed="$emit('createFormDirtyChanged', $event)"
-    />
+    <section class="wizard-body-shell">
+      <aside class="wizard-step-rail" aria-label="创建步骤说明">
+        <button
+          v-for="item in wizardSteps"
+          :key="item.key"
+          type="button"
+          class="wizard-step-card"
+          :class="{ active: step === item.index, done: step > item.index }"
+        >
+          <span>{{ item.label }}</span>
+          <strong>{{ item.title }}</strong>
+          <small>{{ item.description }}</small>
+        </button>
+      </aside>
+
+      <main class="wizard-main-panel">
+        <ProjectWorkflowPanel
+          :step="step"
+          goal-form-mode="create"
+          :current-project-id="currentProjectId"
+          :current-project="currentProject"
+          reconfirm-reason=""
+          :generating-plan="generatingPlan"
+          variant="wizard"
+          hide-steps
+          @project-created="$emit('projectCreated', $event)"
+          @profile-completed="$emit('profileCompleted')"
+          @generate-path="$emit('generatePath')"
+          @start-create="$emit('startCreate')"
+          @create-form-dirty-changed="$emit('createFormDirtyChanged', $event)"
+        />
+      </main>
+
+      <aside class="wizard-helper-panel" aria-label="当前步骤提示">
+        <p class="wizard-eyebrow">当前重点</p>
+        <h3>{{ currentStepGuide.title }}</h3>
+        <p>{{ currentStepGuide.description }}</p>
+        <div class="wizard-helper-list">
+          <article v-for="hint in currentStepGuide.hints" :key="hint">
+            {{ hint }}
+          </article>
+        </div>
+      </aside>
+    </section>
 
     <template #footer>
       <div class="wizard-dialog-footer">
@@ -71,6 +102,34 @@ const emit = defineEmits<{
   createFormDirtyChanged: [dirty: boolean]
   continueLater: []
 }>()
+
+const wizardSteps = [
+  {
+    key: 'goal',
+    index: 0,
+    label: '目标解析',
+    title: '先让系统理解目标',
+    description: '输入自然语言目标，确认系统理解和可规划范围。',
+    hints: ['先写真实学习意图，不必套模板。', '解析后会切换到结果确认页。', '确认候选、澄清或扩展草稿都不会绕过正式图谱边界。'],
+  },
+  {
+    key: 'profile',
+    index: 1,
+    label: '画像采集',
+    title: '补充学习者画像',
+    description: '确认数学、编程、机器学习基础、偏好和时间预算。',
+    hints: ['画像影响排序、补强和预算提示。', '项目已创建，稍后继续也不会丢失。', '不需要一次填出完美答案。'],
+  },
+  {
+    key: 'path',
+    index: 2,
+    label: '生成路径',
+    title: '生成可解释路径',
+    description: '根据目标、画像和知识图谱生成阶段化学习路径。',
+    hints: ['正式路径只使用可审查图谱内容。', '生成后可查看解释和进度页。', '之后仍可重规划。'],
+  },
+]
+const currentStepGuide = computed(() => wizardSteps.find((item) => item.index === props.step) ?? wizardSteps[0])
 
 const wizardTitle = computed(() => {
   if (props.step === 1) return '继续完成画像采集'
@@ -130,13 +189,17 @@ async function handleBeforeClose(done: () => void) {
 
 <style scoped>
 :deep(.project-create-wizard-dialog) {
+  display: flex;
+  max-height: min(86vh, 840px);
+  flex-direction: column;
   border-radius: 18px;
   overflow: hidden;
 }
 
 :deep(.project-create-wizard-dialog .el-dialog__body) {
-  max-height: 72vh;
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
   padding-top: 0;
 }
 
@@ -198,6 +261,102 @@ async function handleBeforeClose(done: () => void) {
   color: var(--el-color-success);
 }
 
+.wizard-body-shell {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 240px;
+  gap: 14px;
+  min-height: 0;
+  height: calc(min(86vh, 840px) - 196px);
+}
+
+.wizard-step-rail,
+.wizard-main-panel,
+.wizard-helper-panel {
+  min-height: 0;
+  overflow: auto;
+}
+
+.wizard-step-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wizard-step-card {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-regular);
+  text-align: left;
+  cursor: default;
+}
+
+.wizard-step-card.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  box-shadow: 0 8px 18px rgb(64 158 255 / 10%);
+}
+
+.wizard-step-card.done {
+  border-color: var(--el-color-success-light-5);
+}
+
+.wizard-step-card span,
+.wizard-step-card small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wizard-step-card strong {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+}
+
+.wizard-main-panel {
+  padding-right: 2px;
+}
+
+.wizard-helper-panel {
+  padding: 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--el-fill-color-light), var(--el-fill-color-blank));
+}
+
+.wizard-helper-panel h3 {
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: 17px;
+}
+
+.wizard-helper-panel p:not(.wizard-eyebrow) {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.wizard-helper-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.wizard-helper-list article {
+  padding: 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .wizard-dialog-footer {
   display: flex;
   justify-content: space-between;
@@ -220,6 +379,16 @@ async function handleBeforeClose(done: () => void) {
 
   :deep(.project-create-wizard-dialog .el-dialog__body) {
     max-height: calc(100vh - 150px);
+    overflow: auto;
+  }
+
+  .wizard-body-shell {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .wizard-step-rail {
+    display: none;
   }
 
   .wizard-dialog-intro,

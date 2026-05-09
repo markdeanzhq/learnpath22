@@ -38,7 +38,7 @@ const readinessCapabilityCards = computed(() => {
     {
       key: 'neo4j_projection',
       title: 'Neo4j 投影',
-      description: '仅用于显式同步、投影诊断和推广流程，不阻塞本地主链演示。',
+      description: '仅用于显式同步、投影诊断和图谱展示/审核流程，不阻塞本地主链演示。',
       service: capabilities.neo4j_projection,
     },
     {
@@ -82,7 +82,7 @@ function serviceDetail(key: string, service: ReadinessServiceStatus) {
       const domainLabel = service.domain || '当前默认领域'
       return `${domainLabel} Neo4j 投影已同步；本地读模型不依赖该投影`
     }
-    return service.reason || '仅影响显式同步、投影诊断和推广流程'
+    return service.reason || '仅影响显式同步、投影诊断和图谱展示/审核流程'
   }
   return service.reason || '能力状态待确认'
 }

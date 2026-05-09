@@ -32,6 +32,17 @@
       <template #default>{{ statePanelDescription }}</template>
     </el-alert>
 
+    <section class="resolution-decision-chain" aria-label="目标解析关键判断">
+      <article v-for="(item, index) in resolutionQuestionCards" :key="item.title" class="resolution-decision-step">
+        <span class="decision-step-index">{{ index + 1 }}</span>
+        <div>
+          <span class="decision-step-title">{{ item.title }}</span>
+          <strong>{{ item.value }}</strong>
+          <small>{{ item.detail }}</small>
+        </div>
+      </article>
+    </section>
+
     <GoalUnderstandingCard
       :preview-state="previewState"
       :mode="mode"
@@ -128,11 +139,32 @@
         :class="{ selected: selectedCandidateId === topCandidate.candidate_id }"
         @click="selectCandidate(topCandidate.candidate_id)"
       >
-        <div>
-          <span class="decision-label">当前推荐</span>
-          <strong>{{ candidateTitle(topCandidate) }}</strong>
-          <p>{{ topCandidate.user_explanation || topCandidate.explanation }}</p>
+        <div class="candidate-focus-main">
+          <div>
+            <span class="decision-label">当前推荐</span>
+            <strong>{{ candidateTitle(topCandidate) }}</strong>
+            <p>{{ topCandidate.user_explanation || topCandidate.explanation }}</p>
+          </div>
+          <el-button type="primary" plain @click.stop="selectCandidate(topCandidate.candidate_id)">
+            {{ selectedCandidateId === topCandidate.candidate_id ? '已选择这个目标' : '选择这个目标' }}
+          </el-button>
         </div>
+
+        <div class="candidate-focus-metrics">
+          <article>
+            <span>目标知识点</span>
+            <strong>{{ candidateTargetRefs(topCandidate).length }}</strong>
+          </article>
+          <article>
+            <span>匹配置信度</span>
+            <strong>{{ confidenceLabel(topCandidate.confidence_level) }}</strong>
+          </article>
+          <article>
+            <span>推荐动作</span>
+            <strong>{{ recommendedActionLabel(topCandidate.recommended_action) }}</strong>
+          </article>
+        </div>
+
         <div class="candidate-targets compact-targets">
           <span class="targets-label">路径目标：</span>
           <el-tag
@@ -545,6 +577,43 @@ const decisionSummary = computed(() => {
     description: '当前目标无法安全映射到正式学习路径。',
   }
 })
+const resolutionQuestionCards = computed(() => {
+  const state = props.previewState
+  const firstCandidate = isSelectCandidateResponse(state) || isPartialResponse(state) ? (topCandidate.value || state.candidates[0] || null) : null
+  const targetCount = firstCandidate ? candidateTargetRefs(firstCandidate).length : 0
+  const missingCount = isPartialResponse(state) || isExtensionDraftResponse(state) ? state.missing_concepts.length : 0
+  const whyText = isExtensionDraftResponse(state)
+    ? `缺少 ${missingCount} 个概念，需要先进入图谱扩展草稿。`
+    : isPartialResponse(state)
+      ? `已有图谱只能覆盖部分内容，还有 ${missingCount} 个概念暂不纳入正式路径。`
+      : isClarificationResponse(state)
+        ? '目标边界还不够明确，需要先回答一个澄清问题。'
+        : isBoundaryResponse(state)
+          ? '当前目标超出机器学习基础原型范围。'
+          : `已匹配 ${targetCount} 个目标知识点，可进入正式创建。`
+  return [
+    {
+      title: '系统理解了什么？',
+      value: decisionSummary.value.goal,
+      detail: state.goal_frame?.raw_text || '系统会围绕这个目标寻找图谱知识点。',
+    },
+    {
+      title: '能不能直接规划？',
+      value: decisionSummary.value.badge,
+      detail: decisionSummary.value.coverage,
+    },
+    {
+      title: '为什么？',
+      value: isBoundaryResponse(state) ? '范围不支持' : missingCount ? `${missingCount} 个缺失概念` : `${targetCount} 个目标知识点`,
+      detail: whyText,
+    },
+    {
+      title: '下一步做什么？',
+      value: decisionSummary.value.action,
+      detail: decisionSummary.value.description,
+    },
+  ]
+})
 const decisionSummaryTagType = computed(() => {
   if (isBoundaryResponse(props.previewState)) return 'danger'
   if (isSelectCandidateResponse(props.previewState) && topCandidate.value?.confidence_level === 'high') return 'success'
@@ -694,7 +763,6 @@ function selectCandidate(candidateId: string) {
 
 <style scoped>
 .preview-panel {
-  margin-top: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -705,6 +773,54 @@ function selectCandidate(candidateId: string) {
   border-radius: 12px;
   padding: 16px;
   background: var(--el-fill-color-blank);
+}
+
+.resolution-decision-chain {
+  display: grid;
+  gap: 10px;
+}
+
+.resolution-decision-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--el-color-primary-light-9), var(--el-fill-color-blank));
+}
+
+.decision-step-index {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--el-color-primary);
+  color: var(--el-color-white);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.decision-step-title,
+.resolution-decision-step small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.resolution-decision-step strong {
+  display: block;
+  margin: 3px 0;
+  color: var(--el-text-color-primary);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.resolution-decision-step small {
+  display: block;
 }
 
 .decision-summary-panel {
@@ -843,11 +959,30 @@ function selectCandidate(candidateId: string) {
 }
 
 .candidate-focus-card {
-  padding: 14px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
   border: 1px solid var(--el-color-primary-light-7);
-  border-radius: 12px;
-  background: var(--el-color-primary-light-9);
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--el-color-primary-light-9), var(--el-fill-color-blank));
   cursor: pointer;
+}
+
+.candidate-focus-card.selected {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 1px var(--el-color-primary-light-5), 0 12px 26px rgb(64 158 255 / 12%);
+}
+
+.candidate-focus-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.candidate-focus-main :deep(.el-button) {
+  flex: 0 0 auto;
+  min-height: 40px;
 }
 
 .candidate-focus-card strong {
@@ -861,6 +996,32 @@ function selectCandidate(candidateId: string) {
   margin: 8px 0 0;
   color: var(--el-text-color-secondary);
   line-height: 1.6;
+}
+
+.candidate-focus-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.candidate-focus-metrics article {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 84%);
+}
+
+.candidate-focus-metrics span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.candidate-focus-metrics strong {
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: 15px;
 }
 
 .candidate-detail-disclosure {
@@ -1022,9 +1183,14 @@ function selectCandidate(candidateId: string) {
 }
 
 @media (max-width: 768px) {
+  .candidate-focus-main {
+    flex-direction: column;
+  }
+
   .decision-grid,
   .coverage-action-grid,
-  .draft-proposal-metrics {
+  .draft-proposal-metrics,
+  .candidate-focus-metrics {
     grid-template-columns: 1fr;
   }
 

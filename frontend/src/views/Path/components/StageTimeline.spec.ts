@@ -101,7 +101,7 @@ describe('StageTimeline', () => {
   it('passes practice intensity into task cards and adjusts stage guidance', () => {
     const wrapper = mountStageTimeline(stages, 5)
 
-    expect(wrapper.text()).toContain('优先在推荐资源中寻找代码、案例或小题进行动手验证')
+    expect(wrapper.text()).toContain('优先选择代码、案例或小题完成动手验证')
     expect(wrapper.text()).toContain('练习强度 5')
     expect(wrapper.findComponent(taskCardStub).props('practiceIntensity')).toBe(5)
   })
@@ -136,7 +136,7 @@ describe('StageTimeline', () => {
     }])
     expect(emptyTaskWrapper.text()).toContain('空阶段')
     expect(emptyTaskWrapper.text()).toContain('核心掌握暂无任务：当前目标范围没有匹配到该阶段的知识点。')
-    expect(emptyTaskWrapper.text()).toContain('系统会保留目标闭包和评分结果')
+    expect(emptyTaskWrapper.text()).toContain('系统不会为了填满版式加入无关知识点')
   })
 })
 
@@ -172,8 +172,8 @@ describe('TaskCard', () => {
     expect(wrapper.text()).toContain('关键知识点')
     expect(wrapper.text()).toContain('入门难度 2/5')
     expect(wrapper.text()).toContain('约 1 小时')
-    expect(wrapper.text()).toContain('建议完成笔记和练习后再进入下一项')
-    expect(wrapper.text()).toContain('高练习密度：优先在推荐资源中找代码、案例或小题完成一次动手验证。')
+    expect(wrapper.text()).toContain('关键节点：高练习密度')
+    expect(wrapper.text()).toContain('优先在推荐资源中找代码、案例或小题完成一次动手验证。')
 
     await wrapper.get('button').trigger('click')
 

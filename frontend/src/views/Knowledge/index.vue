@@ -35,72 +35,117 @@
         v-loading="loading || syncing"
         :element-loading-text="syncing ? '正在同步知识图谱...' : '正在加载知识图谱...'"
       >
-        <GraphLegendPanel
-          :category-legend="categoryLegend"
-          :relation-legend="relationLegend"
-        />
-        <GraphStatusPanel
-          :scope-label="graphScopeLabel"
-          :status-hint="graphStatusHint"
-          :node-count="graphNodeCount"
-          :edge-count="graphEdgeCount"
-          :overlay-preflight="overlayPreflight"
-          :overlay-preflight-tag-type="overlayPreflightTagType"
-          :show-graph-cache-diagnostics="showGraphCacheDiagnostics"
-          :graph-cache-diagnostic-items="graphCacheDiagnosticItems"
-          :graph-cache-stats-loading="graphCacheStatsLoading"
-          :graph-cache-stats-error="graphCacheStatsError"
-        />
-        <el-alert
-          v-if="projectionStatus && projectionStatus.status !== 'empty'"
-          class="graph-alert"
-          :type="projectionAlertType"
-          :closable="false"
-          show-icon
-          :title="projectionStatusTitle"
-        />
-        <OverlayPreflightPanel
-          v-if="overlayPreflight"
-          :preflight="overlayPreflight"
-          :tag-type="overlayPreflightTagType"
-          :status-label="overlayPreflightStatusLabel"
-          :guidance="overlayPreflightGuidance"
-          :issues="overlayPreflightIssues"
-          :candidate-actions="overlayPreflightActions"
-          :primary-action="overlayPreflightPrimaryAction"
-          @open-path-comparison="openPathComparison"
-          @open-candidate-action="openOverlayPreflightCandidateAction"
-        />
-        <el-alert
-          v-if="graphState === 'ready' && lastRefreshError"
-          class="graph-alert"
-          type="warning"
-          :closable="false"
-          show-icon
-          :title="lastRefreshError"
-        />
+        <details class="graph-guide-disclosure">
+          <summary>如何看懂图谱？</summary>
+          <section class="graph-guide-strip" aria-label="图谱阅读提示">
+            <article v-for="item in graphGuideItems" :key="item.title">
+              <strong>{{ item.title }}</strong>
+              <span>{{ item.description }}</span>
+            </article>
+          </section>
+        </details>
 
-        <GraphCanvas
-          v-if="graphState === 'ready'"
-          ref="graphRef"
-          :elements="elements"
-          :layout="layout"
-          :highlight-nodes="selectedNodeId ? [selectedNodeId] : []"
-          :review-mode="reviewMode"
-          @node-click="onNodeClick"
-          @review-node="onReviewNode"
-          @review-edge="onReviewEdge"
-        />
+        <div class="graph-stage" :class="{ 'graph-stage--with-inspector': selectedNode }">
+          <GraphCanvas
+            v-if="graphState === 'ready'"
+            ref="graphRef"
+            :elements="elements"
+            :layout="layout"
+            :highlight-nodes="selectedNodeId ? [selectedNodeId] : []"
+            :review-mode="reviewMode"
+            @node-click="onNodeClick"
+            @review-node="onReviewNode"
+            @review-edge="onReviewEdge"
+          />
 
-        <GraphStatePanel
-          v-else
-          :state="graphState"
-          :empty-description="emptyDescription"
-          :error-message="errorMessage"
-          :syncing="syncing"
-          @refresh="onRefresh"
-          @sync="onSync"
-        />
+          <GraphStatePanel
+            v-else
+            :state="graphState"
+            :empty-description="emptyDescription"
+            :error-message="errorMessage"
+            :syncing="syncing"
+            @refresh="onRefresh"
+            @sync="onSync"
+          />
+
+          <aside v-if="graphState === 'ready'" class="graph-floating-panel graph-floating-panel--legend">
+            <GraphLegendPanel
+              :category-legend="categoryLegend"
+              :relation-legend="relationLegend"
+            />
+          </aside>
+
+          <aside v-if="graphState === 'ready'" class="graph-floating-panel graph-floating-panel--status">
+            <GraphStatusPanel
+              :scope-label="graphScopeLabel"
+              :status-hint="graphStatusHint"
+              :node-count="graphNodeCount"
+              :edge-count="graphEdgeCount"
+              :overlay-preflight="overlayPreflight"
+              :overlay-preflight-tag-type="overlayPreflightTagType"
+              :show-graph-cache-diagnostics="showGraphCacheDiagnostics"
+              :graph-cache-diagnostic-items="graphCacheDiagnosticItems"
+              :graph-cache-stats-loading="graphCacheStatsLoading"
+              :graph-cache-stats-error="graphCacheStatsError"
+            />
+          </aside>
+
+          <aside v-if="selectedNode" class="graph-inspector-panel">
+            <header>
+              <span>当前选中</span>
+              <strong>{{ selectedNode.label || selectedNode.id }}</strong>
+            </header>
+            <div class="graph-inspector-tags">
+              <el-tag size="small" type="info">{{ selectedNode.category || selectedNode.group_id || '知识点' }}</el-tag>
+              <el-tag v-if="selectedNode.is_main_path" size="small" type="success">当前路径</el-tag>
+              <el-tag v-if="selectedNode.origin === 'overlay'" size="small" type="warning">图谱扩展</el-tag>
+            </div>
+            <div class="graph-inspector-metrics">
+              <span>难度 <strong>{{ selectedNode.difficulty ?? selectedNode.difficulty_final ?? '—' }}</strong></span>
+              <span>重要度 <strong>{{ selectedNode.importance ?? selectedNode.importance_final ?? '—' }}</strong></span>
+              <span>学时 <strong>{{ selectedNode.estimated_hours ? `${selectedNode.estimated_hours}h` : '—' }}</strong></span>
+            </div>
+            <div class="graph-inspector-relations">
+              <p>前置关系 {{ selectedNode.incoming_edges.length }} 条</p>
+              <p>后续关系 {{ selectedNode.outgoing_edges.length }} 条</p>
+            </div>
+          </aside>
+
+          <details v-if="overlayPreflight || projectionStatus || (graphState === 'ready' && lastRefreshError)" class="graph-preflight-dock">
+            <summary>
+              图谱状态与扩展预检
+              <el-tag v-if="overlayPreflight" size="small" :type="overlayPreflightTagType">{{ overlayPreflightStatusLabel }}</el-tag>
+            </summary>
+            <el-alert
+              v-if="projectionStatus && projectionStatus.status !== 'empty'"
+              class="graph-alert"
+              :type="projectionAlertType"
+              :closable="false"
+              show-icon
+              :title="projectionStatusTitle"
+            />
+            <el-alert
+              v-if="graphState === 'ready' && lastRefreshError"
+              class="graph-alert"
+              type="warning"
+              :closable="false"
+              show-icon
+              :title="lastRefreshError"
+            />
+            <OverlayPreflightPanel
+              v-if="overlayPreflight"
+              :preflight="overlayPreflight"
+              :tag-type="overlayPreflightTagType"
+              :status-label="overlayPreflightStatusLabel"
+              :guidance="overlayPreflightGuidance"
+              :issues="overlayPreflightIssues"
+              :candidate-actions="overlayPreflightActions"
+              :primary-action="overlayPreflightPrimaryAction"
+              @open-path-comparison="openPathComparison"
+              @open-candidate-action="openOverlayPreflightCandidateAction"
+            />
+          </details>
+        </div>
       </div>
     </el-card>
 
@@ -237,6 +282,11 @@ const overlayCandidateFilter = ref<CandidateIssueFilter>('all')
 let graphWorkspaceLoader: ReturnType<typeof useGraphWorkspaceLoader> | null = null
 const categoryLegend = GRAPH_CATEGORY_LEGEND
 const relationLegend = GRAPH_RELATION_LEGEND
+const graphGuideItems = [
+  { title: '先看节点颜色', description: '区分目标、前置、画像补强和项目扩展内容。' },
+  { title: '再看箭头方向', description: 'REQUIRES 表示先学前置，再进入后续知识点。' },
+  { title: '扩展先审核', description: '资料生成的待审核扩展不会自动进入正式规划。' },
+]
 function isNodeElement(element: GraphElement): element is Extract<GraphElement, { group: 'nodes' }> {
   return element.group === 'nodes'
 }
@@ -722,12 +772,171 @@ void syncRequestedOverlaySession
 .graph-wrapper {
   display: flex;
   flex: 1;
-  flex-direction: column;
   min-height: 0;
+  flex-direction: column;
+  background: var(--el-fill-color-light);
+}
+
+.graph-guide-disclosure {
+  margin: var(--lp-space-2) var(--lp-space-3) 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.graph-guide-disclosure summary {
+  display: inline-flex;
+  cursor: pointer;
+  user-select: none;
+}
+
+.graph-guide-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--lp-space-2);
+  margin-top: var(--lp-space-2);
+}
+
+.graph-guide-strip article {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--lp-space-2);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--lp-radius-md);
+  background: var(--el-fill-color-blank);
+}
+
+.graph-guide-strip strong {
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+}
+
+.graph-guide-strip span {
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: var(--lp-space-2) var(--lp-space-3) var(--lp-space-3);
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--lp-radius-lg);
+  background: var(--el-fill-color-blank);
+}
+
+.graph-stage :deep(.graph-canvas) {
+  height: 100%;
+}
+
+.graph-floating-panel {
+  position: absolute;
+  z-index: 5;
+  max-width: min(520px, 48vw);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--lp-radius-md);
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 12px 30px rgb(31 45 61 / 12%);
+  backdrop-filter: blur(8px);
+}
+
+.graph-floating-panel--legend {
+  left: var(--lp-space-3);
+  bottom: var(--lp-space-3);
+}
+
+.graph-floating-panel--status {
+  top: var(--lp-space-3);
+  right: var(--lp-space-3);
+}
+
+.graph-floating-panel :deep(.graph-legend-wrap),
+.graph-floating-panel :deep(.graph-status-panel) {
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.graph-inspector-panel {
+  position: absolute;
+  right: var(--lp-space-3);
+  bottom: var(--lp-space-3);
+  z-index: 6;
+  display: grid;
+  gap: var(--lp-space-3);
+  width: min(300px, 34vw);
+  padding: var(--lp-space-3);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--lp-radius-md);
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 12px 30px rgb(31 45 61 / 14%);
+}
+
+.graph-inspector-panel header span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.graph-inspector-panel header strong {
+  color: var(--el-text-color-primary);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.graph-inspector-tags,
+.graph-inspector-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lp-space-2);
+}
+
+.graph-inspector-metrics span,
+.graph-inspector-relations p {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.graph-inspector-metrics strong {
+  color: var(--el-text-color-primary);
+}
+
+.graph-preflight-dock {
+  position: absolute;
+  left: var(--lp-space-3);
+  right: var(--lp-space-3);
+  bottom: var(--lp-space-3);
+  z-index: 7;
+  max-height: 45%;
+  overflow: auto;
+  padding: var(--lp-space-2);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--lp-radius-md);
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 12px 30px rgb(31 45 61 / 14%);
+}
+
+.graph-preflight-dock summary {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--lp-space-2);
+  align-items: center;
+  color: var(--el-text-color-primary);
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .graph-alert {
-  margin: 12px 12px 0;
+  margin: 12px 0 0;
 }
 
 @media (max-width: 768px) {
@@ -736,5 +945,26 @@ void syncRequestedOverlaySession
     height: auto;
   }
 
+  .graph-stage {
+    min-height: 560px;
+    overflow: visible;
+  }
+
+  .graph-guide-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .graph-guide-strip span {
+    white-space: normal;
+  }
+
+  .graph-floating-panel,
+  .graph-inspector-panel,
+  .graph-preflight-dock {
+    position: static;
+    width: auto;
+    max-width: none;
+    margin: var(--lp-space-2);
+  }
 }
 </style>

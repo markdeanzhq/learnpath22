@@ -20,13 +20,12 @@
         </div>
       </section>
 
-      <section class="path-stat-grid" aria-label="路径概览指标">
-        <article v-for="item in pathStatCards" :key="item.label" class="path-stat-card">
-          <span>{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
-          <small>{{ item.detail }}</small>
-        </article>
-      </section>
+      <PageSummaryBar :items="pathSummaryItems" class="path-summary-bar">
+        <NextActionCard :title="nextLearningTitle" :description="nextLearningDescription">
+          <el-button size="small" type="primary" @click="activeTab = 'timeline'">查看当前阶段</el-button>
+          <el-button size="small" plain @click="activeTab = 'explanation'">查看原因</el-button>
+        </NextActionCard>
+      </PageSummaryBar>
 
       <div class="path-display-row">
         <DisplayModeSwitch v-model="displayMode" />
@@ -34,6 +33,7 @@
       </div>
 
       <el-alert
+        v-if="displayMode !== 'simple'"
         class="display-mode-hint"
         :title="displayModeHint.title"
         :description="displayModeHint.description"
@@ -741,6 +741,8 @@ import { graphApi, type OverlayPreflightResponse } from '@/api/modules/graph'
 import { searchApi, type SearchResultItem } from '@/api/modules/search'
 import { resourceApi, type PlanResourcesResponse, type StageResourceGroup } from '@/api/modules/resource'
 import DisplayModeSwitch from '@/components/DisplayModeSwitch.vue'
+import PageSummaryBar from '@/components/PageSummaryBar.vue'
+import NextActionCard from '@/components/NextActionCard.vue'
 import { useDisplayMode } from '@/composables/useDisplayMode'
 import {
   auditSummaryEntries,
@@ -793,28 +795,37 @@ const practiceIntensity = computed(() => {
 const pathModeSourceLabel = computed(() => pathModeSourceLabelFrom(
   planStore.currentPlan?.path_mode_source || planStore.currentPlan?.audit?.path_mode_source,
 ))
-const pathStatCards = computed(() => [
+const pathSummaryItems = computed<Array<{ label: string; value: string; detail: string; tone: 'primary' | 'success' | 'warning' | 'danger' | 'info' }>>(() => [
   {
     label: '阶段数',
     value: `${pathStageCount.value} 个`,
     detail: '按学习顺序分阶段推进',
+    tone: 'primary',
   },
   {
     label: '知识点',
     value: `${pathNodeCount.value} 个`,
-    detail: '包含目标、前置和补强节点',
+    detail: '目标、前置和画像补强节点',
+    tone: 'info',
   },
   {
     label: '预计投入',
     value: pathTotalHoursLabel.value,
     detail: '来自当前路径预算评估',
+    tone: 'success',
   },
   {
     label: '时间预算',
     value: budgetLabel.value,
-    detail: '可在调整路径中预览变体',
+    detail: '不裁剪硬依赖，仅提示风险',
+    tone: budgetTagType.value === 'danger' ? 'danger' : budgetTagType.value === 'warning' ? 'warning' : 'success',
   },
 ])
+const firstPathTask = computed(() => planStore.currentPlan?.stages.flatMap((stage) => stage.tasks)[0] ?? null)
+const nextLearningTitle = computed(() => firstPathTask.value ? `从「${firstPathTask.value.name}」开始` : '查看阶段化学习路径')
+const nextLearningDescription = computed(() => firstPathTask.value
+  ? '默认先从当前路径的第一个知识点开始；学习过程中可在进度页记录状态。'
+  : '路径加载完成后，这里会显示建议开始的知识点。')
 const searchQuery = ref('')
 const searchResults = ref<SearchResultItem[]>([])
 const searching = ref(false)
@@ -1696,11 +1707,11 @@ function shortHash(value?: string | null) {
 .path-hero {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
+  gap: var(--lp-space-4);
   align-items: flex-start;
-  padding: 24px;
+  padding: var(--lp-space-4);
   border: 1px solid var(--el-color-primary-light-7);
-  border-radius: 16px;
+  border-radius: var(--lp-radius-lg);
   background: linear-gradient(135deg, var(--el-color-primary-light-9), var(--el-fill-color-blank));
 }
 .path-hero-main {
@@ -1715,14 +1726,18 @@ function shortHash(value?: string | null) {
 }
 .path-hero h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: 22px;
   line-height: 1.3;
 }
 .hero-goal {
+  display: -webkit-box;
   max-width: 680px;
-  margin: 10px 0 0;
+  margin: var(--lp-space-1) 0 0;
+  overflow: hidden;
   color: var(--el-text-color-secondary);
-  line-height: 1.7;
+  line-height: 1.6;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .hero-tags,
 .path-hero-actions,
@@ -1733,7 +1748,11 @@ function shortHash(value?: string | null) {
   align-items: center;
 }
 .hero-tags {
-  margin-top: 14px;
+  margin-top: var(--lp-space-2);
+}
+
+.path-summary-bar {
+  margin: var(--lp-space-3) 0;
 }
 .path-hero-actions {
   justify-content: flex-end;
@@ -1764,7 +1783,7 @@ function shortHash(value?: string | null) {
 }
 .path-display-row {
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: var(--lp-space-2);
 }
 .display-mode-hint {
   margin-bottom: 16px;

@@ -85,12 +85,9 @@ const practiceGuidance = computed(() => {
 })
 
 const guidanceLabel = computed(() => {
-  const base = props.task.importance >= 4
-    ? '建议完成笔记和练习后再进入下一项。'
-    : props.task.difficulty >= 4
-      ? '建议拆成小目标学习，必要时回看前置概念。'
-      : '理解核心概念后即可继续推进。'
-  return `${base}${practiceGuidance.value}`
+  if (props.task.importance >= 4) return `关键节点：${practiceGuidance.value}`
+  if (props.task.difficulty >= 4) return '难度较高：建议拆成小目标，必要时回看前置概念。'
+  return `建议动作：${practiceGuidance.value}`
 })
 </script>
 
@@ -99,6 +96,10 @@ const guidanceLabel = computed(() => {
   height: 100%;
   border-left: 4px solid var(--el-border-color);
   transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.task-card :deep(.el-card__body) {
+  padding: 14px;
 }
 
 .task-card:hover {
@@ -145,11 +146,15 @@ const guidanceLabel = computed(() => {
 }
 
 .task-guidance {
+  display: -webkit-box;
   min-height: 40px;
   margin: 10px 0 0;
+  overflow: hidden;
   color: var(--el-text-color-regular);
   font-size: 13px;
   line-height: 1.6;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .task-actions {

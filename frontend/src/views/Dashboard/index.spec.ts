@@ -85,6 +85,18 @@ vi.mock('@/api/modules/resource', () => ({
 
 const cardStub = defineComponent({ template: '<section><slot name="header" /><slot /></section>' })
 const slotStub = (tag: string) => defineComponent({ template: `<${tag}><slot /></${tag}>` })
+const pageShellStub = defineComponent({
+  props: ['title', 'subtitle', 'eyebrow'],
+  template: '<section>{{ eyebrow }}{{ title }}{{ subtitle }}<slot name="actions" /><slot name="summary" /><slot /></section>',
+})
+const summaryBarStub = defineComponent({
+  props: ['items'],
+  template: '<section><article v-for="item in items" :key="item.label">{{ item.label }}{{ item.value }}{{ item.detail }}</article><slot /></section>',
+})
+const nextActionStub = defineComponent({
+  props: ['title', 'description'],
+  template: '<article>{{ title }}{{ description }}<slot /></article>',
+})
 
 const latestPlan = {
   id: 'plan-001',
@@ -122,10 +134,14 @@ function mountDashboard() {
         loading: () => undefined,
       },
       stubs: {
+        PageShell: pageShellStub,
+        PageSummaryBar: summaryBarStub,
+        NextActionCard: nextActionStub,
         StatsOverview: slotStub('div'),
         ElCard: cardStub,
         ElEmpty: slotStub('div'),
         ElButton: slotStub('button'),
+        ElProgress: slotStub('div'),
         ElIcon: slotStub('i'),
         DataAnalysis: slotStub('i'),
       },

@@ -69,25 +69,12 @@
         </span>
       </div>
 
-      <section class="defense-guide section-gap" aria-label="规划解释答辩导览">
-        <div class="defense-guide-main">
-          <p class="defense-eyebrow">答辩导览</p>
-          <h3>路径为何成立</h3>
-          <p>{{ overview.headline }}</p>
-        </div>
-        <div class="defense-card-grid">
-          <article v-for="item in defenseGuideCards" :key="item.title" class="defense-card">
-            <span>{{ item.title }}</span>
-            <strong>{{ item.value }}</strong>
-            <small>{{ item.detail }}</small>
-          </article>
-        </div>
-        <div class="defense-talking-points" aria-label="推荐讲述顺序">
-          <strong>推荐讲述顺序</strong>
-          <ol>
-            <li v-for="point in defenseTalkingPoints" :key="point">{{ point }}</li>
-          </ol>
-        </div>
+      <section class="explanation-quick-grid section-gap" aria-label="路径解释核心问题">
+        <article v-for="item in explanationQuickCards" :key="item.title" class="explanation-quick-card">
+          <span>{{ item.title }}</span>
+          <strong>{{ item.value }}</strong>
+          <small>{{ item.detail }}</small>
+        </article>
       </section>
 
       <el-card shadow="never" class="overview-card section-gap">
@@ -620,39 +607,32 @@ const budgetSummary = computed<ReadableBudgetSummary | null>(() => {
   }
 })
 const budgetSummaryText = computed(() => budgetSummary.value?.summary || '暂无时间预算说明。')
-const defenseGuideCards = computed(() => {
+const explanationQuickCards = computed(() => {
   const prerequisiteCount = nodeGroupCount(['prerequisite', 'prerequisites', 'dependency'])
   const reinforcedCount = nodeGroupCount(['reinforced', 'reinforcement'])
-  const targetNames = overview.value.goalNames.length ? overview.value.goalNames.join('、') : '目标节点待识别'
   return [
     {
-      title: '目标锁定',
-      value: targetNames,
-      detail: readability.value?.goal_resolution_summary.final_goal_text || '来自目标解析结果',
+      title: '为什么学这些？',
+      value: overview.value.goalNames.length ? overview.value.goalNames.join('、') : '目标节点待识别',
+      detail: `系统围绕目标节点展开，并补齐 ${prerequisiteCount} 个必要前置。`,
     },
     {
-      title: '依赖闭包',
-      value: `${prerequisiteCount} 个前置`,
-      detail: '先补齐硬前置，避免跳学关键概念',
+      title: '为什么这个顺序？',
+      value: '先依赖，后目标',
+      detail: orderingSummaryText.value,
     },
     {
-      title: '画像补强',
-      value: `${reinforcedCount} 个补强`,
-      detail: '按画像短板补充必要基础',
+      title: '哪里体现个性化？',
+      value: `${reinforcedCount} 个画像补强`,
+      detail: reinforcedCount ? '根据基础短板补充必要知识，而不是随意增加内容。' : '当前画像没有触发额外补强，排序和预算仍会体现偏好。',
     },
     {
-      title: '阶段与预算',
-      value: `${stageCards.value.length} 阶段 / ${formatHours(budgetSummary.value?.total_hours ?? overview.value.totalHours)}`,
-      detail: formatBudgetStatus(budgetSummary.value?.status ?? overview.value.budgetStatus),
+      title: '时间是否够？',
+      value: formatBudgetStatus(budgetSummary.value?.status ?? overview.value.budgetStatus),
+      detail: budgetSummaryText.value,
     },
   ]
 })
-const defenseTalkingPoints = computed(() => [
-  '先说明学习目标如何映射到目标知识点。',
-  '再说明硬前置闭包如何保证学习顺序正确。',
-  '接着说明画像补强和排序因子如何体现个性化。',
-  '最后用阶段划分与时间预算说明路径可执行。',
-])
 const auditHighlights = computed<AuditHighlight[]>(() => readability.value?.audit_highlights ?? [])
 const rawExplanationEntries = computed<RawExplanationEntry[]>(() => {
   const entries: RawExplanationEntry[] = []
@@ -998,6 +978,38 @@ function resolvePolishFallbackReason(reason?: string | null) {
 .node-id-note {
   margin: 8px 0 0;
 }
+.explanation-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.explanation-quick-card {
+  min-height: 126px;
+  padding: 12px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--el-color-primary-light-9), #ffffff 72%);
+}
+.explanation-quick-card span,
+.explanation-quick-card small {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.explanation-quick-card strong {
+  display: block;
+  margin: 7px 0;
+  color: #303133;
+  font-size: 17px;
+  line-height: 1.4;
+}
+.explanation-quick-card small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
 .defense-guide {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1180,7 +1192,8 @@ function resolvePolishFallbackReason(reason?: string | null) {
     flex-direction: column;
   }
 
-  .defense-card-grid {
+  .defense-card-grid,
+  .explanation-quick-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -189,6 +189,16 @@ const slotStub = (tag: string) => defineComponent({
   `,
 })
 
+const summaryBarStub = defineComponent({
+  props: ['items'],
+  template: '<section><article v-for="item in items" :key="item.label">{{ item.label }}{{ item.value }}{{ item.detail }}</article><slot /></section>',
+})
+
+const nextActionStub = defineComponent({
+  props: ['title', 'description'],
+  template: '<article>{{ title }}{{ description }}<slot /></article>',
+})
+
 const stageTimelineStub = defineComponent({
   name: 'StageTimeline',
   props: {
@@ -207,6 +217,8 @@ function mountPathIndex() {
       stubs: {
         StageTimeline: stageTimelineStub,
         Explanation: slotStub('div'),
+        PageSummaryBar: summaryBarStub,
+        NextActionCard: nextActionStub,
         ElCard: slotStub('section'),
         ElTag: slotStub('span'),
         ElDropdown: slotStub('div'),
@@ -681,8 +693,8 @@ describe('Path page goal reconfirm flow', () => {
     await flushPromises()
 
     const vm = wrapper.vm as any
-    expect(wrapper.text()).toContain('普通模式：隐藏审计细节')
-    expect(wrapper.text()).toContain('切换模式只影响展示，不会修改正式路径')
+    expect(wrapper.text()).not.toContain('普通模式：隐藏审计细节')
+    expect(wrapper.text()).not.toContain('切换模式只影响展示，不会修改正式路径')
 
     vm.displayMode = 'defense'
     await nextTick()

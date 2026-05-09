@@ -177,6 +177,11 @@ const slotStub = (tag: string) => defineComponent({
   template: `<${tag}><slot /></${tag}>`,
 })
 
+const pageShellStub = defineComponent({
+  props: ['title', 'subtitle', 'eyebrow'],
+  template: '<section>{{ eyebrow }}{{ title }}{{ subtitle }}<slot name="actions" /><slot name="summary" /><slot /></section>',
+})
+
 const buttonStub = defineComponent({
   props: {
     loading: { type: Boolean, default: false },
@@ -234,6 +239,7 @@ function mountProjectIndex() {
         loading: () => undefined,
       },
       stubs: {
+        PageShell: pageShellStub,
         ProjectListPanel: projectListPanelStub,
         ProjectWorkflowPanel: projectWorkflowPanelStub,
         ProfileQuestionnaire: slotStub('div'),

@@ -248,22 +248,20 @@ describe('Explanation component', () => {
     expect(planApiAskExplanationMock).not.toHaveBeenCalled()
   })
 
-  it('renders a defense-friendly guide before detailed explanation cards', () => {
+  it('renders user-oriented quick explanation cards before detailed explanation cards', () => {
     const wrapper = mountExplanation()
 
-    expect(wrapper.text()).toContain('答辩导览')
-    expect(wrapper.text()).toContain('路径为何成立')
-    expect(wrapper.text()).toContain('系统按目标、前置依赖和时间预算生成路径。')
-    expect(wrapper.text()).toContain('目标锁定')
+    expect(wrapper.text()).toContain('为什么学这些？')
     expect(wrapper.text()).toContain('机器学习基础')
-    expect(wrapper.text()).toContain('依赖闭包')
-    expect(wrapper.text()).toContain('0 个前置')
-    expect(wrapper.text()).toContain('画像补强')
-    expect(wrapper.text()).toContain('0 个补强')
-    expect(wrapper.text()).toContain('阶段与预算')
-    expect(wrapper.text()).toContain('1 阶段 / 6 小时')
-    expect(wrapper.text()).toContain('推荐讲述顺序')
-    expect(wrapper.text()).toContain('先说明学习目标如何映射到目标知识点')
+    expect(wrapper.text()).toContain('系统围绕目标节点展开')
+    expect(wrapper.text()).toContain('为什么这个顺序？')
+    expect(wrapper.text()).toContain('先依赖，后目标')
+    expect(wrapper.text()).toContain('哪里体现个性化？')
+    expect(wrapper.text()).toContain('0 个画像补强')
+    expect(wrapper.text()).toContain('时间是否够？')
+    expect(wrapper.text()).toContain('时间充裕')
+    expect(wrapper.text()).toContain('路径解释摘要')
+    expect(wrapper.text()).toContain('系统按目标、前置依赖和时间预算生成路径。')
   })
 
   it('shows AI polish waiting feedback while polished explanation is loading', () => {

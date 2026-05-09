@@ -1,6 +1,6 @@
 <template>
-  <el-card shadow="never">
-    <el-steps :active="step" align-center finish-status="success" class="workflow-steps">
+  <el-card shadow="never" class="project-workflow-panel" :class="{ 'project-workflow-panel--wizard': variant === 'wizard' }">
+    <el-steps v-if="!hideSteps" :active="step" align-center finish-status="success" class="workflow-steps">
       <el-step title="创建项目" />
       <el-step title="画像采集" />
       <el-step title="完成" />
@@ -57,6 +57,7 @@
       :initial-goal-text="currentProject?.goal_text ?? ''"
       :initial-goal-type="goalFormMode === 'reconfirm' ? currentProjectGoalType : 'auto'"
       :reconfirm-reason="reconfirmReason"
+      :variant="variant"
       @created="$emit('projectCreated', $event)"
       @updated="$emit('goalResolutionUpdated', $event)"
       @dirty-state-changed="$emit('createFormDirtyChanged', $event)"
@@ -119,7 +120,7 @@ import type { GoalTypeSelection, Project, ProjectWorkflowAction, ProjectWorkflow
 import GoalForm from './GoalForm.vue'
 import ProfileQuestionnaire from './ProfileQuestionnaire.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   step: number
   goalFormMode: 'create' | 'reconfirm'
   currentProjectId: string
@@ -128,7 +129,14 @@ const props = defineProps<{
   generatingPlan: boolean
   workflowState?: ProjectWorkflowState | null
   workflowLoading?: boolean
-}>()
+  variant?: 'overview' | 'wizard'
+  hideSteps?: boolean
+}>(), {
+  workflowState: null,
+  workflowLoading: false,
+  variant: 'overview',
+  hideSteps: false,
+})
 
 const emit = defineEmits<{
   projectCreated: [project: Project]
@@ -207,6 +215,15 @@ function handleRecommendedAction() {
 </script>
 
 <style scoped>
+.project-workflow-panel--wizard {
+  border: 0;
+  background: transparent;
+}
+
+.project-workflow-panel--wizard :deep(.el-card__body) {
+  padding: 0;
+}
+
 .workflow-steps {
   margin-bottom: 30px;
 }

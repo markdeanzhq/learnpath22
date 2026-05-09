@@ -73,6 +73,18 @@ vi.mock('@/api/modules/search', () => ({
 }))
 
 const slotStub = (tag: string) => ({ template: `<${tag}><slot /></${tag}>` })
+const pageShellStub = {
+  props: ['title', 'subtitle', 'eyebrow'],
+  template: '<section>{{ eyebrow }}{{ title }}{{ subtitle }}<slot name="actions" /><slot name="summary" /><slot /></section>',
+}
+const summaryBarStub = {
+  props: ['items'],
+  template: '<section><article v-for="item in items" :key="item.label">{{ item.label }}{{ item.value }}{{ item.detail }}</article><slot /></section>',
+}
+const nextActionStub = {
+  props: ['title', 'description'],
+  template: '<article>{{ title }}{{ description }}<slot /></article>',
+}
 const cardStub = { template: '<section><slot name="header" /><slot /></section>' }
 const tableColumnStub = { template: '<div />' }
 
@@ -80,6 +92,9 @@ function mountSearch() {
   return shallowMount(SearchIndex, {
     global: {
       stubs: {
+        PageShell: pageShellStub,
+        PageSummaryBar: summaryBarStub,
+        NextActionCard: nextActionStub,
         ElCard: cardStub,
         ElTag: slotStub('span'),
         ElAlert: slotStub('div'),
@@ -138,13 +153,12 @@ describe('Search overlay bridge flow', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('项目资料库')
-    expect(wrapper.text()).toContain('搜索、保存并回看当前项目的学习资料')
-    expect(wrapper.text()).toContain('项目资料库与搜索历史')
-    expect(wrapper.text()).toContain('路径页负责绑定到知识点')
-    expect(wrapper.text()).toContain('知识图谱页负责把资料转为 overlay 候选')
+    expect(wrapper.text()).toContain('搜索、保存并回看当前项目资料')
+    expect(wrapper.text()).toContain('搜索与本次结果')
+    expect(wrapper.text()).toContain('已保存资料')
     expect(wrapper.text()).toContain('留在资料库')
-    expect(wrapper.text()).toContain('去路径页绑定')
-    expect(wrapper.text()).toContain('去知识图谱页生成候选')
+    expect(wrapper.text()).toContain('绑定到路径')
+    expect(wrapper.text()).toContain('加入扩展草稿')
   })
 
   it('persists a search result then bridges it to one overlay source', async () => {

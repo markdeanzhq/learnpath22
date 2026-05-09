@@ -1,77 +1,183 @@
 <template>
-  <el-form :model="form" :rules="rules" ref="formRef" label-position="top" class="goal-form">
-    <section class="goal-form-intro">
-      <p class="form-eyebrow">第一步：描述目标</p>
-      <h2>{{ mode === 'reconfirm' ? '重新确认学习目标' : '创建新的学习项目' }}</h2>
-      <p>用一句自然语言描述想学什么，系统会先判断覆盖情况，再推荐创建、澄清或扩展草稿流程。</p>
-    </section>
+  <section
+    class="goal-resolution-workspace"
+    :class="[
+      `goal-resolution-workspace--${resolutionView}`,
+      { 'goal-resolution-workspace--wizard': variant === 'wizard' },
+    ]"
+  >
+    <div v-if="resolutionView === 'editing'" class="goal-input-panel">
+      <el-form :model="form" :rules="rules" ref="formRef" label-position="top" class="goal-form">
+        <section class="goal-form-intro">
+          <p class="form-eyebrow">第一步：描述目标</p>
+          <h2>{{ mode === 'reconfirm' ? '重新确认学习目标' : '创建新的学习项目' }}</h2>
+          <p>用一句自然语言描述想学什么，系统会先判断覆盖情况，再推荐创建、澄清或扩展草稿流程。</p>
+        </section>
 
-    <el-form-item label="学习目标" prop="goal_text" class="primary-goal-field">
-      <el-input
-        v-model="form.goal_text"
-        type="textarea"
-        :rows="4"
-        placeholder="例如：我想系统学习机器学习基础"
-      />
-      <div class="goal-example-row" aria-label="学习目标示例">
-        <button
-          v-for="example in goalExamples"
-          :key="example.goal"
-          type="button"
-          class="goal-example-chip"
-          @click="applyGoalExample(example)"
+        <el-form-item label="学习目标" prop="goal_text" class="primary-goal-field">
+          <el-input
+            v-model="form.goal_text"
+            type="textarea"
+            :rows="variant === 'wizard' ? 3 : 4"
+            placeholder="例如：我想系统学习机器学习基础"
+          />
+          <div class="goal-field-footer">
+            <span>{{ goalQualityLabel }}</span>
+            <span>{{ normalizedGoalText.length }} 字</span>
+          </div>
+          <section class="goal-template-grid" aria-label="学习目标模板">
+            <button
+              v-for="example in goalExamples"
+              :key="example.goal"
+              type="button"
+              class="goal-template-card"
+              @click="applyGoalExample(example)"
+            >
+              <span>{{ example.label }}</span>
+              <strong>{{ example.goal }}</strong>
+              <small>{{ example.description }}</small>
+            </button>
+          </section>
+          <div class="form-hint">
+            推荐先保持自然表达；系统会根据机器学习基础图谱判断是否可直接规划。
+          </div>
+        </el-form-item>
+
+        <el-form-item label="项目标题" prop="title">
+          <el-input v-model="form.title" placeholder="例如：机器学习基础学习计划" />
+          <div class="form-hint">标题用于区分多个学习计划，不影响目标解析结果。</div>
+        </el-form-item>
+
+        <details class="advanced-options">
+          <summary>高级选项：手动指定目标类型</summary>
+          <el-form-item label="目标类型" prop="goal_type">
+            <el-radio-group v-model="form.goal_type">
+              <el-radio-button value="auto">自动识别</el-radio-button>
+              <el-radio-button value="domain">领域型</el-radio-button>
+              <el-radio-button value="concept">概念型</el-radio-button>
+              <el-radio-button value="problem">问题型</el-radio-button>
+            </el-radio-group>
+            <div class="type-desc">
+              <el-text v-if="form.goal_type === 'auto'" type="info">推荐保持自动识别；需要精确控制时再切换类型。</el-text>
+              <el-text v-else-if="form.goal_type === 'domain'" type="info">系统学习整个领域的知识体系。</el-text>
+              <el-text v-else-if="form.goal_type === 'concept'" type="info">深入理解某个具体概念。</el-text>
+              <el-text v-else type="info">围绕具体问题生成更聚焦的学习路径。</el-text>
+            </div>
+          </el-form-item>
+        </details>
+
+        <el-alert
+          v-if="mode === 'reconfirm' && reasonMessage"
+          :title="projectTitle ? `重新确认：${projectTitle}` : '请重新确认学习目标'"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="reconfirm-alert"
         >
-          {{ example.label }}
-        </button>
-      </div>
-      <div class="form-hint">
-        推荐先保持自然表达；系统会根据机器学习基础图谱判断是否可直接规划。
-      </div>
-    </el-form-item>
+          <template #default>{{ reasonMessage }}</template>
+        </el-alert>
 
-    <el-form-item label="项目标题" prop="title">
-      <el-input v-model="form.title" placeholder="例如：机器学习基础学习计划" />
-      <div class="form-hint">标题用于区分多个学习计划，不影响目标解析结果。</div>
-    </el-form-item>
+        <details class="display-options">
+          <summary>显示设置</summary>
+          <DisplayModeSwitch v-model="displayMode" />
+        </details>
 
-    <details class="advanced-options">
-      <summary>高级选项：手动指定目标类型</summary>
-      <el-form-item label="目标类型" prop="goal_type">
-        <el-radio-group v-model="form.goal_type">
-          <el-radio-button value="auto">自动识别</el-radio-button>
-          <el-radio-button value="domain">领域型</el-radio-button>
-          <el-radio-button value="concept">概念型</el-radio-button>
-          <el-radio-button value="problem">问题型</el-radio-button>
-        </el-radio-group>
-        <div class="type-desc">
-          <el-text v-if="form.goal_type === 'auto'" type="info">推荐保持自动识别；需要精确控制时再切换类型。</el-text>
-          <el-text v-else-if="form.goal_type === 'domain'" type="info">系统学习整个领域的知识体系。</el-text>
-          <el-text v-else-if="form.goal_type === 'concept'" type="info">深入理解某个具体概念。</el-text>
-          <el-text v-else type="info">围绕具体问题生成更聚焦的学习路径。</el-text>
+        <div class="actions">
+          <el-button type="primary" size="large" @click="handlePreview" :loading="previewLoading" :disabled="!normalizedGoalText || !form.title.trim()">
+            {{ previewButtonLabel }}
+          </el-button>
         </div>
-      </el-form-item>
-    </details>
+      </el-form>
+    </div>
 
-    <el-alert
-      v-if="mode === 'reconfirm' && reasonMessage"
-      :title="projectTitle ? `重新确认：${projectTitle}` : '请重新确认学习目标'"
-      type="warning"
-      :closable="false"
-      show-icon
-      class="reconfirm-alert"
-    >
-      <template #default>{{ reasonMessage }}</template>
-    </el-alert>
+    <div v-else-if="resolutionView === 'parsing'" class="goal-parsing-panel" aria-live="polite">
+      <section class="goal-form-intro goal-form-intro--compact">
+        <p class="form-eyebrow">正在解析</p>
+        <h2>正在生成目标候选</h2>
+        <p>系统会先理解你的自然语言目标，再匹配正式知识图谱，最后判断是否可以安全创建项目。</p>
+      </section>
 
-    <details class="display-options">
-      <summary>显示设置</summary>
-      <DisplayModeSwitch v-model="displayMode" />
-    </details>
+      <div class="goal-parsing-steps" aria-label="目标解析进度">
+        <article v-for="item in parsingSteps" :key="item.title">
+          <span>{{ item.index }}</span>
+          <strong>{{ item.title }}</strong>
+          <small>{{ item.description }}</small>
+        </article>
+      </div>
 
-    <div class="actions">
-      <el-button type="primary" size="large" @click="handlePreview" :loading="previewLoading">
-        {{ previewButtonLabel }}
-      </el-button>
+      <div class="goal-parsing-summary">
+        <span>原始目标</span>
+        <strong>{{ normalizedGoalText }}</strong>
+        <small>项目标题：{{ form.title.trim() || '未填写' }} · 目标类型：{{ goalTypeSelectionLabel(form.goal_type) }}</small>
+      </div>
+    </div>
+
+    <div v-else-if="previewState" class="goal-review-panel">
+      <section class="goal-review-hero">
+        <header>
+          <div>
+            <p class="form-eyebrow">解析结果确认</p>
+            <h2>{{ reviewTitle }}</h2>
+            <p>{{ reviewDescription }}</p>
+          </div>
+          <el-tag :type="reviewTagType" size="large">{{ reviewTagLabel }}</el-tag>
+        </header>
+
+        <div class="goal-review-summary-grid">
+          <article>
+            <span>已解析目标</span>
+            <strong>{{ previewGoalText || normalizedGoalText }}</strong>
+          </article>
+          <article>
+            <span>项目标题</span>
+            <strong>{{ form.title.trim() || '未填写' }}</strong>
+          </article>
+          <article>
+            <span>目标类型</span>
+            <strong>{{ goalTypeSelectionLabel(form.goal_type) }}</strong>
+          </article>
+        </div>
+
+        <div class="goal-review-actions">
+          <el-button plain @click="returnToEditing">修改目标</el-button>
+          <el-button type="primary" plain :loading="previewLoading" @click="handlePreview">
+            {{ previewButtonLabel }}
+          </el-button>
+        </div>
+
+        <details class="display-options goal-review-display-options">
+          <summary>显示设置</summary>
+          <DisplayModeSwitch v-model="displayMode" />
+        </details>
+      </section>
+
+      <GoalPreviewPanel
+        v-model:selected-candidate-id="selectedCandidateId"
+        v-model:accept-partial="acceptPartial"
+        v-model:show-all-candidates="showAllCandidates"
+        :preview-state="previewState"
+        :unsafe-state-message="unsafeStateMessage"
+        :preview-dirty="previewDirty"
+        :mode="mode"
+        :display-mode="displayMode"
+        :hashes-agree="hashesAgree"
+        :hash-status-label="hashStatusLabel"
+        :can-open-extension-draft="canOpenExtensionDraft"
+        :can-show-confirm-button="canShowConfirmButton"
+        :can-confirm="canCreate"
+        :confirm-loading="createLoading"
+        :confirm-label="submitButtonLabel"
+        :confirm-hint="confirmHint"
+        :clarification-loading="clarificationLoading"
+        :clarification-answers="clarificationAnswers"
+        @select-clarification-option="selectClarificationOption"
+        @update-clarification-free-text="updateClarificationFreeText"
+        @submit-clarification="handleClarificationAnswer"
+        @confirm="handleCreate"
+        @create-extension-project="handleCreateExtensionProject"
+        @rewrite="applyRewriteSuggestion"
+        @open-extension-draft="goToExtensionDraftEntry"
+      />
     </div>
 
     <el-alert
@@ -84,36 +190,7 @@
     >
       <template #default>{{ operationErrorMessage }}</template>
     </el-alert>
-  </el-form>
-
-  <GoalPreviewPanel
-    v-if="previewState"
-    v-model:selected-candidate-id="selectedCandidateId"
-    v-model:accept-partial="acceptPartial"
-    v-model:show-all-candidates="showAllCandidates"
-    :preview-state="previewState"
-    :unsafe-state-message="unsafeStateMessage"
-    :preview-dirty="previewDirty"
-    :mode="mode"
-    :display-mode="displayMode"
-    :hashes-agree="hashesAgree"
-    :hash-status-label="hashStatusLabel"
-    :can-open-extension-draft="canOpenExtensionDraft"
-    :can-show-confirm-button="canShowConfirmButton"
-    :can-confirm="canCreate"
-    :confirm-loading="createLoading"
-    :confirm-label="submitButtonLabel"
-    :confirm-hint="confirmHint"
-    :clarification-loading="clarificationLoading"
-    :clarification-answers="clarificationAnswers"
-    @select-clarification-option="selectClarificationOption"
-    @update-clarification-free-text="updateClarificationFreeText"
-    @submit-clarification="handleClarificationAnswer"
-    @confirm="handleCreate"
-    @create-extension-project="handleCreateExtensionProject"
-    @rewrite="applyRewriteSuggestion"
-    @open-extension-draft="goToExtensionDraftEntry"
-  />
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -123,6 +200,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import {
   projectApi,
   type AnswerClarificationCoverageResponse,
+  type BoundaryRejectCoverageResponse,
   type ClarificationQuestion,
   type ConfirmPartialCoverageResponse,
   type GoalResolutionPreviewResponse,
@@ -148,12 +226,22 @@ interface GoalExample {
   label: string
   goal: string
   title: string
+  type: GoalTypeSelection
+  description: string
 }
 
 interface ClarificationAnswerState {
   selected_option_id: string
   free_text: string
 }
+
+type GoalResolutionView = 'editing' | 'parsing' | 'reviewing'
+
+const parsingSteps = [
+  { index: '01', title: '识别目标类型', description: '判断是领域型、概念型还是问题型目标。' },
+  { index: '02', title: '匹配知识图谱', description: '只从当前可审查图谱中寻找正式候选。' },
+  { index: '03', title: '检查规划边界', description: '确认是否可创建、需澄清或进入扩展草稿。' },
+]
 
 const STALE_GOAL_ERRORS = new Set([
   'STALE_RESOLUTION_SESSION',
@@ -163,9 +251,9 @@ const STALE_GOAL_ERRORS = new Set([
 ])
 
 const goalExamples: GoalExample[] = [
-  { label: '系统学习机器学习基础', goal: '我想系统学习机器学习基础', title: '机器学习基础学习计划' },
-  { label: '理解梯度下降', goal: '我想理解梯度下降', title: '梯度下降学习计划' },
-  { label: '搞懂逻辑回归分类', goal: '我想搞懂逻辑回归为什么能做分类', title: '逻辑回归分类学习计划' },
+  { label: '领域型目标', goal: '我想系统学习机器学习基础', title: '机器学习基础学习计划', type: 'domain', description: '适合完整学习一块知识体系。' },
+  { label: '概念型目标', goal: '我想理解梯度下降', title: '梯度下降学习计划', type: 'concept', description: '适合深入理解一个核心概念。' },
+  { label: '问题型目标', goal: '我想搞懂逻辑回归为什么能做分类', title: '逻辑回归分类学习计划', type: 'problem', description: '适合围绕具体问题规划学习路径。' },
 ]
 
 const props = withDefaults(defineProps<{
@@ -175,6 +263,7 @@ const props = withDefaults(defineProps<{
   initialGoalText?: string
   initialGoalType?: GoalTypeSelection
   reconfirmReason?: string
+  variant?: 'overview' | 'wizard'
 }>(), {
   mode: 'create',
   projectId: '',
@@ -182,6 +271,7 @@ const props = withDefaults(defineProps<{
   initialGoalText: '',
   initialGoalType: 'auto',
   reconfirmReason: '',
+  variant: 'overview',
 })
 
 const emit = defineEmits<{
@@ -194,6 +284,7 @@ const projectStore = useProjectStore()
 const { displayMode } = useDisplayMode()
 const formRef = ref<FormInstance>()
 const previewLoading = ref(false)
+const parsingViewActive = ref(false)
 const createLoading = ref(false)
 const clarificationLoading = ref(false)
 const previewState = ref<GoalResolutionPreviewResponse | null>(null)
@@ -242,6 +333,13 @@ const requestedGoalType = computed<GoalType | undefined>(() =>
   form.goal_type === 'auto' ? undefined : form.goal_type,
 )
 const normalizedGoalText = computed(() => form.goal_text.trim())
+const goalQualityLabel = computed(() => {
+  const length = normalizedGoalText.value.length
+  if (!length) return '先输入一个真实学习目标'
+  if (length < 8) return '目标略短，建议补充想学的范围或问题'
+  if (length > 80) return '目标较长，系统会优先识别核心学习意图'
+  return '目标描述清晰，可以开始解析'
+})
 const expectedProjectId = computed(() => (props.mode === 'reconfirm' ? props.projectId : ''))
 const createFormDirty = computed(() => (
   props.mode === 'create' && (
@@ -303,7 +401,7 @@ const canOpenExtensionDraft = computed(() => (
   contextMatches.value &&
   hashesAgree.value
 ))
-const previewButtonLabel = computed(() => (previewState.value && previewDirty.value ? '重新解析学习目标' : '解析学习目标'))
+const previewButtonLabel = computed(() => (previewState.value ? '重新解析学习目标' : '解析学习目标'))
 const submitButtonLabel = computed(() => {
   if (isPartialResponse(previewState.value)) {
     return props.mode === 'reconfirm' ? '接受部分覆盖并更新目标' : '接受部分覆盖并创建项目'
@@ -337,6 +435,52 @@ const reasonMessage = computed(() => {
   }
   return ''
 })
+const resolutionView = computed<GoalResolutionView>(() => {
+  if (parsingViewActive.value) {
+    return 'parsing'
+  }
+  if (previewState.value) {
+    return 'reviewing'
+  }
+  return 'editing'
+})
+const reviewTitle = computed(() => {
+  const state = previewState.value
+  if (previewDirty.value) return '目标内容已变化'
+  if (unsafeStateMessage.value) return '当前结果需要重新确认'
+  if (isSelectCandidateResponse(state)) return '已生成可确认的目标候选'
+  if (isPartialResponse(state)) return '当前目标只能部分覆盖'
+  if (isClarificationResponse(state)) return '还需要回答一个澄清问题'
+  if (isExtensionDraftResponse(state)) return '需要先创建图谱扩展草稿'
+  return '当前目标暂不支持直接创建'
+})
+const reviewDescription = computed(() => {
+  const state = previewState.value
+  if (previewDirty.value) return '你已修改目标内容或目标类型，请重新解析后再确认，避免使用过期候选。'
+  if (unsafeStateMessage.value) return unsafeStateMessage.value
+  if (isSelectCandidateResponse(state)) return '输入区已收起，请在下方确认系统推荐的正式图谱候选。'
+  if (isPartialResponse(state)) return '正式路径只会使用已覆盖知识点，缺失概念会进入审计记录。'
+  if (isClarificationResponse(state)) return '先确认目标边界，系统不会把未澄清内容直接写入项目。'
+  if (isExtensionDraftResponse(state)) return '扩展草稿需要进入 Knowledge 审核；审核前不会影响正式路径。'
+  return '请按建议改写目标，或回到输入区重新描述学习目标。'
+})
+const reviewTagLabel = computed(() => {
+  const state = previewState.value
+  if (previewDirty.value) return '需重新解析'
+  if (unsafeStateMessage.value) return '不可写入'
+  if (isSelectCandidateResponse(state)) return '可确认'
+  if (isPartialResponse(state)) return '部分覆盖'
+  if (isClarificationResponse(state)) return '待澄清'
+  if (isExtensionDraftResponse(state)) return '需审核'
+  return '不可创建'
+})
+const reviewTagType = computed(() => {
+  const state = previewState.value
+  if (previewDirty.value || unsafeStateMessage.value) return 'warning'
+  if (isSelectCandidateResponse(state)) return 'success'
+  if (isBoundaryResponse(state)) return 'danger'
+  return 'warning'
+})
 
 watch(createFormDirty, (dirty) => {
   emit('dirtyStateChanged', dirty)
@@ -358,6 +502,20 @@ function isExtensionDraftResponse(value: GoalResolutionPreviewResponse | null): 
   return value?.result_type === 'review_extension_draft'
 }
 
+function isBoundaryResponse(value: GoalResolutionPreviewResponse | null): value is BoundaryRejectCoverageResponse {
+  return value?.result_type === 'boundary_reject'
+}
+
+function goalTypeSelectionLabel(type: GoalTypeSelection) {
+  const map: Record<GoalTypeSelection, string> = {
+    auto: '自动识别',
+    domain: '领域型目标',
+    concept: '概念型目标',
+    problem: '问题型目标',
+  }
+  return map[type]
+}
+
 function selectClarificationOption(questionId: string, optionId: string) {
   clarificationAnswers[questionId].selected_option_id = optionId
 }
@@ -374,10 +532,15 @@ function applyRewriteSuggestion(suggestion: string) {
 
 function applyGoalExample(example: GoalExample) {
   form.goal_text = example.goal
+  form.goal_type = example.type
   if (!form.title.trim()) {
     form.title = example.title
   }
   clearPreviewState('已填入示例目标，请解析学习目标。')
+}
+
+function returnToEditing() {
+  clearPreviewState()
 }
 
 function resetClarificationAnswers(questions: ClarificationQuestion[]) {
@@ -391,6 +554,7 @@ function resetClarificationAnswers(questions: ClarificationQuestion[]) {
 }
 
 function clearPreviewState(message = '') {
+  parsingViewActive.value = false
   previewState.value = null
   selectedCandidateId.value = ''
   previewGoalText.value = ''
@@ -471,7 +635,11 @@ function applyPreview(preview: GoalResolutionPreviewResponse) {
 }
 
 async function validateForm() {
-  return formRef.value?.validate().catch(() => false)
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (typeof valid === 'boolean') {
+    return valid
+  }
+  return Boolean(form.title.trim() && normalizedGoalText.value && form.goal_type)
 }
 
 async function handlePreview() {
@@ -479,6 +647,7 @@ async function handlePreview() {
     return
   }
   previewLoading.value = true
+  parsingViewActive.value = false
   operationErrorMessage.value = ''
   try {
     const valid = await validateForm()
@@ -486,6 +655,7 @@ async function handlePreview() {
       return
     }
 
+    parsingViewActive.value = true
     const payload = {
       goal_text: normalizedGoalText.value,
       ...(requestedGoalType.value ? { requested_goal_type: requestedGoalType.value } : {}),
@@ -501,6 +671,7 @@ async function handlePreview() {
     }
   } finally {
     previewLoading.value = false
+    parsingViewActive.value = false
   }
 }
 
@@ -652,16 +823,43 @@ function goToExtensionDraftEntry() {
 </script>
 
 <style scoped>
+.goal-resolution-workspace {
+  display: grid;
+  gap: var(--lp-space-4);
+  min-width: 0;
+}
+
+.goal-input-panel,
+.goal-parsing-panel,
+.goal-review-panel {
+  min-width: 0;
+}
+
+.goal-resolution-workspace--reviewing.goal-resolution-workspace--wizard {
+  max-width: min(860px, 100%);
+  margin: 0 auto;
+}
+
 .goal-form {
   display: flex;
   flex-direction: column;
 }
 
+.goal-form-intro,
+.goal-review-hero,
+.goal-parsing-panel {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 16px;
+  background: var(--el-fill-color-light);
+}
+
 .goal-form-intro {
   margin-bottom: 18px;
   padding: 18px;
-  border-radius: 14px;
-  background: var(--el-fill-color-light);
+}
+
+.goal-form-intro--compact {
+  margin-bottom: var(--lp-space-4);
 }
 
 .form-eyebrow {
@@ -671,12 +869,16 @@ function goToExtensionDraftEntry() {
   font-weight: 700;
 }
 
-.goal-form-intro h2 {
+.goal-form-intro h2,
+.goal-review-hero h2,
+.goal-parsing-panel h2 {
   margin: 0;
   font-size: 22px;
 }
 
-.goal-form-intro p {
+.goal-form-intro p,
+.goal-review-hero p,
+.goal-parsing-panel p {
   margin: 8px 0 0;
   color: var(--el-text-color-secondary);
   line-height: 1.7;
@@ -687,30 +889,178 @@ function goToExtensionDraftEntry() {
   line-height: 1.7;
 }
 
-.goal-example-row {
+.goal-field-footer {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
+  justify-content: space-between;
+  gap: var(--lp-space-2);
+  margin-top: var(--lp-space-2);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
-.goal-example-chip {
-  min-height: 36px;
-  padding: 7px 12px;
-  border: 1px solid var(--el-border-color);
-  border-radius: 999px;
+.goal-template-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--lp-space-2);
+  margin-top: var(--lp-space-3);
+}
+
+.goal-template-card {
+  display: grid;
+  gap: 5px;
+  min-height: 112px;
+  padding: var(--lp-space-3);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--lp-radius-md);
   background: var(--el-fill-color-blank);
   color: var(--el-text-color-regular);
+  text-align: left;
   cursor: pointer;
-  transition: border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
-.goal-example-chip:hover,
-.goal-example-chip:focus-visible {
+.goal-template-card span,
+.goal-template-card small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.goal-template-card strong {
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.goal-template-card:hover,
+.goal-template-card:focus-visible {
   border-color: var(--el-color-primary);
-  color: var(--el-color-primary);
-  box-shadow: 0 0 0 2px var(--el-color-primary-light-9);
+  box-shadow: 0 8px 18px rgb(64 158 255 / 12%);
+  transform: translateY(-1px);
   outline: none;
+}
+
+.goal-parsing-panel {
+  display: grid;
+  gap: var(--lp-space-4);
+  padding: var(--lp-space-5);
+  background: linear-gradient(135deg, var(--el-color-primary-light-9), var(--el-fill-color-blank));
+}
+
+.goal-parsing-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--lp-space-3);
+}
+
+.goal-parsing-steps article {
+  display: grid;
+  gap: 6px;
+  min-height: 128px;
+  padding: var(--lp-space-3);
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: var(--lp-radius-md);
+  background: rgb(255 255 255 / 82%);
+}
+
+.goal-parsing-steps span {
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--el-color-primary-light-8);
+  color: var(--el-color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.goal-parsing-steps strong {
+  color: var(--el-text-color-primary);
+  font-size: 15px;
+}
+
+.goal-parsing-steps small,
+.goal-parsing-summary small {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.goal-parsing-summary {
+  display: grid;
+  gap: 6px;
+  padding: var(--lp-space-3);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--lp-radius-md);
+  background: var(--el-fill-color-blank);
+}
+
+.goal-parsing-summary span,
+.goal-review-summary-grid span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.goal-parsing-summary strong,
+.goal-review-summary-grid strong {
+  color: var(--el-text-color-primary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.goal-review-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-space-4);
+}
+
+.goal-review-hero {
+  display: grid;
+  gap: var(--lp-space-3);
+  padding: var(--lp-space-4);
+  background: linear-gradient(135deg, var(--el-color-primary-light-9), var(--el-fill-color-blank));
+}
+
+.goal-review-hero header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--lp-space-3);
+  align-items: flex-start;
+}
+
+.goal-review-summary-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 0.8fr;
+  gap: var(--lp-space-2);
+}
+
+.goal-review-summary-grid article {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: var(--lp-space-3);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--lp-radius-md);
+  background: rgb(255 255 255 / 84%);
+}
+
+.goal-review-summary-grid strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-review-actions {
+  display: flex;
+  gap: var(--lp-space-2);
+  flex-wrap: wrap;
+}
+
+.goal-review-actions :deep(.el-button) {
+  min-height: 40px;
+}
+
+.goal-review-display-options {
+  margin-top: 0;
 }
 
 .type-desc,
@@ -750,7 +1100,7 @@ function goToExtensionDraftEntry() {
 }
 
 .operation-error-alert {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .actions {
@@ -763,4 +1113,25 @@ function goToExtensionDraftEntry() {
   min-height: 44px;
 }
 
+@media (max-width: 1180px) {
+  .goal-template-grid,
+  .goal-parsing-steps,
+  .goal-review-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .goal-resolution-workspace--reviewing.goal-resolution-workspace--wizard {
+    max-width: none;
+  }
+
+  .goal-review-summary-grid strong {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 768px) {
+  .goal-review-hero header {
+    flex-direction: column;
+  }
+}
 </style>
