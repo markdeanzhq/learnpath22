@@ -20,6 +20,7 @@ const {
   resourceRecommendMock,
   searchMock,
   elMessageErrorMock,
+  elMessageBoxConfirmMock,
   routeState,
   currentProjectState,
   currentPlanState,
@@ -43,6 +44,7 @@ const {
   resourceRecommendMock: vi.fn(),
   searchMock: vi.fn(),
   elMessageErrorMock: vi.fn(),
+  elMessageBoxConfirmMock: vi.fn(),
   routeState: {
     query: {} as Record<string, string>,
   },
@@ -95,6 +97,12 @@ vi.mock('element-plus/es/components/message/index', () => ({
     success: vi.fn(),
     error: elMessageErrorMock,
     warning: vi.fn(),
+  },
+}))
+
+vi.mock('element-plus/es/components/message-box/index', () => ({
+  ElMessageBox: {
+    confirm: elMessageBoxConfirmMock,
   },
 }))
 
@@ -444,8 +452,15 @@ function createFeedbackPreviewResponse(overrides: Record<string, any> = {}) {
       added: ['ml-practice-01'],
       removed: [],
     },
+    diff_details: {
+      added: [{ node_id: 'ml-practice-01', node_name: '实践项目训练' }],
+    },
     budget_delta: {
-      total_hours_delta: 2,
+      previous_total_hours: 12,
+      preview_total_hours: 14,
+      delta_hours: 2,
+      previous_budget_status: 'feasible',
+      preview_budget_status: 'tight',
     },
     blocked_actions: [],
     requires_confirmation: true,
@@ -562,6 +577,7 @@ describe('Path page goal reconfirm flow', () => {
     })
     planApiConfirmFeedbackMock.mockResolvedValue(createReplanResult({ mode: 'feedback_confirm' }))
     resourceGetPlanResourcesMock.mockResolvedValue({ path_id: 'plan-001', stages: [] })
+    elMessageBoxConfirmMock.mockResolvedValue('confirm')
   })
 
   it('renders path dashboard summary and primary actions', async () => {
@@ -625,7 +641,13 @@ describe('Path page goal reconfirm flow', () => {
     expect(wrapper.text()).toContain('1 选择调整方式')
     expect(wrapper.text()).toContain('2 查看差异和预算')
     expect(wrapper.text()).toContain('3 确认后保存新版')
-    expect(wrapper.text()).toContain('立即生成新版')
+    expect(wrapper.text()).toContain('场景化重规划')
+    expect(wrapper.text()).toContain('我学完了一部分')
+    expect(wrapper.text()).toContain('按进度生成新版')
+    expect(wrapper.text()).toContain('我的基础或时间变了')
+    expect(wrapper.text()).toContain('按画像生成新版')
+    expect(wrapper.text()).toContain('我想先看看影响')
+    expect(wrapper.text()).toContain('打开影响预览')
     expect(wrapper.text()).toContain('先比较，再应用')
     expect(wrapper.text()).toContain('学习节奏')
     expect(wrapper.text()).toContain('标准或压缩路径控制完整度')
@@ -991,6 +1013,7 @@ describe('Path page goal reconfirm flow', () => {
 
     await expect((wrapper.vm as any).handleReplan('progress_aware')).resolves.toBeUndefined()
 
+    expect(elMessageBoxConfirmMock).toHaveBeenCalled()
     expect(pushMock).toHaveBeenCalledWith({
       path: '/project',
       query: {
@@ -999,6 +1022,68 @@ describe('Path page goal reconfirm flow', () => {
         reason: 'goal-targets-removed',
       },
     })
+  })
+
+  it('asks for confirmation before direct scenario replan writes a formal path', async () => {
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.handleReplan('profile_update')
+    await flushPromises()
+
+    expect(elMessageBoxConfirmMock).toHaveBeenCalledWith(
+      expect.stringContaining('我的基础或时间变了'),
+      '确认按最新画像重规划？',
+      expect.objectContaining({
+        confirmButtonText: '确认生成新版',
+        cancelButtonText: '先不改',
+      }),
+    )
+    expect(replanMock).toHaveBeenCalledWith('project-001', 'profile_update')
+  })
+
+  it('does not call replan when the direct write confirmation is cancelled', async () => {
+    elMessageBoxConfirmMock.mockRejectedValueOnce('cancel')
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    await (wrapper.vm as any).handleReplan('progress_aware')
+    await flushPromises()
+
+    expect(replanMock).not.toHaveBeenCalled()
+  })
+
+  it('renders replan diff summary with completed-node explanation', async () => {
+    lastReplanResultState.value = createReplanResult({
+      mode: 'progress_aware',
+      diff: {
+        added: ['ml-new'],
+        removed: ['ml-old'],
+        unchanged: ['ml-a01'],
+        completed: ['ml-done'],
+        pending: ['ml-pending'],
+        skipped: [],
+      },
+      diff_details: {
+        added: [{ node_id: 'ml-new', node_name: '新增实践节点' }],
+        removed: [{ node_id: 'ml-old', node_name: '旧节点' }],
+        unchanged: [{ node_id: 'ml-a01', node_name: '机器学习导论' }],
+        completed: [{ node_id: 'ml-done', node_name: '已完成节点' }],
+        pending: [{ node_id: 'ml-pending', node_name: '待学节点' }],
+      },
+    })
+
+    const wrapper = mountPathIndex()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('重规划结果摘要')
+    expect(wrapper.text()).toContain('模式：进度感知')
+    expect(wrapper.text()).toContain('已完成不等于删除')
+    expect(wrapper.text()).toContain('已完成节点会进入学习历史和锁定集合')
+    expect(wrapper.text()).toContain('新增实践节点')
+    expect(wrapper.text()).toContain('已完成节点')
+    expect(wrapper.text()).toContain('已完成锁定1 个')
   })
 
   it('previews variants without mutating the saved latest plan', async () => {
@@ -1419,21 +1504,35 @@ describe('Path page goal reconfirm flow', () => {
 
     expect(planApiPreviewFeedbackMock).toHaveBeenCalledWith('project-001', '我想增加实践内容')
     expect(vm.feedbackPreview.feedback_preview_id).toBe('feedback-preview-001')
-    expect(vm.feedbackDiffEntries).toEqual([{ key: '新增知识点', values: ['ml-practice-01'] }])
+    expect(vm.feedbackDiffEntries).toEqual([{ key: '新增知识点', values: ['实践项目训练'] }])
     expect(vm.canConfirmFeedback).toBe(true)
+    expect(wrapper.text()).toContain('快捷示例')
+    expect(wrapper.text()).toContain('识别到的意图')
+    expect(wrapper.text()).toContain('影响说明')
+    expect(wrapper.text()).toContain('预算变化')
+    expect(wrapper.text()).toContain('已掌握节点证据')
+    expect(wrapper.text()).toContain('预计增加 2 小时')
+    expect(wrapper.text()).toContain('实践项目训练')
     expect(currentPlanState.value.id).toBe('plan-001')
   })
 
   it('requires known-node draft confirmation before applying mark-known feedback', async () => {
     planApiPreviewFeedbackMock.mockResolvedValueOnce(createFeedbackPreviewResponse({
       intent_type: 'mark_known_nodes',
+      diff: {
+        completed: ['ml-a01'],
+        pending: [],
+      },
+      diff_details: {
+        completed: [{ node_id: 'ml-a01', node_name: '机器学习导论' }],
+      },
       requires_second_confirm: true,
       known_node_draft: {
         draft_id: 'known-draft-001',
         feedback_preview_id: 'feedback-preview-001',
         project_id: 'project-001',
         node_ids: ['ml-a01'],
-        evidence: [],
+        evidence: [{ node_id: 'ml-a01', node_name: '机器学习导论', matched_text: '机器学习导论' }],
         status: 'draft',
         expires_at: '2026-04-22T10:00:00Z',
       },
@@ -1448,6 +1547,9 @@ describe('Path page goal reconfirm flow', () => {
     await flushPromises()
 
     expect(vm.canConfirmFeedback).toBe(false)
+    expect(wrapper.text()).toContain('锁定 1 个已掌握节点')
+    expect(wrapper.text()).toContain('机器学习导论')
+    expect(wrapper.text()).toContain('命中：机器学习导论')
 
     await vm.confirmKnownNodeDraft()
     await flushPromises()

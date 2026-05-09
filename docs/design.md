@@ -113,7 +113,8 @@ GoalFrame 的权威边界：
 - compressed mode 保留目标与全部硬依赖 ancestors，不裁剪 mandatory closure
 - 路径变体使用 TTL preview session 展示 `standard`、`compressed`、`theory_first`、`practice_first` 多种方案；preview 不写最新路径、跟踪状态、资源绑定或解释缓存，确认一个 variant 才写入一个正式 `LearningPath` 版本
 - 自然语言反馈重规划使用 V1 intent preview/confirm：`compress_time`、`increase_practice`、`increase_theory`、`adjust_deadline`、`mark_known_nodes`；unsupported/low-confidence 反馈只澄清或拒绝，不改变正式路径
-- `mark_known_nodes` 先创建 known-node confirmation draft，二次确认后才可影响反馈 replan，不会删除硬依赖
+- 反馈预览与确认返回节点名称化 `diff_details`，前端优先展示可读差异摘要；内部 `node_id` 仅作为调试与审计依据
+- `mark_known_nodes` 先创建 known-node confirmation draft，二次确认后才可影响反馈 replan，不会删除硬依赖，并返回识别证据用于前端确认
 - 节点解释、排序解释、阶段解释、依赖链解释、预算解释
 - audit 记录 GoalFrame snapshot、derived planner parameters、coverage decision、selected candidate、confirmed targets、partial acceptance、missing concepts、clarification trace、overlay lineage、variant/feedback intent、authority labels、decision chain、included/excluded nodes、exclusion_reason、path_mode 与 budget_status
 - `progress_aware` / `profile_update` 两种传统重规划模式，并与普通规划消费同一 ProjectGraphSnapshot

@@ -159,6 +159,62 @@ def _diff_node_ids(old_node_ids: list[str], new_node_ids: list[str]) -> dict[str
     }
 
 
+def _build_plan_node_name_map(plan_result: dict[str, Any] | None) -> dict[str, str]:
+    if not isinstance(plan_result, dict):
+        return {}
+    stage_plan = plan_result.get("stage_plan")
+    if not isinstance(stage_plan, dict):
+        return {}
+
+    node_names: dict[str, str] = {}
+    for tasks in stage_plan.values():
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            node_id = task.get("node_id")
+            node_name = task.get("name")
+            if isinstance(node_id, str) and node_id and node_name:
+                node_names[node_id] = str(node_name)
+    return node_names
+
+
+def _node_name_from_snapshot(node_id: str, nodes_by_id: dict[str, Any] | None) -> str:
+    if nodes_by_id:
+        node = nodes_by_id.get(node_id)
+        if isinstance(node, dict) and node.get("name"):
+            return str(node["name"])
+    return node_id
+
+
+def _build_diff_details(
+    diff: dict[str, Any] | None,
+    *,
+    plan_result: dict[str, Any] | None = None,
+    nodes_by_id: dict[str, Any] | None = None,
+) -> dict[str, list[dict[str, str]]]:
+    if not isinstance(diff, dict) or not diff:
+        return {}
+
+    plan_node_names = _build_plan_node_name_map(plan_result)
+    details: dict[str, list[dict[str, str]]] = {}
+    for key, node_ids in diff.items():
+        if not isinstance(key, str) or not isinstance(node_ids, list) or not node_ids:
+            continue
+        items: list[dict[str, str]] = []
+        for node_id in node_ids:
+            if not isinstance(node_id, str) or not node_id:
+                continue
+            items.append({
+                "node_id": node_id,
+                "node_name": plan_node_names.get(node_id) or _node_name_from_snapshot(node_id, nodes_by_id),
+            })
+        if items:
+            details[key] = items
+    return details
+
+
 def _budget_delta(old_plan: Any, plan_result: dict[str, Any]) -> dict[str, Any]:
     previous_total = old_plan.total_hours or 0
     preview_total = plan_result["total_hours"]
@@ -208,26 +264,56 @@ def _blocked_actions_for_plan(plan_result: dict[str, Any]) -> list[str]:
     return []
 
 
+def _node_refs_from_evidence(node_ids: list[str], evidence: list[Any]) -> list[dict[str, str]]:
+    evidence_names = {
+        item["node_id"]: item.get("node_name")
+        for item in evidence
+        if isinstance(item, dict) and item.get("node_id") and item.get("node_name")
+    }
+    return [
+        {
+            "node_id": node_id,
+            "node_name": str(evidence_names.get(node_id) or node_id),
+        }
+        for node_id in node_ids
+        if isinstance(node_id, str) and node_id
+    ]
+
+
 def _known_node_draft_response(draft: KnownNodeConfirmationDraft) -> dict[str, Any]:
+    raw_node_ids = _json_loads(draft.node_ids_json, [])
+    node_ids = [node_id for node_id in raw_node_ids if isinstance(node_id, str)] if isinstance(raw_node_ids, list) else []
+    evidence = _json_loads(draft.evidence_json, [])
+    evidence = evidence if isinstance(evidence, list) else []
     return {
         "draft_id": draft.draft_id,
         "feedback_preview_id": draft.feedback_preview_id,
         "project_id": draft.project_id,
-        "node_ids": _json_loads(draft.node_ids_json, []),
-        "evidence": _json_loads(draft.evidence_json, []),
+        "node_ids": node_ids,
+        "nodes": _node_refs_from_evidence(node_ids, evidence),
+        "evidence": evidence,
         "status": draft.status,
         "expires_at": draft.expires_at,
     }
 
 
 def _feedback_response(session: FeedbackPreviewSession, draft: KnownNodeConfirmationDraft | None = None) -> dict[str, Any]:
+    history = _json_loads(session.decision_history_json, {})
+    history = history if isinstance(history, dict) else {}
+    diff = _json_loads(session.diff_json, {})
+    diff_details = history.get("diff_details")
+    if not isinstance(diff_details, dict):
+        plan_result = history.get("plan_result")
+        diff_details = _build_diff_details(diff, plan_result=plan_result if isinstance(plan_result, dict) else None)
+
     return {
         "feedback_preview_id": session.feedback_preview_id,
         "project_id": session.project_id,
         "intent_type": session.intent_type,
         "confidence": session.confidence,
         "controlled_parameters": _json_loads(session.controlled_parameters_json, {}),
-        "diff": _json_loads(session.diff_json, {}),
+        "diff": diff,
+        "diff_details": diff_details,
         "budget_delta": _json_loads(session.budget_delta_json, {}),
         "blocked_actions": _json_loads(session.blocked_actions_json, []),
         "requires_confirmation": session.requires_confirmation,
@@ -242,6 +328,13 @@ def _feedback_response(session: FeedbackPreviewSession, draft: KnownNodeConfirma
 
 
 def _plan_response(path: Any, plan_result: dict[str, Any], session: FeedbackPreviewSession, *, idempotent: bool) -> dict[str, Any]:
+    history = _json_loads(session.decision_history_json, {})
+    history = history if isinstance(history, dict) else {}
+    diff = _json_loads(session.diff_json, {})
+    diff_details = history.get("diff_details")
+    if not isinstance(diff_details, dict):
+        diff_details = _build_diff_details(diff, plan_result=plan_result)
+
     return {
         "id": path.id,
         "project_id": path.project_id,
@@ -261,7 +354,8 @@ def _plan_response(path: Any, plan_result: dict[str, Any], session: FeedbackPrev
         "budget_status": plan_result["budget_summary"].get("status"),
         "path_mode": plan_result.get("path_mode"),
         "total_hours": plan_result["total_hours"],
-        "diff": _json_loads(session.diff_json, {}),
+        "diff": diff,
+        "diff_details": diff_details,
         "budget_delta": _json_loads(session.budget_delta_json, {}),
         "idempotent": idempotent,
     }
@@ -352,6 +446,7 @@ async def preview_feedback_replan(db: AsyncSession, *, project_id: str, feedback
         "controlled_parameters": controlled_parameters,
     }
     diff = _diff_node_ids(old_node_ids, plan_result["ordered_ids"])
+    diff_details = _build_diff_details(diff, plan_result=plan_result, nodes_by_id=snapshot.nodes_by_id)
     budget_delta = _budget_delta(latest_plan, plan_result)
     blocked_actions = _blocked_actions_for_plan(plan_result)
     session = FeedbackPreviewSession(
@@ -371,6 +466,7 @@ async def preview_feedback_replan(db: AsyncSession, *, project_id: str, feedback
         decision_history_json=_json_dumps({
             "event": "feedback_preview_created",
             "feedback_text": feedback_text,
+            "diff_details": diff_details,
             "plan_result": plan_result,
         }),
     )
@@ -416,6 +512,7 @@ async def confirm_feedback_replan(db: AsyncSession, *, project_id: str, feedback
     if session is None or session.project_id != project_id:
         raise AppError(code=409, message=error_codes.STALE_FEEDBACK_PREVIEW)
     history = _json_loads(session.decision_history_json, {})
+    history = history if isinstance(history, dict) else {}
     if session.status == "confirmed":
         path_id = history.get("applied_path_id")
         path = await get_plan_by_id(db, path_id) if isinstance(path_id, str) else None
@@ -471,12 +568,21 @@ async def confirm_feedback_replan(db: AsyncSession, *, project_id: str, feedback
             "known_node_draft_id": draft.draft_id,
             "node_ids": node_ids,
         }
-        session.diff_json = _json_dumps(result.get("diff", {}))
+        diff = result.get("diff", {})
+        diff_details = _build_diff_details(diff, plan_result=plan_result, nodes_by_id=snapshot.nodes_by_id)
+        session.diff_json = _json_dumps(diff)
         session.budget_delta_json = _json_dumps(_budget_delta(latest_plan, plan_result))
     else:
         plan_result = history.get("plan_result")
         if not isinstance(plan_result, dict):
             raise AppError(code=409, message=error_codes.STALE_FEEDBACK_PREVIEW)
+        diff_details = history.get("diff_details")
+        if not isinstance(diff_details, dict):
+            diff_details = _build_diff_details(
+                _json_loads(session.diff_json, {}),
+                plan_result=plan_result,
+                nodes_by_id=snapshot.nodes_by_id,
+            )
 
     await enrich_formal_path_audit(db, project=project, plan_result=plan_result)
     version = await get_plan_version_count(db, project_id) + 1
@@ -486,6 +592,7 @@ async def confirm_feedback_replan(db: AsyncSession, *, project_id: str, feedback
         **history,
         "event": "feedback_confirmed",
         "applied_path_id": path.id,
+        "diff_details": diff_details,
         "plan_result": plan_result,
     })
     await db.commit()

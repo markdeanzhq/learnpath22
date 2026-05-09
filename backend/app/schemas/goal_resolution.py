@@ -322,11 +322,17 @@ class VariantPreviewSessionResponse(BaseModel):
     variants: list[VariantSummary]
 
 
+class FeedbackNodeRef(BaseModel):
+    node_id: str
+    node_name: str
+
+
 class KnownNodeConfirmationDraftResponse(BaseModel):
     draft_id: str
     feedback_preview_id: str
     project_id: str
     node_ids: list[str]
+    nodes: list[FeedbackNodeRef] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     status: Literal["draft", "confirmed", "rejected", "expired", "stale"]
     expires_at: datetime
@@ -339,6 +345,7 @@ class FeedbackPreviewSessionResponse(BaseModel):
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     controlled_parameters: dict[str, Any] = Field(default_factory=dict)
     diff: dict[str, Any] = Field(default_factory=dict)
+    diff_details: dict[str, list[FeedbackNodeRef]] = Field(default_factory=dict)
     budget_delta: dict[str, Any] = Field(default_factory=dict)
     blocked_actions: list[str] = Field(default_factory=list)
     requires_confirmation: bool = True

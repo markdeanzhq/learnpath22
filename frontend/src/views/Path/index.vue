@@ -80,20 +80,27 @@
             />
 
             <section class="quick-replan-card">
-              <div>
-                <span class="adjustment-card-kicker">立即生成新版</span>
-                <h3>快速重规划</h3>
-                <p>适合画像或学习进度已经明确变化的场景，会直接生成新的正式路径版本。</p>
+              <div class="section-header compact-header">
+                <div>
+                  <span class="adjustment-card-kicker">场景化重规划</span>
+                  <h3>按你现在遇到的情况选择</h3>
+                  <p>前两个场景会生成新的正式路径版本；点击后会先确认。想先看影响就走预览，不写入正式路径。</p>
+                </div>
               </div>
-              <el-dropdown trigger="click" @command="handleReplan">
-                <el-button :loading="planStore.loading">选择重规划方式</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="progress_aware">进度感知（保留已完成）</el-dropdown-item>
-                    <el-dropdown-item command="profile_update">画像更新（全量重生成）</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+              <div class="replan-scenario-grid">
+                <button
+                  v-for="scenario in quickReplanScenarios"
+                  :key="scenario.id"
+                  type="button"
+                  class="replan-scenario-card"
+                  :disabled="scenario.action === 'replan' && planStore.loading"
+                  @click="handleReplanScenario(scenario)"
+                >
+                  <strong>{{ scenario.title }}</strong>
+                  <span>{{ scenario.description }}</span>
+                  <small>{{ scenario.buttonLabel }}</small>
+                </button>
+              </div>
             </section>
 
             <section class="adjustment-preview-panel">
@@ -358,6 +365,18 @@
                   <p>支持压缩时间、增加实践、增加理论、调整期限和标记已掌握节点。</p>
                 </div>
               </div>
+              <div class="feedback-example-row" aria-label="反馈快捷示例">
+                <span>快捷示例</span>
+                <el-button
+                  v-for="example in feedbackExamples"
+                  :key="example.label"
+                  size="small"
+                  plain
+                  @click="applyFeedbackExample(example.text)"
+                >
+                  {{ example.label }}
+                </el-button>
+              </div>
               <div class="feedback-input-row">
                 <el-input
                   v-model="feedbackText"
@@ -375,7 +394,16 @@
                   <el-tag type="warning">有效期：{{ formatExpiresAt(feedbackPreview.expires_at) }}</el-tag>
                   <el-tag v-if="showTechnicalDetails" effect="plain">graph：{{ shortHash(feedbackPreview.project_graph_hash) }}</el-tag>
                 </div>
-                <dl class="summary-list">
+                <section class="feedback-readable-summary" aria-label="反馈预览摘要">
+                  <article v-for="item in feedbackReadableCards" :key="item.label">
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.value }}</strong>
+                    <small>{{ item.detail }}</small>
+                  </article>
+                </section>
+                <dl v-if="showAuditDetails && feedbackParameterEntries(feedbackPreview.controlled_parameters).length" class="summary-list audit-summary">
+                  <dt>参数变化</dt>
+                  <dd>以下是后端识别出的受控参数，供答辩或调试时核对。</dd>
                   <template v-for="item in feedbackParameterEntries(feedbackPreview.controlled_parameters)" :key="item.key">
                     <dt>{{ item.key }}</dt>
                     <dd>{{ item.value }}</dd>
@@ -387,7 +415,9 @@
                     <el-tag v-for="value in item.values" :key="value" type="info" effect="plain">{{ value }}</el-tag>
                   </section>
                 </div>
-                <dl class="summary-list">
+                <dl v-if="showAuditDetails && feedbackBudgetDeltaEntries(feedbackPreview.budget_delta).length" class="summary-list audit-summary">
+                  <dt>预算原始字段</dt>
+                  <dd>保留后端返回字段，方便核验预算计算。</dd>
                   <template v-for="item in feedbackBudgetDeltaEntries(feedbackPreview.budget_delta)" :key="item.key">
                     <dt>{{ item.key }}</dt>
                     <dd>{{ item.value }}</dd>
@@ -402,6 +432,12 @@
                     <span v-if="!showAuditDetails" class="option-impact">系统识别出 {{ feedbackPreview.known_node_draft.node_ids.length }} 个已掌握知识点，请确认后再应用重规划。</span>
                     <el-tag v-for="nodeId in showAuditDetails ? feedbackPreview.known_node_draft.node_ids : []" :key="nodeId" type="success">{{ nodeId }}</el-tag>
                     <el-tag type="info">状态：{{ feedbackPreview.known_node_draft.status }}</el-tag>
+                  </div>
+                  <div v-if="feedbackKnownNodeEvidenceRows.length" class="known-node-evidence-list">
+                    <span v-for="item in feedbackKnownNodeEvidenceRows" :key="item.key">
+                      {{ item.nodeName }}
+                      <small v-if="item.matchedText">命中：{{ item.matchedText }}</small>
+                    </span>
                   </div>
                   <el-button
                     type="primary"
@@ -594,9 +630,29 @@
         </el-tab-pane>
         <el-tab-pane label="变更对比" name="diff" v-if="planStore.lastReplanResult?.diff">
           <div class="diff-section">
-            <el-tag type="info" style="margin-bottom: 12px">
-              模式: {{ planStore.lastReplanResult.mode === 'progress_aware' ? '进度感知' : '画像更新' }}
-            </el-tag>
+            <section class="diff-summary-panel">
+              <div class="section-header compact-header">
+                <div>
+                  <h3>重规划结果摘要</h3>
+                  <p>{{ replanDiffHumanSummary }}</p>
+                </div>
+                <el-tag type="info">模式：{{ replanModeLabel }}</el-tag>
+              </div>
+              <div class="diff-summary-grid">
+                <article v-for="item in replanDiffSummaryCards" :key="item.key">
+                  <span>{{ item.label }}</span>
+                  <strong>{{ item.value }}</strong>
+                  <small>{{ item.detail }}</small>
+                </article>
+              </div>
+              <el-alert
+                title="已完成不等于删除"
+                description="已完成节点会进入学习历史和锁定集合，重规划只是避免把它们重复塞回待学路径；它们仍然是路径证据的一部分。"
+                type="info"
+                :closable="false"
+                show-icon
+              />
+            </section>
             <template v-if="replanDiffDetails.added?.length">
               <h4>新增节点</h4>
               <el-tag v-for="item in replanDiffDetails.added" :key="item.node_id" type="success" style="margin: 0 4px 4px 0">{{ item.node_name }}</el-tag>
@@ -735,11 +791,20 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { Guide } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useSettingsStore } from '@/stores/settings'
-import { planApi, type ExplanationAskRequest, type FeedbackPreviewSessionResponse, type VariantPreviewSessionResponse, type VariantSummary } from '@/api/modules/plan'
+import {
+  planApi,
+  type ExplanationAskRequest,
+  type FeedbackPreviewSessionResponse,
+  type ReplanDiff,
+  type ReplanDiffDetails,
+  type VariantPreviewSessionResponse,
+  type VariantSummary,
+} from '@/api/modules/plan'
 import { graphApi, type OverlayPreflightResponse } from '@/api/modules/graph'
 import { searchApi, type SearchResultItem } from '@/api/modules/search'
 import { resourceApi, type PlanResourcesResponse, type StageResourceGroup } from '@/api/modules/resource'
@@ -761,6 +826,8 @@ import Explanation from './Explanation.vue'
 import { useExplanationState } from './useExplanationState'
 
 type AdjustmentTool = 'variants' | 'graph_options' | 'feedback'
+type QuickReplanMode = 'progress_aware' | 'profile_update'
+type ReplanDiffKey = keyof ReplanDiff
 
 const STALE_PREVIEW_ERRORS = new Set([
   'STALE_VARIANT_PREVIEW',
@@ -771,6 +838,37 @@ const STALE_PREVIEW_ERRORS = new Set([
   'PARAMETER_DRIFT',
 ])
 const DEFAULT_RESOURCE_STAGE_NAME = '基础准备'
+const REPLAN_DIFF_KEYS: ReplanDiffKey[] = ['added', 'removed', 'unchanged', 'completed', 'pending', 'skipped']
+const quickReplanScenarios = [
+  {
+    id: 'finished_some',
+    title: '我学完了一部分',
+    description: '保留已完成和已跳过记录，只重新安排还没学完的部分。',
+    action: 'replan',
+    mode: 'progress_aware',
+    buttonLabel: '按进度生成新版',
+  },
+  {
+    id: 'profile_changed',
+    title: '我的基础或时间变了',
+    description: '按最新画像、每周投入和期限重新生成完整路径。',
+    action: 'replan',
+    mode: 'profile_update',
+    buttonLabel: '按画像生成新版',
+  },
+  {
+    id: 'preview_first',
+    title: '我想先看看影响',
+    description: '先进入预览区比较节点、预算和图谱变化，不会写入正式版本。',
+    action: 'preview',
+    buttonLabel: '打开影响预览',
+  },
+] as const
+const feedbackExamples = [
+  { label: '时间更紧', text: '我想把路径压缩到 6 周' },
+  { label: '多些实战', text: '请多安排项目练习和动手实践' },
+  { label: '我已掌握', text: '机器学习导论我已经会了，不用学' },
+] as const
 
 const route = useRoute()
 const router = useRouter()
@@ -1056,9 +1154,85 @@ const canConfirmFeedback = computed(() => {
   }
   return feedbackPreview.value.known_node_draft?.status === 'confirmed'
 })
-const feedbackDiffEntries = computed(() => Object.entries(feedbackPreview.value?.diff ?? {})
-  .filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].length > 0)
-  .map(([key, values]) => ({ key: feedbackDiffLabel(key), values })))
+const feedbackDiffDetails = computed(() => normalizeDiffDetails(
+  feedbackPreview.value?.diff as ReplanDiff | undefined,
+  feedbackPreview.value?.diff_details,
+))
+const feedbackDiffEntries = computed(() => REPLAN_DIFF_KEYS
+  .map((key) => ({
+    key: feedbackDiffLabel(key),
+    values: (feedbackDiffDetails.value[key] || []).map((item) => item.node_name),
+  }))
+  .filter((item) => item.values.length > 0))
+const feedbackReadableCards = computed(() => {
+  const preview = feedbackPreview.value
+  if (!preview) return []
+  return [
+    {
+      label: '识别到的意图',
+      value: feedbackIntentLabel(preview.intent_type),
+      detail: `${feedbackIntentPlainText(preview.intent_type)}，置信度 ${formatPercent(preview.confidence)}`,
+    },
+    {
+      label: '影响说明',
+      value: feedbackImpactTitle.value,
+      detail: feedbackImpactDetail.value,
+    },
+    {
+      label: '预算变化',
+      value: feedbackBudgetChangeTitle.value,
+      detail: feedbackBudgetChangeDetail.value,
+    },
+    {
+      label: '已掌握节点证据',
+      value: feedbackKnownNodeEvidenceTitle.value,
+      detail: feedbackKnownNodeEvidenceDetail.value,
+    },
+  ]
+})
+const feedbackImpactTitle = computed(() => {
+  if (!feedbackPreview.value) return '暂无预览'
+  const added = feedbackDiffCount('added')
+  const removed = feedbackDiffCount('removed')
+  const completed = feedbackDiffCount('completed') || feedbackPreview.value.known_node_draft?.node_ids.length || 0
+  if (feedbackPreview.value.intent_type === 'mark_known_nodes') return `锁定 ${completed} 个已掌握节点`
+  if (added || removed) return `新增 ${added} 个，减少 ${removed} 个`
+  if (Object.keys(feedbackPreview.value.controlled_parameters || {}).length) return '调整学习参数'
+  return '路径结构基本不变'
+})
+const feedbackImpactDetail = computed(() => {
+  if (!feedbackPreview.value) return ''
+  if (feedbackPreview.value.intent_type === 'mark_known_nodes') {
+    return '确认后系统会记录学习完成事件，并避免这些知识点在待学路径里重复出现。'
+  }
+  const added = feedbackDiffCount('added')
+  const removed = feedbackDiffCount('removed')
+  const unchanged = feedbackDiffCount('unchanged')
+  if (added || removed) {
+    return `预览里有 ${added} 个新增知识点、${removed} 个移出待学路径，另有 ${unchanged} 个保持不变。`
+  }
+  return '这次反馈主要改变路径模式、时间或理论/实践权重，节点集合可能暂时不变。'
+})
+const feedbackBudgetChangeTitle = computed(() => formatFeedbackBudgetTitle(feedbackPreview.value?.budget_delta))
+const feedbackBudgetChangeDetail = computed(() => formatFeedbackBudgetDetail(feedbackPreview.value?.budget_delta))
+const feedbackKnownNodeEvidenceRows = computed(() => (
+  feedbackPreview.value?.known_node_draft?.evidence ?? []
+).map((item, index) => ({
+  key: String(item.node_id ?? item.node_name ?? index),
+  nodeName: stringifyPreviewValue(item.node_name ?? item.node_id ?? '知识点'),
+  matchedText: item.matched_text == null ? '' : stringifyPreviewValue(item.matched_text),
+})))
+const feedbackKnownNodeEvidenceTitle = computed(() => {
+  const draft = feedbackPreview.value?.known_node_draft
+  if (!draft) return '未涉及已掌握节点'
+  return `${draft.node_ids.length} 个节点待确认`
+})
+const feedbackKnownNodeEvidenceDetail = computed(() => {
+  const rows = feedbackKnownNodeEvidenceRows.value
+  if (!feedbackPreview.value?.known_node_draft) return '这次反馈不会把知识点标记为已掌握。'
+  if (!rows.length) return '后端识别到已掌握节点，但没有返回额外命中文本。'
+  return rows.map((item) => item.matchedText ? `${item.nodeName}（${item.matchedText}）` : item.nodeName).join('、')
+})
 const selectedResourceStage = computed(() => (
   planResources.value?.stages.find((stage) => stage.stage_name === selectedStageName.value) ?? planResources.value?.stages[0] ?? null
 ))
@@ -1175,6 +1349,11 @@ function openAdjustmentTool(tool: AdjustmentTool) {
   activeTab.value = 'previews'
 }
 
+function applyFeedbackExample(text: string) {
+  feedbackText.value = text
+  openAdjustmentTool('feedback')
+}
+
 function syncAdjustmentToolFromRoute() {
   const requestedTool = normalizeAdjustmentTool(route.query.tool)
   if (requestedTool) {
@@ -1251,6 +1430,84 @@ function feedbackDiffLabel(key: string) {
     pending: '待重规划',
   }
   return map[key] || key
+}
+
+function normalizeDiffDetails(diff?: ReplanDiff | null, diffDetails?: ReplanDiffDetails | null) {
+  return REPLAN_DIFF_KEYS.reduce((result, key) => {
+    const detailedItems = diffDetails?.[key]
+    if (detailedItems?.length) {
+      result[key] = detailedItems
+      return result
+    }
+    const nodeIds = diff?.[key]
+    if (nodeIds?.length) {
+      result[key] = nodeIds.map((nodeId) => ({ node_id: nodeId, node_name: nodeId }))
+    }
+    return result
+  }, {} as ReplanDiffDetails)
+}
+
+function feedbackDiffCount(key: ReplanDiffKey) {
+  return feedbackDiffDetails.value[key]?.length || 0
+}
+
+function replanDiffCount(key: ReplanDiffKey) {
+  return replanDiffDetails.value[key]?.length || 0
+}
+
+function replanModeLabelFrom(mode?: string | null) {
+  const map: Record<string, string> = {
+    progress_aware: '进度感知',
+    profile_update: '画像更新',
+    feedback_confirm: '反馈确认',
+    variant_confirm: '变体确认',
+  }
+  return mode ? map[mode] || mode : '未知'
+}
+
+function feedbackIntentPlainText(intent: string) {
+  const map: Record<string, string> = {
+    compress_time: '想缩短学习路径或减少时间压力',
+    increase_practice: '想增加项目、练习和动手内容',
+    increase_theory: '想加强原理、推导和理论理解',
+    adjust_deadline: '想按新的截止时间调整节奏',
+    mark_known_nodes: '想把已经掌握的知识点从待学安排里锁定',
+  }
+  return map[intent] || '系统识别到一类可控调整'
+}
+
+function getNumberField(record: Record<string, unknown> | undefined, keys: string[]) {
+  for (const key of keys) {
+    const value = record?.[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+  return null
+}
+
+function formatHourDelta(value: number) {
+  const rounded = Math.abs(Math.round(value * 10) / 10)
+  return Number.isInteger(rounded) ? `${rounded}` : `${rounded.toFixed(1)}`
+}
+
+function formatFeedbackBudgetTitle(record?: Record<string, unknown>) {
+  const deltaHours = getNumberField(record, ['delta_hours', 'total_hours_delta'])
+  if (deltaHours != null && deltaHours > 0) return `预计增加 ${formatHourDelta(deltaHours)} 小时`
+  if (deltaHours != null && deltaHours < 0) return `预计减少 ${formatHourDelta(deltaHours)} 小时`
+  const previous = getNumberField(record, ['previous_total_hours'])
+  const preview = getNumberField(record, ['preview_total_hours'])
+  if (previous != null && preview != null) return `总投入 ${previous} -> ${preview} 小时`
+  return '预算基本不变'
+}
+
+function formatFeedbackBudgetDetail(record?: Record<string, unknown>) {
+  const previous = getNumberField(record, ['previous_total_hours'])
+  const preview = getNumberField(record, ['preview_total_hours'])
+  const previousStatus = budgetStatusLabel(record?.['previous_budget_status'])
+  const previewStatus = budgetStatusLabel(record?.['preview_budget_status'])
+  if (previous != null && preview != null) {
+    return `从 ${previous} 小时调整到 ${preview} 小时，预算状态 ${previousStatus} -> ${previewStatus}。`
+  }
+  return '后端没有返回可量化的学时变化，先按节点差异和路径模式判断影响。'
 }
 
 function isStalePreviewError(error: any) {
@@ -1346,10 +1603,50 @@ watch(currentPlanId, (nextPlanId, previousPlanId) => {
   }
 })
 
+function handleReplanScenario(scenario: (typeof quickReplanScenarios)[number]) {
+  if (scenario.action === 'preview') {
+    openAdjustmentTool('variants')
+    return
+  }
+  void handleReplan(scenario.mode)
+}
+
+async function confirmDirectReplan(mode: QuickReplanMode) {
+  const scenario = quickReplanScenarios.find((item) => 'mode' in item && item.mode === mode)
+  const title = mode === 'progress_aware' ? '确认按学习进度重规划？' : '确认按最新画像重规划？'
+  const message = mode === 'progress_aware'
+    ? '系统会保留已完成、已跳过记录，并把未完成部分生成新的正式路径版本。'
+    : '系统会按最新画像和时间预算重建正式路径，当前路径会保留为历史版本。'
+  try {
+    await ElMessageBox.confirm(
+      `${scenario?.title || replanModeLabelFrom(mode)}：${message}`,
+      title,
+      {
+        confirmButtonText: '确认生成新版',
+        cancelButtonText: '先不改',
+        type: 'warning',
+        distinguishCancelAndClose: true,
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+function normalizeQuickReplanMode(mode: string): QuickReplanMode | null {
+  if (mode === 'progress_aware' || mode === 'profile_update') return mode
+  return null
+}
+
 async function handleReplan(mode: string) {
   if (!projectId.value) return
+  const replanMode = normalizeQuickReplanMode(mode)
+  if (!replanMode) return
+  const confirmed = await confirmDirectReplan(replanMode)
+  if (!confirmed) return
   try {
-    await planStore.replan(projectId.value, mode as 'progress_aware' | 'profile_update')
+    await planStore.replan(projectId.value, replanMode)
     clearPreviews()
     resetPlanResourceCache()
     await explanationState.load()
@@ -1601,7 +1898,60 @@ async function bindSearchResultToNode(row: SearchResultItem) {
   }
 }
 
-const replanDiffDetails = computed(() => planStore.lastReplanResult?.diff_details ?? {})
+const replanDiffDetails = computed(() => normalizeDiffDetails(
+  planStore.lastReplanResult?.diff ?? undefined,
+  planStore.lastReplanResult?.diff_details,
+))
+const replanModeLabel = computed(() => replanModeLabelFrom(planStore.lastReplanResult?.mode))
+const replanDiffSummaryCards = computed(() => [
+  {
+    key: 'added',
+    label: '新增',
+    value: `${replanDiffCount('added')} 个`,
+    detail: '新版路径新增的待学知识点',
+  },
+  {
+    key: 'removed',
+    label: '移出待学',
+    value: `${replanDiffCount('removed')} 个`,
+    detail: '不再出现在新版待学路径中',
+  },
+  {
+    key: 'unchanged',
+    label: '保持',
+    value: `${replanDiffCount('unchanged')} 个`,
+    detail: '继续沿用原路径安排',
+  },
+  {
+    key: 'completed',
+    label: '已完成锁定',
+    value: `${replanDiffCount('completed')} 个`,
+    detail: '进入学习历史，不会重复安排',
+  },
+  {
+    key: 'pending',
+    label: '待重规划',
+    value: `${replanDiffCount('pending')} 个`,
+    detail: '仍需要继续学习或重新排序',
+  },
+  {
+    key: 'skipped',
+    label: '已跳过',
+    value: `${replanDiffCount('skipped')} 个`,
+    detail: '按学习记录从待学路径中避开',
+  },
+])
+const replanDiffHumanSummary = computed(() => {
+  if (!planStore.lastReplanResult?.diff) return '暂无可展示的重规划差异。'
+  const added = replanDiffCount('added')
+  const removed = replanDiffCount('removed')
+  const completed = replanDiffCount('completed')
+  const pending = replanDiffCount('pending')
+  if (completed || pending) {
+    return `这次重点是承认学习进度：${completed} 个已完成节点被锁定，${pending} 个节点继续参与后续安排。`
+  }
+  return `这次生成了新版路径：新增 ${added} 个知识点，移出 ${removed} 个待学节点，其余保持稳定。`
+})
 
 const budgetTagType = computed(() => {
   const status = planStore.currentPlan?.budget_status
@@ -1979,9 +2329,10 @@ function shortHash(value?: string | null) {
 }
 .quick-replan-card {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  justify-content: flex-start;
   gap: 16px;
-  align-items: center;
+  align-items: stretch;
   padding: 16px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 12px;
@@ -1995,6 +2346,51 @@ function shortHash(value?: string | null) {
   color: var(--el-text-color-secondary);
   font-size: 13px;
   line-height: 1.6;
+}
+.replan-scenario-grid,
+.feedback-readable-summary,
+.diff-summary-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.replan-scenario-card {
+  min-height: 128px;
+  padding: 14px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-primary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+.replan-scenario-card:hover:not(:disabled) {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 8px 20px rgb(64 158 255 / 10%);
+  transform: translateY(-1px);
+}
+.replan-scenario-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+.replan-scenario-card strong {
+  font-size: 16px;
+  line-height: 1.4;
+}
+.replan-scenario-card span,
+.replan-scenario-card small {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.replan-scenario-card small {
+  margin-top: auto;
+  color: var(--el-color-primary);
+  font-weight: 700;
 }
 .section-header {
   display: flex;
@@ -2100,8 +2496,41 @@ function shortHash(value?: string | null) {
   justify-content: space-between;
   gap: 12px;
 }
+.feedback-example-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.feedback-example-row span {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
 .feedback-input-row > :first-child {
   flex: 1;
+}
+.feedback-readable-summary article,
+.diff-summary-grid article {
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+}
+.feedback-readable-summary span,
+.feedback-readable-summary small,
+.diff-summary-grid span,
+.diff-summary-grid small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.feedback-readable-summary strong,
+.diff-summary-grid strong {
+  display: block;
+  margin: 4px 0;
+  color: var(--el-text-color-primary);
+  font-size: 17px;
+  line-height: 1.35;
 }
 .summary-list {
   display: grid;
@@ -2127,6 +2556,36 @@ function shortHash(value?: string | null) {
   border: 1px dashed var(--el-border-color);
   border-radius: 6px;
   padding: 12px;
+}
+.known-node-evidence-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.known-node-evidence-list span {
+  padding: 8px 10px;
+  border: 1px solid var(--el-color-success-light-7);
+  border-radius: 8px;
+  background: var(--el-color-success-light-9);
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+}
+.known-node-evidence-list small {
+  display: block;
+  margin-top: 2px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.diff-summary-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9);
 }
 .diff-card h4,
 .known-node-draft h4,

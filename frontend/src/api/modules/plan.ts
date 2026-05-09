@@ -304,6 +304,8 @@ export interface ReplanDiffDetailItem {
   node_name: string
 }
 
+export type ReplanDiffDetails = Partial<Record<keyof ReplanDiff, ReplanDiffDetailItem[]>>
+
 export interface ReplanResult {
   id: string
   project_id?: string
@@ -317,7 +319,7 @@ export interface ReplanResult {
   path_mode_source?: string | null
   total_hours: number
   diff: ReplanDiff | null
-  diff_details?: Partial<Record<keyof ReplanDiff, ReplanDiffDetailItem[]>> | null
+  diff_details?: ReplanDiffDetails | null
   budget_delta?: Record<string, unknown>
   reason?: string
   idempotent?: boolean
@@ -391,6 +393,7 @@ export interface KnownNodeConfirmationDraftResponse {
   feedback_preview_id: string
   project_id: string
   node_ids: string[]
+  nodes?: ReplanDiffDetailItem[]
   evidence: Array<Record<string, unknown>>
   status: 'draft' | 'confirmed' | 'rejected' | 'expired' | 'stale'
   expires_at: string
@@ -403,6 +406,7 @@ export interface FeedbackPreviewSessionResponse {
   confidence?: number | null
   controlled_parameters: Record<string, unknown>
   diff: Record<string, unknown>
+  diff_details?: ReplanDiffDetails | null
   budget_delta: Record<string, unknown>
   blocked_actions: string[]
   requires_confirmation: boolean

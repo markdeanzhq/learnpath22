@@ -108,6 +108,10 @@ async def test_feedback_preview_compress_time_does_not_write_formal_path(
     assert data["requires_confirmation"] is True
     assert data["requires_second_confirm"] is False
     assert set(data["diff"]) == {"added", "removed", "unchanged"}
+    assert set(data["diff_details"]).issubset({"added", "removed", "unchanged"})
+    detail_items = [item for items in data["diff_details"].values() for item in items]
+    assert detail_items
+    assert all(item["node_id"] and item["node_name"] for item in detail_items)
     assert data["budget_delta"]["previous_total_hours"] == plan["total_hours"]
     assert await _path_count(db_session, project["id"]) == before_count
 
@@ -165,6 +169,10 @@ async def test_feedback_confirm_writes_one_formal_path_and_is_idempotent(
     assert first["path_mode"] == "practice_first"
     assert first["intent_type"] == "increase_practice"
     assert duplicate["idempotent"] is True
+    assert first["diff_details"] == duplicate["diff_details"]
+    detail_items = [item for items in first["diff_details"].values() for item in items]
+    assert detail_items
+    assert all(item["node_id"] and item["node_name"] for item in detail_items)
 
     paths = (
         await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
@@ -197,6 +205,14 @@ async def test_mark_known_nodes_requires_draft_confirmation_before_formal_write(
     assert preview["intent_type"] == "mark_known_nodes"
     assert preview["requires_second_confirm"] is True
     assert known_node_id in draft["node_ids"]
+    assert any(
+        item["node_id"] == known_node_id and item["node_name"] == known_node_name
+        for item in draft["nodes"]
+    )
+    assert any(
+        item["node_id"] == known_node_id and item["node_name"] == known_node_name
+        for item in draft["evidence"]
+    )
     assert await _path_count(db_session, project["id"]) == before_count
 
     blocked_confirm = await client.post(
@@ -220,6 +236,21 @@ async def test_mark_known_nodes_requires_draft_confirmation_before_formal_write(
     assert data["intent_type"] == "mark_known_nodes"
     assert data["idempotent"] is False
     assert known_node_id in data["diff"]["completed"]
+    assert any(
+        item["node_id"] == known_node_id and item["node_name"] == known_node_name
+        for item in data["diff_details"]["completed"]
+    )
+
+    duplicate_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{preview['feedback_preview_id']}/confirm"
+    )
+    assert duplicate_resp.status_code == 200
+    duplicate = duplicate_resp.json()
+    assert duplicate["id"] == data["id"]
+    assert duplicate["version"] == data["version"]
+    assert duplicate["intent_type"] == "mark_known_nodes"
+    assert duplicate["idempotent"] is True
+    assert duplicate["diff_details"] == data["diff_details"]
 
     tracking = (
         await db_session.execute(
