@@ -99,6 +99,7 @@ const nodeResourcesMap = computed<Record<string, ResourceItem[]>>(() => {
 const statusMap = computed(() => {
   const map: Record<string, string> = {}
   for (const evt of trackingStore.events) {
+    if (map[evt.node_id]) continue
     map[evt.node_id] = evt.event_type === 'start' ? 'in_progress'
       : evt.event_type === 'complete' ? 'completed'
       : 'skipped'

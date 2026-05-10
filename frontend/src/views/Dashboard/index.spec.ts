@@ -205,4 +205,38 @@ describe('Dashboard resources', () => {
     expect(progressList.props('resourceError')).toBe('资源读取失败')
     warnSpy.mockRestore()
   })
+
+  it('uses newest tracking event when choosing next learning suggestion', async () => {
+    currentPlanState.value = {
+      ...latestPlan,
+      stages: [
+        {
+          ...latestPlan.stages[0],
+          tasks: [
+            ...latestPlan.stages[0].tasks,
+            {
+              node_id: 'ml_c02',
+              name: '监督学习',
+              order_in_stage: 1,
+              difficulty: 2,
+              importance: 5,
+              estimated_hours: 3,
+            },
+          ],
+        },
+      ],
+    }
+    trackingState.events = [
+      { id: 'evt-new', project_id: 'project-001', node_id: 'ml_c01', event_type: 'complete', note: null, created_at: '2026-05-10T12:00:00' },
+      { id: 'evt-old', project_id: 'project-001', node_id: 'ml_c01', event_type: 'start', note: null, created_at: '2026-05-10T11:00:00' },
+    ]
+    loadLatestMock.mockResolvedValue(undefined)
+
+    const wrapper = mountDashboard()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('开始学习「监督学习」')
+    expect(wrapper.text()).toContain('下一项：监督学习')
+    expect(wrapper.text()).not.toContain('继续学习「机器学习概览」')
+  })
 })
