@@ -18,8 +18,8 @@ from app.repositories.explanation_cache_repository import (
 )
 from app.repositories.plan_repository import (
     get_latest_plan,
+    get_next_plan_version,
     get_plan_by_id,
-    get_plan_version_count,
     save_plan,
 )
 from app.repositories.profile_repository import get_latest_profile
@@ -448,6 +448,137 @@ def _graph_option_budget_delta(baseline: dict[str, Any], enhanced: dict[str, Any
     return result
 
 
+def _budget_delta_against_plan(old_plan, plan_result: dict[str, Any]) -> dict[str, Any]:
+    previous_total = old_plan.total_hours if old_plan is not None else None
+    current_total = plan_result.get("total_hours")
+    previous_status = old_plan.budget_status if old_plan is not None else None
+    current_status = plan_result.get("budget_summary", {}).get("status")
+    delta_hours = None
+    if isinstance(previous_total, (int, float)) and isinstance(current_total, (int, float)):
+        delta_hours = round(current_total - previous_total, 1)
+    return {
+        "previous_total_hours": previous_total,
+        "current_total_hours": current_total,
+        "delta_hours": delta_hours,
+        "previous_budget_status": previous_status,
+        "current_budget_status": current_status,
+        "changed": bool(delta_hours) or previous_status != current_status,
+    }
+
+
+def _ordered_node_ids_from_stages(stages: list[dict[str, Any]]) -> list[str]:
+    return [
+        task["node_id"]
+        for stage in stages
+        if isinstance(stage, dict)
+        for task in stage.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("node_id"), str)
+    ]
+
+
+def _stage_plan_from_stages(stages: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    return {
+        stage["stage_name"]: stage.get("tasks", [])
+        for stage in stages
+        if isinstance(stage, dict) and isinstance(stage.get("stage_name"), str)
+    }
+
+
+def _node_name_map_from_stages(stages: list[dict[str, Any]]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        for task in stage.get("tasks", []):
+            if not isinstance(task, dict):
+                continue
+            node_id = task.get("node_id")
+            node_name = task.get("name") or task.get("node_name")
+            if isinstance(node_id, str) and node_id and node_name:
+                names[node_id] = str(node_name)
+    return names
+
+
+def _node_name_map_from_plan_result(plan_result: dict[str, Any]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    stage_plan = plan_result.get("stage_plan")
+    if not isinstance(stage_plan, dict):
+        return names
+    for tasks in stage_plan.values():
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            node_id = task.get("node_id")
+            node_name = task.get("name") or task.get("node_name")
+            if isinstance(node_id, str) and node_id and node_name:
+                names[node_id] = str(node_name)
+    return names
+
+
+def _safe_load_audit(raw_value: str | None) -> dict[str, Any] | None:
+    if not raw_value:
+        return None
+    try:
+        data = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _variant_confirm_diff(old_plan, plan_result: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, Any]]:
+    old_audit = _safe_load_audit(old_plan.audit_json) if old_plan is not None else None
+    old_stages = _load_plan_stages(old_plan.plan_json if old_plan is not None else None, old_audit)
+    old_node_ids = _ordered_node_ids_from_stages(old_stages)
+    new_node_ids = list(plan_result.get("ordered_ids") or [])
+    old_set = set(old_node_ids)
+    new_set = set(new_node_ids)
+    old_stage_map = _stage_assignment_map({"stage_plan": _stage_plan_from_stages(old_stages)})
+    new_stage_map = _stage_assignment_map(plan_result)
+    stage_common = set(old_stage_map) & set(new_stage_map)
+    return {
+        "added": sorted(new_set - old_set),
+        "removed": sorted(old_set - new_set),
+        "unchanged": sorted(old_set & new_set),
+        "order_changed": _changed_order_node_ids(old_node_ids, new_node_ids),
+        "stage_changed": sorted(
+            node_id for node_id in stage_common
+            if old_stage_map.get(node_id) != new_stage_map.get(node_id)
+        ),
+    }, _budget_delta_against_plan(old_plan, plan_result)
+
+
+def _variant_diff_details(
+    diff: dict[str, list[str]],
+    *,
+    plan_result: dict[str, Any],
+    old_plan: Any | None = None,
+    nodes_by_id: dict[str, Any] | None = None,
+) -> dict[str, list[dict[str, str]]]:
+    old_audit = _safe_load_audit(old_plan.audit_json) if old_plan is not None else None
+    old_stages = _load_plan_stages(old_plan.plan_json if old_plan is not None else None, old_audit)
+    node_names = {
+        **{
+            node_id: str(node.get("name"))
+            for node_id, node in (nodes_by_id or {}).items()
+            if isinstance(node, dict) and node.get("name")
+        },
+        **_node_name_map_from_stages(old_stages),
+        **_node_name_map_from_plan_result(plan_result),
+    }
+    details: dict[str, list[dict[str, str]]] = {}
+    for key, node_ids in diff.items():
+        if not node_ids:
+            continue
+        details[key] = [
+            {"node_id": node_id, "node_name": node_names.get(node_id, node_id)}
+            for node_id in node_ids
+            if isinstance(node_id, str) and node_id
+        ]
+    return details
+
+
 def _apply_graph_option_diff(variants: list[dict[str, Any]]) -> None:
     for variant in variants:
         variant.setdefault("order_changed", False)
@@ -749,6 +880,7 @@ async def _return_confirmed_variant(session: VariantPreviewSession, variant_id: 
     plan_result = selected.get("plan_result")
     if not isinstance(plan_result, dict):
         raise AppError(code=409, message=error_codes.STALE_VARIANT_PREVIEW)
+    history = _load_json_dict(session.decision_history_json)
     return _plan_response(
         path,
         plan_result,
@@ -757,6 +889,10 @@ async def _return_confirmed_variant(session: VariantPreviewSession, variant_id: 
             "variant_preview_id": session.variant_preview_id,
             "variant_id": variant_id,
             "idempotent": True,
+            "mode": "variant_confirm",
+            "diff": history.get("diff"),
+            "diff_details": history.get("diff_details"),
+            "budget_delta": history.get("budget_delta"),
         },
     )
 
@@ -1006,11 +1142,21 @@ async def confirm_plan_variant(
     if not isinstance(plan_result, dict):
         raise AppError(code=409, message=error_codes.STALE_VARIANT_PREVIEW)
     plan_result = deepcopy(plan_result)
+    previous_plan = await get_latest_plan(db, project_id)
+    diff, budget_delta = _variant_confirm_diff(previous_plan, plan_result)
+    diff_details = _variant_diff_details(
+        diff,
+        plan_result=plan_result,
+        old_plan=previous_plan,
+        nodes_by_id=snapshot.nodes_by_id,
+    )
     variant_audit = {
         "variant_preview_id": session.variant_preview_id,
         "variant_id": selected["variant_id"],
         "path_mode": selected["path_mode"],
         "parameter_hash": session.parameter_hash,
+        "diff": diff,
+        "budget_delta": budget_delta,
     }
     for key in ("preview_kind", "graph_option", "option_label", "project_graph_hash"):
         if selected.get(key) is not None:
@@ -1018,7 +1164,7 @@ async def confirm_plan_variant(
     plan_result.setdefault("audit", {})["variant"] = variant_audit
     await enrich_formal_path_audit(db, project=project, plan_result=plan_result)
 
-    version = await get_plan_version_count(db, project_id) + 1
+    version = await get_next_plan_version(db, project_id)
     path = await save_plan(db, project_id, plan_result, version=version, commit=False)
     session.status = "confirmed"
     session.path_id = path.id
@@ -1026,6 +1172,9 @@ async def confirm_plan_variant(
         "event": "variant_confirmed",
         "selected_variant_id": req.variant_id,
         "path_id": path.id,
+        "diff": diff,
+        "diff_details": diff_details,
+        "budget_delta": budget_delta,
     })
     await db.commit()
     await db.refresh(path)
@@ -1038,6 +1187,10 @@ async def confirm_plan_variant(
             "variant_preview_id": session.variant_preview_id,
             "variant_id": req.variant_id,
             "idempotent": False,
+            "mode": "variant_confirm",
+            "diff": diff,
+            "diff_details": diff_details,
+            "budget_delta": budget_delta,
         },
     )
 
@@ -1107,7 +1260,7 @@ async def generate_plan(
         raise AppError(code=409, message="GOAL_TARGETS_REMOVED")
     await enrich_formal_path_audit(db, project=project, plan_result=plan_result)
 
-    version = await get_plan_version_count(db, project_id) + 1
+    version = await get_next_plan_version(db, project_id)
     path = await save_plan(db, project_id, plan_result, version=version)
 
     return {

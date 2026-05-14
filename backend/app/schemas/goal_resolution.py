@@ -356,3 +356,4 @@ class FeedbackPreviewSessionResponse(BaseModel):
     expires_at: datetime
     pack_hash: Optional[str] = None
     project_graph_hash: Optional[str] = None
+    profile_hash: Optional[str] = None

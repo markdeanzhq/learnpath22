@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +16,7 @@ from app.planner.renderer import render_path_text
 from app.planner.scoring import compute_goal_relevance
 from app.planner.staging import build_stage_plan
 from app.planner.topology import topo_sort_with_profile_priority
-from app.repositories.plan_repository import get_latest_plan, get_plan_version_count, save_plan
+from app.repositories.plan_repository import get_latest_plan, get_next_plan_version, save_plan
 from app.repositories.profile_repository import get_latest_profile
 from app.repositories.project_repository import get_project
 from app.repositories.tracking_repository import get_latest_event_per_node
@@ -143,12 +144,158 @@ def _apply_goal_target_effects(
     return updated_goal_result
 
 
+_VALID_REPLAN_MODES = {"progress_aware", "profile_update"}
+
+
+def _naive_utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+
+def _confirmed_targets_removed(
+    confirmed_goal_result: dict[str, Any] | None,
+    removed_node_ids: set[str],
+    visible_node_ids: set[str],
+) -> bool:
+    if not confirmed_goal_result:
+        return False
+    confirmed_target_node_ids = list(
+        confirmed_goal_result.get("confirmed_target_node_ids")
+        or confirmed_goal_result.get("target_node_ids")
+        or []
+    )
+    if not confirmed_target_node_ids:
+        return False
+    return not any(
+        node_id in visible_node_ids and node_id not in removed_node_ids
+        for node_id in confirmed_target_node_ids
+    )
+
+
+def _ordered_ids_from_stage_plan(stage_plan: Any) -> list[str]:
+    ordered_ids: list[str] = []
+    if isinstance(stage_plan, dict):
+        stage_iter = stage_plan.values()
+    elif isinstance(stage_plan, list):
+        stage_iter = (stage.get("tasks", []) for stage in stage_plan if isinstance(stage, dict))
+    else:
+        return ordered_ids
+    for tasks in stage_iter:
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if isinstance(task, dict) and isinstance(task.get("node_id"), str):
+                ordered_ids.append(task["node_id"])
+    return ordered_ids
+
+
+def _stage_map_from_stage_plan(stage_plan: Any) -> dict[str, str]:
+    stage_map: dict[str, str] = {}
+    if isinstance(stage_plan, dict):
+        stage_iter = stage_plan.items()
+    elif isinstance(stage_plan, list):
+        stage_iter = (
+            (stage.get("stage_name"), stage.get("tasks", []))
+            for stage in stage_plan
+            if isinstance(stage, dict)
+        )
+    else:
+        return stage_map
+    for stage_name, tasks in stage_iter:
+        if not isinstance(stage_name, str) or not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if isinstance(task, dict) and isinstance(task.get("node_id"), str):
+                stage_map[task["node_id"]] = stage_name
+    return stage_map
+
+
+def _load_stage_plan(raw_value: str | None) -> Any:
+    if not raw_value:
+        return {}
+    try:
+        return json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _build_order_stage_diff(old_stage_plan: Any, new_stage_plan: Any) -> dict[str, list[str]]:
+    old_order = _ordered_ids_from_stage_plan(old_stage_plan)
+    new_order = _ordered_ids_from_stage_plan(new_stage_plan)
+    old_set = set(old_order)
+    new_set = set(new_order)
+    old_positions = {node_id: index for index, node_id in enumerate(old_order)}
+    new_positions = {node_id: index for index, node_id in enumerate(new_order)}
+    old_stages = _stage_map_from_stage_plan(old_stage_plan)
+    new_stages = _stage_map_from_stage_plan(new_stage_plan)
+    common_ids = old_set & new_set
+    return {
+        "added": sorted(new_set - old_set),
+        "removed": sorted(old_set - new_set),
+        "unchanged": sorted(common_ids),
+        "order_changed": sorted(
+            node_id for node_id in common_ids
+            if old_positions.get(node_id) != new_positions.get(node_id)
+        ),
+        "stage_changed": sorted(
+            node_id for node_id in common_ids
+            if old_stages.get(node_id) != new_stages.get(node_id)
+        ),
+    }
+
+
+def _build_budget_delta(old_plan: Any | None, plan_result: dict[str, Any]) -> dict[str, Any]:
+    previous_total = old_plan.total_hours if old_plan is not None else None
+    current_total = plan_result.get("total_hours")
+    previous_status = old_plan.budget_status if old_plan is not None else None
+    current_status = plan_result.get("budget_summary", {}).get("status")
+    delta_hours = None
+    if isinstance(previous_total, (int, float)) and isinstance(current_total, (int, float)):
+        delta_hours = round(current_total - previous_total, 1)
+    return {
+        "previous_total_hours": previous_total,
+        "current_total_hours": current_total,
+        "delta_hours": delta_hours,
+        "previous_budget_status": previous_status,
+        "current_budget_status": current_status,
+        "changed": bool(delta_hours) or previous_status != current_status,
+    }
+
+
+def _attach_replan_audit(
+    plan_result: dict[str, Any],
+    *,
+    mode: str,
+    reason: str,
+    scope: str,
+    diff: dict[str, Any] | None,
+    budget_delta: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    audit = plan_result.setdefault("audit", {})
+    replan_info = {
+        "mode": mode,
+        "reason": reason,
+        "scope": scope,
+        "diff": diff or {},
+        "created_at": _naive_utc_now_iso(),
+    }
+    if budget_delta is not None:
+        replan_info["budget_delta"] = budget_delta
+    if extra:
+        replan_info.update(extra)
+    audit["replan"] = replan_info
+
+
 async def replan(
     db: AsyncSession,
     project_id: str,
     mode: str = "profile_update",
     path_mode: str | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
+    if mode not in _VALID_REPLAN_MODES:
+        raise AppError(code=422, message="INVALID_REPLAN_MODE")
+
     project = await get_project(db, project_id)
     if not project:
         raise ValueError("项目不存在")
@@ -163,6 +310,8 @@ async def replan(
     removed_edges = snapshot.removed_edge_ids
 
     confirmed_goal_result = _build_confirmed_goal_result(project)
+    if _confirmed_targets_removed(confirmed_goal_result, removed_nodes, set(snapshot.nodes_by_id)):
+        raise AppError(code=409, message="GOAL_TARGETS_REMOVED")
 
     if mode == "progress_aware":
         try:
@@ -195,11 +344,18 @@ async def replan(
         except UnsupportedGoalTypeError as exc:
             raise AppError(code=409, message="GOAL_DEFAULT_TARGETS_UNAVAILABLE", details={"reason": str(exc)}) from exc
 
-    if confirmed_goal_result and not result["plan_result"]["goal_result"]["target_node_ids"]:
-        raise AppError(code=409, message="GOAL_TARGETS_REMOVED")
+    _attach_replan_audit(
+        result["plan_result"],
+        mode=mode,
+        reason=reason or ("进度感知重规划" if mode == "progress_aware" else "画像更新后重规划"),
+        scope=result.get("scope", "full_path"),
+        diff=result.get("diff"),
+        budget_delta=result.get("budget_delta"),
+        extra=result.get("replan_extra"),
+    )
     await enrich_formal_path_audit(db, project=project, plan_result=result["plan_result"])
 
-    version = await get_plan_version_count(db, project_id) + 1
+    version = await get_next_plan_version(db, project_id)
     path = await save_plan(db, project_id, result["plan_result"], version=version)
 
     return {
@@ -207,7 +363,9 @@ async def replan(
         "version": path.version,
         "plan_result": result["plan_result"],
         "diff": result.get("diff"),
+        "budget_delta": result.get("budget_delta"),
         "mode": mode,
+        "scope": result.get("scope"),
         "snapshot": snapshot,
     }
 
@@ -224,15 +382,7 @@ async def _replan_profile_update(
 ) -> dict[str, Any]:
     """画像更新模式：全量重生成 + 与上一版 diff。"""
     old_plan = await get_latest_plan(db, project.id)
-    old_node_ids: set[str] = set()
-    if old_plan and old_plan.plan_json:
-        old_stages = json.loads(old_plan.plan_json)
-        if isinstance(old_stages, dict):
-            for tasks in old_stages.values():
-                old_node_ids.update(t["node_id"] for t in tasks)
-        elif isinstance(old_stages, list):
-            for stage in old_stages:
-                old_node_ids.update(t["node_id"] for t in stage.get("tasks", []))
+    old_stage_plan = _load_stage_plan(old_plan.plan_json if old_plan else None)
 
     plan_result = plan_with_profile(
         goal_text=project.goal_text,
@@ -245,15 +395,15 @@ async def _replan_profile_update(
         path_mode=path_mode,
     )
 
-    new_node_ids = set(plan_result["ordered_ids"])
+    diff = _build_order_stage_diff(old_stage_plan, plan_result["stage_plan"])
+    budget_delta = _build_budget_delta(old_plan, plan_result)
 
-    diff = {
-        "added": sorted(new_node_ids - old_node_ids),
-        "removed": sorted(old_node_ids - new_node_ids),
-        "unchanged": sorted(new_node_ids & old_node_ids),
+    return {
+        "plan_result": plan_result,
+        "diff": diff,
+        "budget_delta": budget_delta,
+        "scope": "full_path",
     }
-
-    return {"plan_result": plan_result, "diff": diff}
 
 
 def _resolve_pending_node_ids(
@@ -261,23 +411,43 @@ def _resolve_pending_node_ids(
     satisfied_ids: set[str],
     excluded_ids: set[str],
     requires_rev_adj: dict[str, list[str]],
-) -> set[str]:
+) -> tuple[set[str], list[dict[str, Any]]]:
     pending_ids = set(candidate_ids)
+    blocked: dict[str, dict[str, Any]] = {}
 
     changed = True
     while changed:
         changed = False
-        for nid in list(pending_ids):
+        for nid in sorted(pending_ids):
             prereqs = requires_rev_adj.get(nid, [])
-            if any(prereq in excluded_ids for prereq in prereqs):
+            blocked_prereqs = [
+                prereq for prereq in prereqs
+                if prereq in excluded_ids or prereq in blocked
+            ]
+            if blocked_prereqs:
                 pending_ids.remove(nid)
+                blocked[nid] = {
+                    "node_id": nid,
+                    "blocked_by": sorted(blocked_prereqs),
+                    "exclusion_reason": "blocked_by_skipped_or_removed_prerequisite",
+                }
                 changed = True
                 continue
-            if any(prereq not in pending_ids and prereq not in satisfied_ids for prereq in prereqs):
+
+            missing_prereqs = [
+                prereq for prereq in prereqs
+                if prereq not in pending_ids and prereq not in satisfied_ids
+            ]
+            if missing_prereqs:
                 pending_ids.remove(nid)
+                blocked[nid] = {
+                    "node_id": nid,
+                    "blocked_by": sorted(missing_prereqs),
+                    "exclusion_reason": "blocked_by_unsatisfied_prerequisite",
+                }
                 changed = True
 
-    return pending_ids
+    return pending_ids, [blocked[node_id] for node_id in sorted(blocked)]
 
 
 async def _replan_progress_aware(
@@ -333,12 +503,13 @@ async def _replan_progress_aware(
     )
 
     candidate_ids = plan_node_ids - completed_ids - skipped_ids
-    pending_ids = _resolve_pending_node_ids(
+    pending_ids, blocked_nodes = _resolve_pending_node_ids(
         candidate_ids=candidate_ids,
         satisfied_ids=completed_ids,
         excluded_ids=skipped_ids | removed_node_ids,
         requires_rev_adj=filtered_rev_adj,
     )
+    blocked_ids = {item["node_id"] for item in blocked_nodes}
 
     pending_target_ids = [
         nid for nid in full_plan["goal_result"]["target_node_ids"]
@@ -385,8 +556,16 @@ async def _replan_progress_aware(
         removed_node_ids,
         set(pack.nodes_by_id),
     )
-    audit_goal_result["effective_target_node_ids"] = pending_target_ids
-    audit_goal_result["target_node_ids"] = pending_target_ids
+    effective_target_ids = list(audit_goal_result.get("target_node_ids") or [])
+    completed_target_ids = [node_id for node_id in effective_target_ids if node_id in completed_ids]
+    skipped_target_ids = [node_id for node_id in effective_target_ids if node_id in skipped_ids]
+    blocked_target_ids = [node_id for node_id in effective_target_ids if node_id in blocked_ids]
+    audit_goal_result["pending_target_node_ids"] = pending_target_ids
+    audit_goal_result["completed_target_node_ids"] = completed_target_ids
+    audit_goal_result["skipped_target_node_ids"] = skipped_target_ids
+    audit_goal_result["blocked_target_node_ids"] = blocked_target_ids
+    audit_goal_result["target_satisfied"] = bool(effective_target_ids) and set(effective_target_ids).issubset(completed_ids)
+    audit_goal_result["target_blocked_by_progress"] = bool(skipped_target_ids or blocked_target_ids)
 
     audit = build_plan_audit(
         goal_result=audit_goal_result,
@@ -421,8 +600,20 @@ async def _replan_progress_aware(
         ] + [
             {"node_id": node_id, "exclusion_reason": "progress_skipped"}
             for node_id in sorted(skipped_ids)
-        ],
+        ] + blocked_nodes,
     )
+    audit["progress"] = {
+        "scope": "remaining_path_with_locked_history",
+        "locked_node_ids": sorted(completed_ids | skipped_ids),
+        "completed_node_ids": sorted(completed_ids),
+        "skipped_node_ids": sorted(skipped_ids),
+        "remaining_ordered_ids": list(pending_ordered_ids),
+        "blocked_nodes": blocked_nodes,
+        "pending_target_node_ids": pending_target_ids,
+        "completed_target_node_ids": completed_target_ids,
+        "skipped_target_node_ids": skipped_target_ids,
+        "blocked_target_node_ids": blocked_target_ids,
+    }
 
     plan_result = {
         **full_plan,
@@ -443,7 +634,15 @@ async def _replan_progress_aware(
     diff = {
         "completed": sorted(completed_ids),
         "skipped": sorted(skipped_ids),
-        "pending": sorted(pending_ordered_ids),
+        "pending": list(pending_ordered_ids),
+        "blocked": [item["node_id"] for item in blocked_nodes],
     }
+    budget_delta = _build_budget_delta(old_plan, plan_result)
 
-    return {"plan_result": plan_result, "diff": diff}
+    return {
+        "plan_result": plan_result,
+        "diff": diff,
+        "budget_delta": budget_delta,
+        "scope": "remaining_path",
+        "replan_extra": {"progress": audit["progress"]},
+    }

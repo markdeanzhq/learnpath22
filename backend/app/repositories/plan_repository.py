@@ -94,6 +94,15 @@ async def get_plan_version_count(db: AsyncSession, project_id: str) -> int:
     return int(result.scalar() or 0)
 
 
+async def get_next_plan_version(db: AsyncSession, project_id: str) -> int:
+    result = await db.execute(
+        select(func.max(LearningPath.version))
+        .select_from(LearningPath)
+        .where(LearningPath.project_id == project_id)
+    )
+    return int(result.scalar() or 0) + 1
+
+
 async def get_all_planned_node_ids(
     db: AsyncSession, project_id: str
 ) -> list[str]:
@@ -151,4 +160,17 @@ async def get_latest_plan_node_ids(
     path = await get_latest_plan(db, project_id)
     if not path:
         return []
-    return extract_plan_node_ids(path.plan_json)
+
+    node_ids = set(extract_plan_node_ids(path.plan_json))
+    if path.audit_json:
+        try:
+            audit = json.loads(path.audit_json)
+        except json.JSONDecodeError:
+            audit = {}
+        progress = audit.get("progress") if isinstance(audit, dict) else {}
+        if isinstance(progress, dict):
+            for key in ("locked_node_ids", "remaining_ordered_ids"):
+                values = progress.get(key)
+                if isinstance(values, list):
+                    node_ids.update(item for item in values if isinstance(item, str) and item)
+    return sorted(node_ids)

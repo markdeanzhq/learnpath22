@@ -294,9 +294,12 @@ export interface ReplanDiff {
   added?: string[]
   removed?: string[]
   unchanged?: string[]
+  order_changed?: string[]
+  stage_changed?: string[]
   completed?: string[]
   skipped?: string[]
   pending?: string[]
+  blocked?: string[]
 }
 
 export interface ReplanDiffDetailItem {
@@ -321,14 +324,17 @@ export interface ReplanResult {
   diff: ReplanDiff | null
   diff_details?: ReplanDiffDetails | null
   budget_delta?: Record<string, unknown>
+  scope?: string | null
   reason?: string
   idempotent?: boolean
+  refresh_error?: string | null
 }
 
 export interface VariantConfirmResponse {
   id: string
   project_id?: string
   version: number
+  mode?: string
   stages: PathStage[]
   budget_status: string
   path_mode?: PathMode | string | null
@@ -337,6 +343,9 @@ export interface VariantConfirmResponse {
   node_count?: number
   reinforced_ids?: string[]
   text_output?: string
+  diff?: ReplanDiff | null
+  diff_details?: ReplanDiffDetails | null
+  budget_delta?: Record<string, unknown>
   variant_preview_id?: string
   variant_id?: string
   idempotent?: boolean
@@ -417,6 +426,7 @@ export interface FeedbackPreviewSessionResponse {
   expires_at: string
   pack_hash?: string | null
   project_graph_hash?: string | null
+  profile_hash?: string | null
 }
 
 export const planApi = {
@@ -435,10 +445,11 @@ export const planApi = {
   },
   askExplanation: (projectId: string, payload: ExplanationAskRequest): Promise<ExplanationAskResponse> =>
     request.post(`/projects/${projectId}/explanation/ask`, payload),
-  replan: (projectId: string, mode: string, reason?: string): Promise<ReplanResult> =>
+  replan: (projectId: string, mode: string, reason?: string, pathMode?: PathMode | string | null): Promise<ReplanResult> =>
     request.post(`/projects/${projectId}/replans`, {
       mode,
       reason: reason || (mode === 'progress_aware' ? '进度感知重规划' : '画像更新后重规划'),
+      ...(pathMode ? { path_mode: pathMode } : {}),
     }),
   previewVariants: (projectId: string, pathModes?: PathMode[]): Promise<VariantPreviewSessionResponse> =>
     request.post(`/projects/${projectId}/plans/variants/preview`, pathModes?.length ? { path_modes: pathModes } : {}),

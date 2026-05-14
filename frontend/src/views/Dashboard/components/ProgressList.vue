@@ -117,7 +117,8 @@ const activeStages = computed(() => props.stages.map(s => s.stage_index))
 
 const statusMap = computed(() => {
   const map: Record<string, string> = {}
-  for (const evt of props.events) {
+  const events = [...props.events].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  for (const evt of events) {
     const existing = map[evt.node_id]
     if (!existing) {
       map[evt.node_id] = evt.event_type === 'start' ? 'in_progress'

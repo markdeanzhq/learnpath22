@@ -73,9 +73,9 @@ async def trigger_replan(
 
     try:
         if req.path_mode is None:
-            result = await replan(db, project_id, mode=req.mode)
+            result = await replan(db, project_id, mode=req.mode, reason=req.reason)
         else:
-            result = await replan(db, project_id, mode=req.mode, path_mode=req.path_mode)
+            result = await replan(db, project_id, mode=req.mode, path_mode=req.path_mode, reason=req.reason)
     except ValueError as e:
         if str(e) == "INVALID_PATH_MODE":
             raise AppError(code=422, message="INVALID_PATH_MODE") from e
@@ -98,6 +98,8 @@ async def trigger_replan(
         "total_hours": plan_result["total_hours"],
         "diff": diff,
         "diff_details": _build_diff_details(diff, node_name_map, snapshot_node_names),
+        "budget_delta": result.get("budget_delta"),
+        "scope": result.get("scope"),
         "reason": req.reason,
     }
 

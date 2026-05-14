@@ -131,6 +131,12 @@ vi.mock('@/stores/plan', () => ({
     loading: false,
     replan: replanMock,
     loadLatest: loadLatestMock,
+    setLastReplanResult: (value: any) => {
+      lastReplanResultState.value = value
+    },
+    clearLastReplanResult: () => {
+      lastReplanResultState.value = null
+    },
   }),
 }))
 
@@ -531,6 +537,7 @@ describe('Path page goal reconfirm flow', () => {
       version: 1,
       budget_status: 'feasible',
       total_hours: 12,
+      path_mode: 'standard',
       stages: [
         {
           stage_index: 0,
@@ -550,6 +557,7 @@ describe('Path page goal reconfirm flow', () => {
         version: 1,
         budget_status: 'feasible',
         total_hours: 12,
+        path_mode: 'standard',
         stages: [
           {
             stage_index: 0,
@@ -1040,7 +1048,7 @@ describe('Path page goal reconfirm flow', () => {
         cancelButtonText: '先不改',
       }),
     )
-    expect(replanMock).toHaveBeenCalledWith('project-001', 'profile_update')
+    expect(replanMock).toHaveBeenCalledWith('project-001', 'profile_update', { pathMode: currentPlanState.value.path_mode })
   })
 
   it('does not call replan when the direct write confirmation is cancelled', async () => {
@@ -1140,7 +1148,7 @@ describe('Path page goal reconfirm flow', () => {
     await vm.previewGraphOptions()
     await flushPromises()
 
-    expect(planApiPreviewGraphOptionsMock).toHaveBeenCalledWith('project-001', undefined)
+    expect(planApiPreviewGraphOptionsMock).toHaveBeenCalledWith('project-001', 'standard')
     expect(vm.graphOptionPreview.variant_preview_id).toBe('graph-option-preview-001')
     expect(vm.selectedGraphOptionVariantId).toBe('baseline-standard')
     expect(vm.variantPreview).toBeNull()
@@ -1563,7 +1571,7 @@ describe('Path page goal reconfirm flow', () => {
 
     expect(planApiConfirmFeedbackMock).toHaveBeenCalledWith('project-001', 'feedback-preview-001')
     expect(vm.feedbackPreview).toBeNull()
-    expect(vm.activeTab).toBe('timeline')
+    expect(vm.activeTab).toBe('diff')
   })
 
   it('clears unsafe preview state when backend reports stale preview drift', async () => {

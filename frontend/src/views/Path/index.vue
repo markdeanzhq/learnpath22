@@ -665,6 +665,14 @@
               <h4>保持不变</h4>
               <el-tag v-for="item in replanDiffDetails.unchanged" :key="item.node_id" type="info" style="margin: 0 4px 4px 0">{{ item.node_name }}</el-tag>
             </template>
+            <template v-if="replanDiffDetails.order_changed?.length">
+              <h4>顺序变化</h4>
+              <el-tag v-for="item in replanDiffDetails.order_changed" :key="item.node_id" type="warning" style="margin: 0 4px 4px 0">{{ item.node_name }}</el-tag>
+            </template>
+            <template v-if="replanDiffDetails.stage_changed?.length">
+              <h4>阶段变化</h4>
+              <el-tag v-for="item in replanDiffDetails.stage_changed" :key="item.node_id" type="warning" effect="plain" style="margin: 0 4px 4px 0">{{ item.node_name }}</el-tag>
+            </template>
             <template v-if="replanDiffDetails.completed?.length">
               <h4>已完成（锁定）</h4>
               <el-tag v-for="item in replanDiffDetails.completed" :key="item.node_id" type="success" style="margin: 0 4px 4px 0">{{ item.node_name }}</el-tag>
@@ -676,6 +684,10 @@
             <template v-if="replanDiffDetails.skipped?.length">
               <h4>已跳过</h4>
               <el-tag v-for="item in replanDiffDetails.skipped" :key="item.node_id" type="warning" effect="plain" style="margin: 0 4px 4px 0">{{ item.node_name }}</el-tag>
+            </template>
+            <template v-if="replanDiffDetails.blocked?.length">
+              <h4>依赖阻断</h4>
+              <el-tag v-for="item in replanDiffDetails.blocked" :key="item.node_id" type="danger" effect="plain" style="margin: 0 4px 4px 0">{{ item.node_name }}</el-tag>
             </template>
           </div>
         </el-tab-pane>
@@ -802,6 +814,8 @@ import {
   type FeedbackPreviewSessionResponse,
   type ReplanDiff,
   type ReplanDiffDetails,
+  type ReplanResult,
+  type VariantConfirmResponse,
   type VariantPreviewSessionResponse,
   type VariantSummary,
 } from '@/api/modules/plan'
@@ -838,7 +852,7 @@ const STALE_PREVIEW_ERRORS = new Set([
   'PARAMETER_DRIFT',
 ])
 const DEFAULT_RESOURCE_STAGE_NAME = '基础准备'
-const REPLAN_DIFF_KEYS: ReplanDiffKey[] = ['added', 'removed', 'unchanged', 'completed', 'pending', 'skipped']
+const REPLAN_DIFF_KEYS: ReplanDiffKey[] = ['added', 'removed', 'unchanged', 'order_changed', 'stage_changed', 'completed', 'pending', 'skipped', 'blocked']
 const quickReplanScenarios = [
   {
     id: 'finished_some',
@@ -1190,13 +1204,24 @@ const feedbackReadableCards = computed(() => {
     },
   ]
 })
+const feedbackTargetPathModeLabel = computed(() => {
+  const mode = feedbackPreview.value?.controlled_parameters?.path_mode
+  return typeof mode === 'string' && mode ? pathModeLabel(mode) : ''
+})
 const feedbackImpactTitle = computed(() => {
   if (!feedbackPreview.value) return '暂无预览'
   const added = feedbackDiffCount('added')
   const removed = feedbackDiffCount('removed')
+  const orderChanged = feedbackDiffCount('order_changed')
+  const stageChanged = feedbackDiffCount('stage_changed')
   const completed = feedbackDiffCount('completed') || feedbackPreview.value.known_node_draft?.node_ids.length || 0
   if (feedbackPreview.value.intent_type === 'mark_known_nodes') return `锁定 ${completed} 个已掌握节点`
-  if (added || removed) return `新增 ${added} 个，减少 ${removed} 个`
+  const parts: string[] = []
+  if (added || removed) parts.push(`新增 ${added} 个，减少 ${removed} 个`)
+  if (orderChanged) parts.push(`顺序调整 ${orderChanged} 个`)
+  if (stageChanged) parts.push(`阶段调整 ${stageChanged} 个`)
+  if (parts.length) return parts.join('，')
+  if (feedbackTargetPathModeLabel.value) return `切换为${feedbackTargetPathModeLabel.value}`
   if (Object.keys(feedbackPreview.value.controlled_parameters || {}).length) return '调整学习参数'
   return '路径结构基本不变'
 })
@@ -1208,10 +1233,13 @@ const feedbackImpactDetail = computed(() => {
   const added = feedbackDiffCount('added')
   const removed = feedbackDiffCount('removed')
   const unchanged = feedbackDiffCount('unchanged')
-  if (added || removed) {
-    return `预览里有 ${added} 个新增知识点、${removed} 个移出待学路径，另有 ${unchanged} 个保持不变。`
+  const orderChanged = feedbackDiffCount('order_changed')
+  const stageChanged = feedbackDiffCount('stage_changed')
+  const modePrefix = feedbackTargetPathModeLabel.value ? `目标路径模式：${feedbackTargetPathModeLabel.value}。` : ''
+  if (added || removed || orderChanged || stageChanged) {
+    return `${modePrefix}预览里有 ${added} 个新增知识点、${removed} 个移出待学路径、${orderChanged} 个顺序变化、${stageChanged} 个阶段变化，另有 ${unchanged} 个保持不变。`
   }
-  return '这次反馈主要改变路径模式、时间或理论/实践权重，节点集合可能暂时不变。'
+  return `${modePrefix}这次反馈主要改变路径模式、时间或理论/实践权重，节点集合可能暂时不变。`
 })
 const feedbackBudgetChangeTitle = computed(() => formatFeedbackBudgetTitle(feedbackPreview.value?.budget_delta))
 const feedbackBudgetChangeDetail = computed(() => formatFeedbackBudgetDetail(feedbackPreview.value?.budget_delta))
@@ -1425,9 +1453,12 @@ function feedbackDiffLabel(key: string) {
     added: '新增知识点',
     removed: '移除知识点',
     unchanged: '保持不变',
+    order_changed: '顺序变化',
+    stage_changed: '阶段变化',
     completed: '已完成锁定',
     skipped: '已跳过',
     pending: '待重规划',
+    blocked: '依赖阻断',
   }
   return map[key] || key
 }
@@ -1524,6 +1555,15 @@ function handlePreviewError(error: any, fallback: string) {
   ElMessage.error(error?.response?.data?.error || fallback)
 }
 
+function rememberPlanWriteResult(result: ReplanResult | VariantConfirmResponse | null, fallbackMode: string) {
+  if (!result?.diff) return
+  planStore.setLastReplanResult({
+    ...result,
+    mode: result.mode || fallbackMode,
+    diff: result.diff,
+  } as ReplanResult)
+}
+
 async function refreshAfterPlanWrite() {
   if (!projectId.value) return
   await planStore.loadLatest(projectId.value)
@@ -1542,6 +1582,7 @@ async function loadPath() {
   selectedStageName.value = ''
   selectedNodeId.value = ''
   clearPreviews()
+  planStore.clearLastReplanResult()
   if (!projectId.value) {
     planResources.value = null
     overlayPreflight.value = null
@@ -1646,12 +1687,16 @@ async function handleReplan(mode: string) {
   const confirmed = await confirmDirectReplan(replanMode)
   if (!confirmed) return
   try {
-    await planStore.replan(projectId.value, replanMode)
+    const result = await planStore.replan(projectId.value, replanMode, { pathMode: planStore.currentPlan?.path_mode })
     clearPreviews()
     resetPlanResourceCache()
     await explanationState.load()
     activeTab.value = 'diff'
-    ElMessage.success('重规划完成')
+    if (result.refresh_error) {
+      ElMessage.warning(result.refresh_error)
+    } else {
+      ElMessage.success('重规划完成')
+    }
   } catch (e: any) {
     if (e?.response?.status === 409 && e?.response?.data?.error === 'GOAL_TARGETS_REMOVED') {
       router.push({
@@ -1692,10 +1737,11 @@ async function confirmSelectedVariant() {
   if (variantConfirming.value || !projectId.value || !variantPreview.value || !selectedVariant.value || !canConfirmVariant.value) return
   variantConfirming.value = true
   try {
-    await planApi.confirmVariant(projectId.value, variantPreview.value.variant_preview_id, selectedVariant.value.variant_id)
+    const result = await planApi.confirmVariant(projectId.value, variantPreview.value.variant_preview_id, selectedVariant.value.variant_id)
+    rememberPlanWriteResult(result, 'variant_confirm')
     clearPreviews()
     await refreshAfterPlanWrite()
-    activeTab.value = 'timeline'
+    activeTab.value = result.diff ? 'diff' : 'timeline'
     ElMessage.success('变体已保存为新的正式路径版本')
   } catch (error: any) {
     handlePreviewError(error, '应用路径变体失败')
@@ -1747,14 +1793,15 @@ async function confirmGraphOption() {
   ) return
   graphOptionConfirming.value = true
   try {
-    await planApi.confirmVariant(
+    const result = await planApi.confirmVariant(
       projectId.value,
       graphOptionPreview.value.variant_preview_id,
       selectedGraphOptionVariant.value.variant_id,
     )
+    rememberPlanWriteResult(result, 'variant_confirm')
     clearPreviews()
     await refreshAfterPlanWrite()
-    activeTab.value = 'timeline'
+    activeTab.value = result.diff ? 'diff' : 'timeline'
     ElMessage.success('图谱方案已保存为新的正式路径版本')
   } catch (error: any) {
     handlePreviewError(error, '应用图谱方案失败')
@@ -1799,10 +1846,11 @@ async function confirmFeedbackPreview() {
   if (feedbackConfirming.value || !projectId.value || !feedbackPreview.value || !canConfirmFeedback.value) return
   feedbackConfirming.value = true
   try {
-    await planApi.confirmFeedback(projectId.value, feedbackPreview.value.feedback_preview_id)
+    const result = await planApi.confirmFeedback(projectId.value, feedbackPreview.value.feedback_preview_id)
+    rememberPlanWriteResult(result, 'feedback_confirm')
     clearPreviews()
     await refreshAfterPlanWrite()
-    activeTab.value = 'timeline'
+    activeTab.value = 'diff'
     ElMessage.success('反馈预览已保存为新的正式路径版本')
   } catch (error: any) {
     handlePreviewError(error, '应用反馈预览失败')
@@ -1903,54 +1951,82 @@ const replanDiffDetails = computed(() => normalizeDiffDetails(
   planStore.lastReplanResult?.diff_details,
 ))
 const replanModeLabel = computed(() => replanModeLabelFrom(planStore.lastReplanResult?.mode))
-const replanDiffSummaryCards = computed(() => [
-  {
-    key: 'added',
-    label: '新增',
-    value: `${replanDiffCount('added')} 个`,
-    detail: '新版路径新增的待学知识点',
-  },
-  {
-    key: 'removed',
-    label: '移出待学',
-    value: `${replanDiffCount('removed')} 个`,
-    detail: '不再出现在新版待学路径中',
-  },
-  {
-    key: 'unchanged',
-    label: '保持',
-    value: `${replanDiffCount('unchanged')} 个`,
-    detail: '继续沿用原路径安排',
-  },
-  {
-    key: 'completed',
-    label: '已完成锁定',
-    value: `${replanDiffCount('completed')} 个`,
-    detail: '进入学习历史，不会重复安排',
-  },
-  {
-    key: 'pending',
-    label: '待重规划',
-    value: `${replanDiffCount('pending')} 个`,
-    detail: '仍需要继续学习或重新排序',
-  },
-  {
-    key: 'skipped',
-    label: '已跳过',
-    value: `${replanDiffCount('skipped')} 个`,
-    detail: '按学习记录从待学路径中避开',
-  },
-])
+const replanDiffSummaryCards = computed(() => {
+  const mode = planStore.lastReplanResult?.mode
+  if (mode === 'progress_aware' || mode === 'feedback_confirm') {
+    return [
+      {
+        key: 'completed',
+        label: '已完成锁定',
+        value: `${replanDiffCount('completed')} 个`,
+        detail: '进入学习历史，不会重复安排',
+      },
+      {
+        key: 'pending',
+        label: '继续学习',
+        value: `${replanDiffCount('pending')} 个`,
+        detail: '仍需要继续学习或重新排序',
+      },
+      {
+        key: 'skipped',
+        label: '已跳过',
+        value: `${replanDiffCount('skipped')} 个`,
+        detail: '按学习记录从待学路径中避开',
+      },
+      {
+        key: 'blocked',
+        label: '依赖阻断',
+        value: `${replanDiffCount('blocked')} 个`,
+        detail: '因前置被跳过或移除暂不安排',
+      },
+    ]
+  }
+  return [
+    {
+      key: 'added',
+      label: '新增',
+      value: `${replanDiffCount('added')} 个`,
+      detail: '新版路径新增的待学知识点',
+    },
+    {
+      key: 'removed',
+      label: '移出待学',
+      value: `${replanDiffCount('removed')} 个`,
+      detail: '不再出现在新版待学路径中',
+    },
+    {
+      key: 'unchanged',
+      label: '保持',
+      value: `${replanDiffCount('unchanged')} 个`,
+      detail: '继续沿用原路径安排',
+    },
+    {
+      key: 'order_changed',
+      label: '顺序变化',
+      value: `${replanDiffCount('order_changed')} 个`,
+      detail: '节点仍保留，但学习先后位置变化',
+    },
+    {
+      key: 'stage_changed',
+      label: '阶段变化',
+      value: `${replanDiffCount('stage_changed')} 个`,
+      detail: '节点仍保留，但阶段划分变化',
+    },
+  ]
+})
 const replanDiffHumanSummary = computed(() => {
   if (!planStore.lastReplanResult?.diff) return '暂无可展示的重规划差异。'
   const added = replanDiffCount('added')
   const removed = replanDiffCount('removed')
   const completed = replanDiffCount('completed')
   const pending = replanDiffCount('pending')
-  if (completed || pending) {
-    return `这次重点是承认学习进度：${completed} 个已完成节点被锁定，${pending} 个节点继续参与后续安排。`
+  const blocked = replanDiffCount('blocked')
+  const orderChanged = replanDiffCount('order_changed')
+  const stageChanged = replanDiffCount('stage_changed')
+  if (completed || pending || blocked) {
+    return `这次重点是承认学习进度：${completed} 个已完成节点被锁定，${pending} 个节点继续参与后续安排，${blocked} 个节点因前置状态暂不安排。`
   }
-  return `这次生成了新版路径：新增 ${added} 个知识点，移出 ${removed} 个待学节点，其余保持稳定。`
+  return `这次生成了新版路径：新增 ${added} 个知识点，移出 ${removed} 个待学节点，${orderChanged} 个节点顺序变化，${stageChanged} 个节点阶段变化。`
 })
 
 const budgetTagType = computed(() => {

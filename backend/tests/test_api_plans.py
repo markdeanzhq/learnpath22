@@ -572,7 +572,13 @@ async def test_variant_confirm_writes_one_learning_path_and_is_idempotent(client
     assert first["id"] == duplicate["id"]
     assert first["version"] == duplicate["version"]
     assert first["path_mode"] == "compressed"
+    assert first["mode"] == "variant_confirm"
+    assert first["diff"]["added"]
+    assert first["diff_details"]["added"]
+    assert first["budget_delta"]["current_total_hours"] == first["total_hours"]
     assert duplicate["idempotent"] is True
+    assert duplicate["diff"] == first["diff"]
+    assert duplicate["diff_details"] == first["diff_details"]
 
     paths = (
         await db_session.execute(select(LearningPath).where(LearningPath.project_id == project["id"]))
@@ -583,6 +589,8 @@ async def test_variant_confirm_writes_one_learning_path_and_is_idempotent(client
     latest = latest_resp.json()
     assert latest["id"] == first["id"]
     assert latest["audit"]["variant"]["variant_id"] == variant_id
+    assert latest["audit"]["variant"]["diff"] == first["diff"]
+    assert latest["audit"]["variant"]["budget_delta"] == first["budget_delta"]
     assert latest["audit"]["audit_schema_version"] == "formal_path_audit_v2"
     assert any(label["kind"] == "variant_preview" for label in latest["audit"]["authority_labels"])
 

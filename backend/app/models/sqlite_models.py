@@ -95,6 +95,9 @@ class KnowledgeSource(Base):
 
 class LearningPath(Base):
     __tablename__ = "learning_paths"
+    __table_args__ = (
+        UniqueConstraint("project_id", "version", name="uq_learning_paths_project_version"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("learning_projects.id"))

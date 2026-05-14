@@ -6,6 +6,9 @@
   >
     <template #actions>
       <el-button plain @click="router.push('/path')">查看路径</el-button>
+      <el-button plain type="warning" @click="handleProgressReplan" :loading="replanning" :disabled="!projectId || !planStore.currentPlan">
+        按当前进度重规划
+      </el-button>
       <el-button type="primary" @click="loadAll" :loading="loadingAll" :disabled="!projectId">刷新进度</el-button>
     </template>
 
@@ -67,6 +70,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { useProjectStore } from '@/stores/project'
 import { usePlanStore } from '@/stores/plan'
 import { useTrackingStore } from '@/stores/tracking'
@@ -83,6 +88,7 @@ const planStore = usePlanStore()
 const trackingStore = useTrackingStore()
 
 const loadingAll = ref(false)
+const replanning = ref(false)
 const resourcesLoading = ref(false)
 const resourceError = ref('')
 const planResources = ref<PlanResourcesResponse | null>(null)
@@ -98,7 +104,8 @@ const nodeResourcesMap = computed<Record<string, ResourceItem[]>>(() => {
 })
 const statusMap = computed(() => {
   const map: Record<string, string> = {}
-  for (const evt of trackingStore.events) {
+  const events = [...trackingStore.events].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  for (const evt of events) {
     if (map[evt.node_id]) continue
     map[evt.node_id] = evt.event_type === 'start' ? 'in_progress'
       : evt.event_type === 'complete' ? 'completed'
@@ -135,7 +142,7 @@ const dashboardSummaryItems = computed<Array<{ label: string; value: string; det
     {
       label: '已跳过',
       value: `${summary?.skipped ?? 0} 个`,
-      detail: summary?.skipped ? '可在路径页触发进度感知重规划' : '暂未跳过知识点',
+      detail: summary?.skipped ? '可直接按当前进度重规划' : '暂未跳过知识点',
       tone: summary?.skipped ? 'warning' : 'success',
     },
   ]
@@ -220,6 +227,45 @@ async function handleMarkStatus(nodeId: string, eventType: 'start' | 'complete' 
     trackingStore.loadSummary(projectId.value),
     trackingStore.loadEvents(projectId.value),
   ])
+}
+
+async function handleProgressReplan() {
+  if (!projectId.value || replanning.value) return
+  try {
+    await ElMessageBox.confirm(
+      '系统会保留已完成和已跳过记录，只重新安排仍需继续学习的部分。',
+      '确认按当前进度重规划？',
+      {
+        confirmButtonText: '确认生成新版',
+        cancelButtonText: '先不改',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  replanning.value = true
+  try {
+    const result = await planStore.replan(projectId.value, 'progress_aware', {
+      pathMode: planStore.currentPlan?.path_mode,
+      reason: 'Dashboard 按当前进度重规划',
+    })
+    await Promise.allSettled([
+      trackingStore.loadSummary(projectId.value),
+      trackingStore.loadEvents(projectId.value),
+      loadPlanResources(),
+    ])
+    if (result.refresh_error) {
+      ElMessage.warning(result.refresh_error)
+    } else {
+      ElMessage.success('已按当前进度生成新版路径')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || '进度感知重规划失败')
+  } finally {
+    replanning.value = false
+  }
 }
 </script>
 

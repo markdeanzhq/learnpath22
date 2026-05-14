@@ -18,8 +18,9 @@ def _assert_summary_matches_plan(
     completed_ids=(),
     in_progress_ids=(),
     skipped_ids=(),
+    extra_node_ids=(),
 ):
-    plan_ids = _extract_plan_node_ids(plan_payload)
+    plan_ids = _extract_plan_node_ids(plan_payload) | set(extra_node_ids)
     completed = len(plan_ids & set(completed_ids))
     in_progress = len(plan_ids & set(in_progress_ids))
     skipped = len(plan_ids & set(skipped_ids))
@@ -125,7 +126,12 @@ async def test_e2e_domain_goal(client):
 
     r = await client.get(f"/api/v1/projects/{pid}/tracking/summary")
     assert r.status_code == 200
-    _assert_summary_matches_plan(r.json(), latest_plan, completed_ids=[first_node_id])
+    _assert_summary_matches_plan(
+        r.json(),
+        latest_plan,
+        completed_ids=[first_node_id],
+        extra_node_ids=[first_node_id],
+    )
     assert first_node_id not in _extract_plan_node_ids(latest_plan)
 
     # 7. 画像更新重规划

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from copy import deepcopy
@@ -18,8 +19,8 @@ from app.models.sqlite_models import (
 from app.repositories.plan_repository import (
     extract_plan_node_ids,
     get_latest_plan,
+    get_next_plan_version,
     get_plan_by_id,
-    get_plan_version_count,
     save_plan,
 )
 from app.repositories.profile_repository import get_latest_profile
@@ -44,7 +45,7 @@ _UNSUPPORTED_KEYWORDS = {
 
 _INTENT_KEYWORDS = {
     "mark_known_nodes": ["已经会", "已掌握", "我会", "学过", "不用学"],
-    "compress_time": ["太长", "压缩", "缩短", "更短", "时间不够", "赶时间", "少一点"],
+    "compress_time": ["太长", "压缩", "压缩到", "缩短", "更短", "更紧", "时间紧", "时间更紧", "时间有限", "时间不够", "赶时间", "来不及", "少一点"],
     "increase_practice": ["多一点实践", "更多实践", "练习", "项目", "动手", "实战"],
     "increase_theory": ["多一点理论", "更多理论", "推导", "原理", "证明", "理论"],
 }
@@ -70,6 +71,16 @@ def _naive_utc_now() -> datetime:
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _hash_json(value: Any) -> str:
+    return hashlib.sha256(_json_dumps(value).encode("utf-8")).hexdigest()
+
+
+def _profile_hash_from_row(profile_row: Any | None) -> str | None:
+    if profile_row is None:
+        return None
+    return _hash_json(_profile_with_practice(profile_row))
 
 
 def _json_loads(value: str | None, fallback: Any) -> Any:
@@ -112,12 +123,16 @@ def _parse_feedback_intent(feedback_text: str) -> tuple[str, dict[str, Any], flo
         )
 
     deadline_weeks = _parse_deadline_weeks(text)
+    deadline_parameters: dict[str, Any] = {}
     if deadline_weeks is not None and any(word in text for word in ["周", "截止", "只剩", "deadline", "期限"]):
-        return "adjust_deadline", {"deadline_weeks": deadline_weeks}, 0.86
+        deadline_parameters["deadline_weeks"] = deadline_weeks
 
     for intent, words in _INTENT_KEYWORDS.items():
         if any(word in text for word in words):
-            return intent, {}, 0.82
+            return intent, dict(deadline_parameters), 0.86 if deadline_parameters else 0.82
+
+    if deadline_parameters:
+        return "adjust_deadline", deadline_parameters, 0.86
 
     raise AppError(
         code=422,
@@ -149,13 +164,53 @@ def _match_known_nodes(feedback_text: str, plan_node_ids: list[str], nodes_by_id
     return matched, evidence
 
 
-def _diff_node_ids(old_node_ids: list[str], new_node_ids: list[str]) -> dict[str, list[str]]:
+def _stage_assignment_map(stage_plan: Any) -> dict[str, str]:
+    if not isinstance(stage_plan, dict):
+        return {}
+
+    stage_map: dict[str, str] = {}
+    for stage_name, tasks in stage_plan.items():
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            node_id = task.get("node_id")
+            if isinstance(node_id, str) and node_id:
+                stage_map[node_id] = str(stage_name)
+    return stage_map
+
+
+def _diff_node_ids(
+    old_node_ids: list[str],
+    new_node_ids: list[str],
+    *,
+    old_stage_plan: Any | None = None,
+    new_stage_plan: Any | None = None,
+) -> dict[str, list[str]]:
     old_set = set(old_node_ids)
     new_set = set(new_node_ids)
+    common_ids = old_set & new_set
+    old_positions = {node_id: index for index, node_id in enumerate(old_node_ids)}
+    new_positions = {node_id: index for index, node_id in enumerate(new_node_ids)}
+    old_stage_map = _stage_assignment_map(old_stage_plan)
+    new_stage_map = _stage_assignment_map(new_stage_plan)
     return {
         "added": sorted(new_set - old_set),
         "removed": sorted(old_set - new_set),
-        "unchanged": sorted(old_set & new_set),
+        "unchanged": sorted(common_ids),
+        "order_changed": sorted(
+            node_id
+            for node_id in common_ids
+            if old_positions.get(node_id) != new_positions.get(node_id)
+        ),
+        "stage_changed": sorted(
+            node_id
+            for node_id in common_ids
+            if node_id in old_stage_map
+            and node_id in new_stage_map
+            and old_stage_map[node_id] != new_stage_map[node_id]
+        ),
     }
 
 
@@ -324,7 +379,29 @@ def _feedback_response(session: FeedbackPreviewSession, draft: KnownNodeConfirma
         "expires_at": session.expires_at,
         "pack_hash": session.pack_hash,
         "project_graph_hash": session.project_graph_hash,
+        "profile_hash": history.get("profile_hash"),
     }
+
+
+async def _ensure_feedback_profile_current(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    session: FeedbackPreviewSession,
+) -> None:
+    history = _json_loads(session.decision_history_json, {})
+    history = history if isinstance(history, dict) else {}
+    expected_profile_hash = history.get("profile_hash")
+    if not isinstance(expected_profile_hash, str) or not expected_profile_hash:
+        return
+    latest_profile_row = await get_latest_profile(db, project_id)
+    current_profile_hash = _profile_hash_from_row(latest_profile_row)
+    if current_profile_hash != expected_profile_hash:
+        raise AppError(
+            code=409,
+            message=error_codes.STALE_FEEDBACK_PREVIEW,
+            details={"reason_code": "PROFILE_DRIFT"},
+        )
 
 
 def _plan_response(path: Any, plan_result: dict[str, Any], session: FeedbackPreviewSession, *, idempotent: bool) -> dict[str, Any]:
@@ -375,6 +452,7 @@ async def preview_feedback_replan(db: AsyncSession, *, project_id: str, feedback
     intent_type, raw_parameters, confidence = _parse_feedback_intent(feedback_text)
     snapshot = await build_project_graph_snapshot(db, project_id, domain=project.domain)
     old_node_ids = extract_plan_node_ids(latest_plan.plan_json)
+    profile_hash = _profile_hash_from_row(latest_profile_row)
     controlled_parameters, path_mode = _controlled_parameters(intent_type, raw_parameters, getattr(project, "path_mode", None))
 
     if intent_type == "mark_known_nodes":
@@ -399,7 +477,11 @@ async def preview_feedback_replan(db: AsyncSession, *, project_id: str, feedback
             pack_hash=snapshot.pack_hash,
             project_graph_hash=snapshot.project_graph_hash,
             status="active",
-            decision_history_json=_json_dumps({"event": "feedback_preview_created", "feedback_text": feedback_text}),
+            decision_history_json=_json_dumps({
+                "event": "feedback_preview_created",
+                "feedback_text": feedback_text,
+                "profile_hash": profile_hash,
+            }),
         )
         db.add(session)
         await db.flush()
@@ -445,7 +527,12 @@ async def preview_feedback_replan(db: AsyncSession, *, project_id: str, feedback
         "intent_type": intent_type,
         "controlled_parameters": controlled_parameters,
     }
-    diff = _diff_node_ids(old_node_ids, plan_result["ordered_ids"])
+    diff = _diff_node_ids(
+        old_node_ids,
+        plan_result["ordered_ids"],
+        old_stage_plan=_json_loads(latest_plan.plan_json, {}),
+        new_stage_plan=plan_result.get("stage_plan"),
+    )
     diff_details = _build_diff_details(diff, plan_result=plan_result, nodes_by_id=snapshot.nodes_by_id)
     budget_delta = _budget_delta(latest_plan, plan_result)
     blocked_actions = _blocked_actions_for_plan(plan_result)
@@ -466,6 +553,7 @@ async def preview_feedback_replan(db: AsyncSession, *, project_id: str, feedback
         decision_history_json=_json_dumps({
             "event": "feedback_preview_created",
             "feedback_text": feedback_text,
+            "profile_hash": profile_hash,
             "diff_details": diff_details,
             "plan_result": plan_result,
         }),
@@ -500,6 +588,7 @@ async def confirm_known_node_draft(db: AsyncSession, *, project_id: str, draft_i
             message=error_codes.STALE_FEEDBACK_PREVIEW,
             details={"reason_code": error_codes.PROJECT_GRAPH_DRIFT},
         )
+    await _ensure_feedback_profile_current(db, project_id=project_id, session=session)
     draft.status = "confirmed"
     draft.decision_history_json = _json_dumps({"event": "known_node_draft_confirmed"})
     await db.commit()
@@ -542,6 +631,7 @@ async def confirm_feedback_replan(db: AsyncSession, *, project_id: str, feedback
             message=error_codes.STALE_FEEDBACK_PREVIEW,
             details={"reason_code": error_codes.PROJECT_GRAPH_DRIFT},
         )
+    await _ensure_feedback_profile_current(db, project_id=project_id, session=session)
 
     if session.intent_type == "mark_known_nodes":
         draft = await _get_confirmed_known_node_draft(db, session)
@@ -585,7 +675,7 @@ async def confirm_feedback_replan(db: AsyncSession, *, project_id: str, feedback
             )
 
     await enrich_formal_path_audit(db, project=project, plan_result=plan_result)
-    version = await get_plan_version_count(db, project_id) + 1
+    version = await get_next_plan_version(db, project_id)
     path = await save_plan(db, project_id, plan_result, version=version, commit=False)
     session.status = "confirmed"
     session.decision_history_json = _json_dumps({

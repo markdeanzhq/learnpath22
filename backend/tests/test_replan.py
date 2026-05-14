@@ -11,6 +11,7 @@ from app.models.sqlite_models import (
     FeedbackPreviewSession,
     GoalResolutionSession,
     KnownNodeConfirmationDraft,
+    LearnerProfile,
     LearningPath,
     LearningProject,
     TrackingEvent,
@@ -59,7 +60,7 @@ async def _path_count(db_session, project_id: str) -> int:
 async def test_replan_api_uses_project_domain_for_diff_details_pack(client, project, monkeypatch):
     captured = {}
 
-    async def fake_replan(db, project_id, mode="profile_update"):
+    async def fake_replan(db, project_id, mode="profile_update", **kwargs):
         return {
             "path_id": "path-demo",
             "version": 2,
@@ -107,8 +108,9 @@ async def test_feedback_preview_compress_time_does_not_write_formal_path(
     assert data["controlled_parameters"]["path_mode"] == "compressed"
     assert data["requires_confirmation"] is True
     assert data["requires_second_confirm"] is False
-    assert set(data["diff"]) == {"added", "removed", "unchanged"}
-    assert set(data["diff_details"]).issubset({"added", "removed", "unchanged"})
+    expected_diff_keys = {"added", "removed", "unchanged", "order_changed", "stage_changed"}
+    assert set(data["diff"]) == expected_diff_keys
+    assert set(data["diff_details"]).issubset(expected_diff_keys)
     detail_items = [item for items in data["diff_details"].values() for item in items]
     assert detail_items
     assert all(item["node_id"] and item["node_name"] for item in detail_items)
@@ -118,6 +120,28 @@ async def test_feedback_preview_compress_time_does_not_write_formal_path(
     session = await db_session.get(FeedbackPreviewSession, data["feedback_preview_id"])
     assert session is not None
     assert session.status == "active"
+
+
+async def test_feedback_preview_time_shortcut_uses_compressed_mode_and_deadline(
+    client, db_session, project, profile, plan
+):
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "我想把路径压缩到 6 周"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["intent_type"] == "compress_time"
+    assert data["controlled_parameters"]["path_mode"] == "compressed"
+    assert data["controlled_parameters"]["deadline_weeks"] == 6
+
+    exact_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "时间更紧"},
+    )
+    assert exact_resp.status_code == 200
+    assert exact_resp.json()["intent_type"] == "compress_time"
 
 
 async def test_feedback_preview_rejects_unsupported_or_low_confidence_without_write(
@@ -292,6 +316,36 @@ async def test_feedback_confirm_rejects_pack_hash_drift(
     assert confirm_resp.json()["reason_code"] == "PACK_HASH_DRIFT"
 
 
+async def test_feedback_confirm_rejects_profile_drift(client, db_session, project, profile, plan):
+    preview_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/preview",
+        json={"feedback_text": "请压缩路径"},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    assert preview["profile_hash"]
+
+    db_session.add(LearnerProfile(
+        project_id=project["id"],
+        math_level=5,
+        coding_level=5,
+        ml_level=5,
+        theory_weight=0.4,
+        practice_weight=0.6,
+        weekly_hours=12,
+        deadline_weeks=10,
+    ))
+    await db_session.commit()
+
+    confirm_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans/feedback/{preview['feedback_preview_id']}/confirm"
+    )
+
+    assert confirm_resp.status_code == 409
+    assert confirm_resp.json()["error"] == "STALE_FEEDBACK_PREVIEW"
+    assert confirm_resp.json()["reason_code"] == "PROFILE_DRIFT"
+
+
 async def test_known_node_draft_confirm_rejects_pack_hash_drift(
     client, db_session, project, profile, plan
 ):
@@ -391,6 +445,31 @@ async def test_replan_progress_aware(client, project, plan):
     assert node_id not in all_ids
 
 
+async def test_replan_progress_aware_treats_completed_target_as_satisfied(client, project, plan):
+    """已完成目标不应被误判为目标被移除。"""
+    for node_id in project["goal_resolution"]["confirmed_target_node_ids"]:
+        await client.post(
+            f"/api/v1/projects/{project['id']}/tracking/events",
+            json={"node_id": node_id, "event_type": "complete"},
+        )
+
+    resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans",
+        json={"mode": "progress_aware", "reason": "目标已完成后重规划"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    for node_id in project["goal_resolution"]["confirmed_target_node_ids"]:
+        assert node_id in data["diff"]["completed"]
+
+    latest_resp = await client.get(f"/api/v1/projects/{project['id']}/plans/latest")
+    assert latest_resp.status_code == 200
+    goal_result = latest_resp.json()["audit"]["goal_result"]
+    assert goal_result["target_satisfied"] is True
+    assert goal_result["completed_target_node_ids"] == project["goal_resolution"]["confirmed_target_node_ids"]
+
+
 async def test_replan_progress_aware_uses_previous_plan_profile_snapshot(client, project, profile, plan):
     """进度感知模式应沿用上一版路径的画像快照，而不是最新画像。"""
     update_resp = await client.post(
@@ -449,6 +528,9 @@ async def test_replan_progress_aware_excludes_descendants_of_skipped_nodes(clien
     # 所以跳过 ml_c09 不会导致 ml_c10 被排除
     # assert "ml_c10" not in all_ids  # 此断言在 v1.1.0 下不再成立
     assert "ml_e07" not in all_ids
+    assert "ml_d01" in data["diff"]["blocked"]
+    assert "ml_d03" in data["diff"]["blocked"]
+    assert any(item["node_id"] == "ml_d01" for item in data["diff_details"]["blocked"])
 
 
 async def test_replan_progress_aware_recalculates_budget(client, project, plan):
@@ -478,6 +560,35 @@ async def test_replan_progress_aware_recalculates_budget(client, project, plan):
     # 改为验证：重规划后总学时应小于原计划（因为已完成部分节点）
     assert data["total_hours"] < plan["total_hours"], \
         f"重规划后总学时 {data['total_hours']} 应小于原计划 {plan['total_hours']}"
+
+
+async def test_tracking_summary_keeps_locked_nodes_after_progress_replan(client, project, plan):
+    """进度感知重规划后，summary 仍应统计已完成/已跳过的历史节点。"""
+    plan_node_ids = [task["node_id"] for stage in plan["stages"] for task in stage["tasks"]]
+    completed_id = plan_node_ids[0]
+    skipped_id = plan_node_ids[1]
+    await client.post(
+        f"/api/v1/projects/{project['id']}/tracking/events",
+        json={"node_id": completed_id, "event_type": "complete"},
+    )
+    await client.post(
+        f"/api/v1/projects/{project['id']}/tracking/events",
+        json={"node_id": skipped_id, "event_type": "skip"},
+    )
+
+    replan_resp = await client.post(
+        f"/api/v1/projects/{project['id']}/replans",
+        json={"mode": "progress_aware", "reason": "统计锁定节点"},
+    )
+    assert replan_resp.status_code == 200
+
+    summary_resp = await client.get(f"/api/v1/projects/{project['id']}/tracking/summary")
+    assert summary_resp.status_code == 200
+    summary = summary_resp.json()
+    pending_count = sum(len(stage["tasks"]) for stage in replan_resp.json()["stages"])
+    assert summary["completed"] == 1
+    assert summary["skipped"] == 1
+    assert summary["total_nodes"] >= pending_count + 2
 
 
 async def test_replan_without_profile(client):

@@ -20,8 +20,9 @@ def _assert_summary_matches_plan(
     completed_ids=(),
     in_progress_ids=(),
     skipped_ids=(),
+    extra_node_ids=(),
 ):
-    plan_ids = _extract_plan_node_ids(plan_payload)
+    plan_ids = _extract_plan_node_ids(plan_payload) | set(extra_node_ids)
     completed = len(plan_ids & set(completed_ids))
     in_progress = len(plan_ids & set(in_progress_ids))
     skipped = len(plan_ids & set(skipped_ids))
@@ -133,6 +134,7 @@ async def test_tracking_summary_matches_latest_progress_aware_replan(client, pro
         summary,
         latest_plan,
         completed_ids=[completed_node_id],
+        extra_node_ids=[completed_node_id],
     )
     assert completed_node_id not in _extract_plan_node_ids(latest_plan)
 
